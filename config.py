@@ -4,7 +4,7 @@
 
 
 # Discord Bot Token
-TOKEN = "MTM0NjEzMzQ2NDQxOTc5OTA4MA.G-96S5.sXIZEVL04o0SlJTxm3kMPmAJfVGlYQpSiQ--lY"
+TOKEN = ""
 
 # Multi-Server Configuration Dictionary
 GUILDS = {
