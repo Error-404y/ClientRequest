@@ -1,0 +1,444 @@
+import aiosqlite
+import config
+from utils.logger import log_db
+
+
+async def setup_database():
+
+    async with aiosqlite.connect(config.DATABASE) as db:
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS tickets (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            channel_id INTEGER,
+
+            guild_id INTEGER,
+
+            user_id INTEGER,
+
+            application TEXT,
+
+            status TEXT,
+
+            created_at TEXT,
+
+            closed_at TEXT
+
+        )
+        """)
+
+        await db.commit()
+
+        # Check if new columns exist, and add them if not
+        cursor = await db.execute("PRAGMA table_info(tickets)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        
+        if "claimed_by" not in columns:
+            await db.execute("ALTER TABLE tickets ADD COLUMN claimed_by INTEGER DEFAULT NULL")
+            await db.commit()
+            
+        if "close_reason" not in columns:
+            await db.execute("ALTER TABLE tickets ADD COLUMN close_reason TEXT DEFAULT NULL")
+            await db.commit()
+
+        if "warned_inactive" not in columns:
+            await db.execute("ALTER TABLE tickets ADD COLUMN warned_inactive INTEGER DEFAULT 0")
+            await db.commit()
+
+        if "priority" not in columns:
+            await db.execute("ALTER TABLE tickets ADD COLUMN priority TEXT DEFAULT 'Medium'")
+            await db.commit()
+
+        if "closed_by" not in columns:
+            await db.execute("ALTER TABLE tickets ADD COLUMN closed_by INTEGER DEFAULT NULL")
+            await db.commit()
+
+        if "claimed_at" not in columns:
+            await db.execute("ALTER TABLE tickets ADD COLUMN claimed_at TEXT DEFAULT NULL")
+            await db.commit()
+
+        # Infractions table
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS infractions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id INTEGER,
+            user_id INTEGER,
+            moderator_id INTEGER,
+            action_type TEXT,
+            reason TEXT,
+            timestamp TEXT
+        )
+        """)
+
+        # Check if guild_id column exists in infractions table
+        cursor = await db.execute("PRAGMA table_info(infractions)")
+        inf_columns = [row[1] for row in await cursor.fetchall()]
+        if "guild_id" not in inf_columns:
+            await db.execute("ALTER TABLE infractions ADD COLUMN guild_id INTEGER DEFAULT NULL")
+            await db.commit()
+
+        # User stats table
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS user_stats (
+            guild_id INTEGER,
+            user_id INTEGER,
+            message_count INTEGER DEFAULT 0,
+            bad_word_count INTEGER DEFAULT 0,
+            last_active TEXT,
+            PRIMARY KEY (guild_id, user_id)
+        )
+        """)
+
+        # Check if user_stats has guild_id or needs migration
+        cursor = await db.execute("PRAGMA table_info(user_stats)")
+        stats_columns = [row[1] for row in await cursor.fetchall()]
+        if "guild_id" not in stats_columns:
+            # Re-create table with composite primary key if old table existed without guild_id
+            await db.execute("ALTER TABLE user_stats RENAME TO old_user_stats")
+            await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_stats (
+                guild_id INTEGER,
+                user_id INTEGER,
+                message_count INTEGER DEFAULT 0,
+                bad_word_count INTEGER DEFAULT 0,
+                last_active TEXT,
+                PRIMARY KEY (guild_id, user_id)
+            )
+            """)
+            await db.execute("""
+            INSERT INTO user_stats (guild_id, user_id, message_count, bad_word_count, last_active)
+            SELECT 1536279648428884058, user_id, message_count, bad_word_count, last_active FROM old_user_stats
+            """)
+            await db.execute("DROP TABLE old_user_stats")
+            await db.commit()
+
+        await db.commit()
+        log_db("INITIALIZE", "database", "Verified tables & schema columns")
+
+
+async def add_infraction(user_id: int, moderator_id: int, action_type: str, reason: str, guild_id: int = None):
+    from datetime import datetime
+    import pytz
+    tz = pytz.timezone("Europe/Berlin")
+    now_str = datetime.now(tz).strftime("%d/%m/%Y - %H:%M")
+
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute(
+            """
+            INSERT INTO infractions (guild_id, user_id, moderator_id, action_type, reason, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (guild_id, user_id, moderator_id, action_type, reason, now_str)
+        )
+        await db.commit()
+    log_db("INSERT", "infractions", f"Guild: {guild_id}, User: {user_id}, Mod: {moderator_id}, Type: {action_type}, Reason: {reason}")
+
+
+async def get_user_infractions(user_id: int, guild_id: int = None):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        if guild_id:
+            cursor = await db.execute(
+                """
+                SELECT id, user_id, moderator_id, action_type, reason, timestamp, guild_id
+                FROM infractions
+                WHERE user_id=? AND guild_id=?
+                ORDER BY id DESC
+                """,
+                (user_id, guild_id)
+            )
+        else:
+            cursor = await db.execute(
+                """
+                SELECT id, user_id, moderator_id, action_type, reason, timestamp, guild_id
+                FROM infractions
+                WHERE user_id=?
+                ORDER BY id DESC
+                """,
+                (user_id,)
+            )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": r[0],
+                "user_id": r[1],
+                "moderator_id": r[2],
+                "action_type": r[3],
+                "reason": r[4],
+                "timestamp": r[5],
+                "guild_id": r[6]
+            }
+            for r in rows
+        ]
+
+
+async def remove_user_warning(user_id: int, warn_id: int = None, guild_id: int = None):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        if warn_id is not None:
+            if guild_id:
+                cursor = await db.execute(
+                    "SELECT id, reason, timestamp FROM infractions WHERE id=? AND user_id=? AND guild_id=? AND action_type='WARN'",
+                    (warn_id, user_id, guild_id)
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT id, reason, timestamp FROM infractions WHERE id=? AND user_id=? AND action_type='WARN'",
+                    (warn_id, user_id)
+                )
+            row = await cursor.fetchone()
+            if not row:
+                return 0, []
+
+            await db.execute(
+                "DELETE FROM infractions WHERE id=?",
+                (warn_id,)
+            )
+            await db.commit()
+            log_db("DELETE", "infractions", f"Removed warning #{warn_id} for User ID {user_id}")
+            return 1, [{"id": row[0], "reason": row[1], "timestamp": row[2]}]
+        else:
+            if guild_id:
+                cursor = await db.execute(
+                    "SELECT id, reason, timestamp FROM infractions WHERE user_id=? AND guild_id=? AND action_type='WARN'",
+                    (user_id, guild_id)
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT id, reason, timestamp FROM infractions WHERE user_id=? AND action_type='WARN'",
+                    (user_id,)
+                )
+            rows = await cursor.fetchall()
+            if not rows:
+                return 0, []
+
+            ids = [r[0] for r in rows]
+            await db.execute(
+                f"DELETE FROM infractions WHERE id IN ({','.join(['?']*len(ids))})",
+                ids
+            )
+            await db.commit()
+            log_db("DELETE", "infractions", f"Cleared ({len(rows)}) warnings for User ID {user_id}")
+            return len(rows), [{"id": r[0], "reason": r[1], "timestamp": r[2]} for r in rows]
+
+
+
+async def increment_user_activity(user_id: int, guild_id: int = None, has_bad_word: bool = False):
+    from datetime import datetime
+    import pytz
+    tz = pytz.timezone("Europe/Berlin")
+    now_str = datetime.now(tz).strftime("%d/%m/%Y - %H:%M")
+    gid = guild_id or config.GUILD_ID
+
+    async with aiosqlite.connect(config.DATABASE) as db:
+        bad_inc = 1 if has_bad_word else 0
+        await db.execute(
+            """
+            INSERT INTO user_stats (guild_id, user_id, message_count, bad_word_count, last_active)
+            VALUES (?, ?, 1, ?, ?)
+            ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                message_count = message_count + 1,
+                bad_word_count = bad_word_count + EXCLUDED.bad_word_count,
+                last_active = EXCLUDED.last_active
+            """,
+            (gid, user_id, bad_inc, now_str)
+        )
+        await db.commit()
+        if has_bad_word:
+            log_db("UPSERT", "user_stats", f"Guild: {gid}, User: {user_id}, Bad Word: True")
+
+
+async def get_user_stats(user_id: int, guild_id: int = None):
+    gid = guild_id or config.GUILD_ID
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT user_id, message_count, bad_word_count, last_active FROM user_stats WHERE user_id=? AND guild_id=?",
+            (user_id, gid)
+        )
+        row = await cursor.fetchone()
+        if row:
+            return {
+                "user_id": row[0],
+                "message_count": row[1],
+                "bad_word_count": row[2],
+                "last_active": row[3]
+            }
+        return {
+            "user_id": user_id,
+            "message_count": 0,
+            "bad_word_count": 0,
+            "last_active": "Never"
+        }
+
+
+
+
+
+
+async def create_ticket_record(
+    channel_id,
+    guild_id,
+    user_id,
+    application,
+    created_at
+):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute(
+            """
+            INSERT INTO tickets
+            (
+                channel_id,
+                guild_id,
+                user_id,
+                application,
+                status,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                channel_id,
+                guild_id,
+                user_id,
+                application,
+                "open",
+                created_at
+            )
+        )
+        await db.commit()
+    log_db("INSERT", "tickets", f"Created record for Channel: {channel_id}, User: {user_id}, App: {application}")
+
+
+async def close_ticket(
+    channel_id,
+    closed_at,
+    closed_by=None,
+    close_reason=None
+):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute(
+            """
+            UPDATE tickets
+            SET status=?,
+            closed_at=?,
+            closed_by=?,
+            close_reason=?
+            WHERE channel_id=?
+            """,
+            (
+                "closed",
+                closed_at,
+                closed_by,
+                close_reason,
+                channel_id
+            )
+        )
+        await db.commit()
+    log_db("UPDATE", "tickets", f"Closed Channel: {channel_id}, Closed By: {closed_by}, Reason: {close_reason}")
+
+
+async def reopen_ticket(channel_id):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute(
+            """
+            UPDATE tickets
+            SET status=?,
+            closed_at=NULL
+            WHERE channel_id=?
+            """,
+            (
+                "open",
+                channel_id
+            )
+        )
+        await db.commit()
+    log_db("UPDATE", "tickets", f"Reopened Channel: {channel_id}")
+
+
+async def get_ticket_owner(channel_id):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            """
+            SELECT user_id
+            FROM tickets
+            WHERE channel_id=?
+            """,
+            (
+                channel_id,
+            )
+        )
+        result = await cursor.fetchone()
+        if result:
+            return result[0]
+        return None
+
+
+async def get_next_ticket_number():
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            """
+            SELECT COUNT(*)
+            FROM tickets
+            """
+        )
+        result = await cursor.fetchone()
+        return result[0] + 1
+
+
+async def claim_ticket(channel_id, user_id, claimed_at):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute(
+            """
+            UPDATE tickets
+            SET claimed_by=?, claimed_at=?
+            WHERE channel_id=?
+            """,
+            (user_id, claimed_at, channel_id)
+        )
+        await db.commit()
+    log_db("UPDATE", "tickets", f"Claimed Channel: {channel_id} by User: {user_id}")
+
+
+async def get_ticket_record(channel_id):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            """
+            SELECT id, channel_id, guild_id, user_id, application, status, created_at, closed_at, claimed_by, close_reason, priority, claimed_at, closed_by
+            FROM tickets
+            WHERE channel_id=?
+            """,
+            (channel_id,)
+        )
+        row = await cursor.fetchone()
+        if row:
+            return {
+                "id": row[0],
+                "channel_id": row[1],
+                "guild_id": row[2],
+                "user_id": row[3],
+                "application": row[4],
+                "status": row[5],
+                "created_at": row[6],
+                "closed_at": row[7],
+                "claimed_by": row[8],
+                "close_reason": row[9],
+                "priority": row[10],
+                "claimed_at": row[11],
+                "closed_by": row[12]
+            }
+        return None
+
+
+async def set_ticket_priority(channel_id, priority):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute(
+            """
+            UPDATE tickets
+            SET priority=?
+            WHERE channel_id=?
+            """,
+            (priority, channel_id)
+        )
+        await db.commit()
+    log_db("UPDATE", "tickets", f"Priority set to '{priority}' for Channel: {channel_id}")
+
