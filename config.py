@@ -1,12 +1,9 @@
-# ==========================================
-# ZER Ticket Bot v2 Configuration
-# ==========================================
 
 
-# Discord Bot Token
-TOKEN = ""
 
-# Multi-Server Configuration Dictionary
+TOKEN = "N/A"
+
+
 GUILDS = {
     1536279648428884058: {
         "NAME": "Server 1",
@@ -34,7 +31,7 @@ GUILDS = {
     }
 }
 
-# Helper functions to get guild-specific config dynamically
+
 def get_guild_config(guild_id):
     return GUILDS.get(guild_id, GUILDS[1536279648428884058])
 
@@ -56,7 +53,7 @@ def get_trial_mod_role(guild_id):
 def get_ticket_options(guild_id):
     return get_guild_config(guild_id)["TICKET_OPTIONS"]
 
-# Default / Fallback Values (Server 1)
+
 GUILD_ID = 1536279648428884058
 TICKET_CATEGORY_ID = 1536487365256814673
 TICKET_PANEL_CHANNEL_ID = 1536487522257993728
@@ -68,11 +65,10 @@ MOD_ROLE = 1536279648470704150
 TRIAL_MOD_ROLE = 1536279648470704150
 WARN_HISTORY_ROLE_ID = 1536279648470704150
 
-# Branding
+
 BOT_NAME = "ZER Ticket Bot"
 BOT_CREATOR = "ZER"
 
-# Google Forms
 UPLOADER_FORM = (
     "https://docs.google.com/forms/d/e/"
     "1FAIpQLScEXtR945KYxZovhw4mTNnJ3CLOIBs06kQUiKeYjzJP1A-T9Q/"
@@ -85,16 +81,16 @@ MODERATOR_FORM = (
     "viewform?usp=sharing&ouid=117835685606289606539"
 )
 
-# Storage
+
 DATABASE = "database.db"
 TRANSCRIPT_FOLDER = "transcripts"
 LOG_FOLDER = "logs"
 
-# Inactivity Timers (in Hours)
+
 INACTIVITY_WARN_HOURS = 24
 INACTIVITY_CLOSE_HOURS = 24
 
-# Bad Words Filter List
+
 BAD_WORDS = [
     "fuck", "shit", "bitch", "asshole", "bastard", "cunt",
     "dick", "pussy", "nigger", "nigga", "retard", "whore",
