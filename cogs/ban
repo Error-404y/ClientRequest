@@ -1,0 +1,820 @@
+import discord
+from discord import app_commands
+from discord.ext import commands
+import re
+
+import config
+from utils.permissions import can_ban, can_warn_or_view_history
+from utils.embeds import error
+from views.ban_buttons import BanConfirmView
+from views.unban_buttons import UnbanConfirmView
+from utils.database import (
+    add_infraction,
+    get_user_infractions,
+    remove_user_warning,
+    increment_user_activity,
+    get_user_stats
+)
+from utils.logger import log_command, log_mod, log_dm, log_filter, log_interaction
+
+
+async def resolve_user(guild: discord.Guild, bot: commands.Bot, user_input: str):
+    if not user_input:
+        return None, "", None
+
+    clean_input = user_input.strip()
+
+    # Mention format check <@!123456789> or <@123456789>
+    mention_match = re.match(r'^<@!?(\d+)>$', clean_input)
+    if mention_match:
+        user_id = int(mention_match.group(1))
+        member = guild.get_member(user_id) if guild else None
+        if member:
+            return member, member.name, user_id
+        try:
+            fetched = await bot.fetch_user(user_id)
+            return fetched, fetched.name, user_id
+        except Exception:
+            return user_id, str(user_id), user_id
+
+    # Raw digit ID
+    if clean_input.isdigit():
+        user_id = int(clean_input)
+        member = guild.get_member(user_id) if guild else None
+        if member:
+            return member, member.name, user_id
+        try:
+            fetched = await bot.fetch_user(user_id)
+            return fetched, fetched.name, user_id
+        except Exception:
+            return user_id, clean_input, user_id
+
+    # Match member by username / display name in guild
+    if guild:
+        search_term = clean_input.lstrip('@').lower()
+        for member in guild.members:
+            if (member.name.lower() == search_term or
+                (member.global_name and member.global_name.lower() == search_term) or
+                member.display_name.lower() == search_term or
+                str(member).lower() == search_term):
+                return member, member.name, member.id
+
+        # Fallback partial match in guild
+        for member in guild.members:
+            if (search_term in member.name.lower() or
+                (search_term in member.global_name.lower() if member.global_name else False) or
+                search_term in member.display_name.lower()):
+                return member, member.name, member.id
+
+    return None, clean_input.lstrip('@'), None
+
+
+async def resolve_banned_user(guild: discord.Guild, bot: commands.Bot, user_input: str):
+    clean_input = user_input.strip()
+
+    user_id = None
+    mention_match = re.match(r'^<@!?(\d+)>$', clean_input)
+    if mention_match:
+        user_id = int(mention_match.group(1))
+    elif clean_input.isdigit():
+        user_id = int(clean_input)
+
+    ban_entries = []
+    if guild:
+        try:
+            ban_entries = [entry async for entry in guild.bans()]
+        except Exception:
+            ban_entries = []
+
+    # Search by ID if available
+    if user_id:
+        for entry in ban_entries:
+            if entry.user.id == user_id:
+                return entry.user, entry.user.name, entry.user.id
+        try:
+            fetched = await bot.fetch_user(user_id)
+            return fetched, fetched.name, user_id
+        except Exception:
+            return user_id, str(user_id), user_id
+
+    # Search by username in ban list
+    search_term = clean_input.lstrip('@').lower()
+    for entry in ban_entries:
+        u = entry.user
+        if (u.name.lower() == search_term or
+            (u.global_name and u.global_name.lower() == search_term) or
+            str(u).lower() == search_term):
+            return u, u.name, u.id
+
+    return None, clean_input.lstrip('@'), None
+
+
+class BanCog(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    # Listener to auto-track message activity and profanity
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if message.author.bot or not message.guild:
+            return
+
+        content_lower = message.content.lower()
+        has_bad_word = False
+        detected_words = []
+
+        bad_words_list = getattr(config, "BAD_WORDS", [])
+        for bw in bad_words_list:
+            pattern = r'\b' + re.escape(bw) + r'\b'
+            if re.search(pattern, content_lower):
+                has_bad_word = True
+                detected_words.append(bw)
+
+        # Track message activity
+        await increment_user_activity(message.author.id, guild_id=message.guild.id if message.guild else None, has_bad_word=has_bad_word)
+
+        # Log bad word infraction if triggered
+        if has_bad_word:
+            log_filter(message.author, detected_words, message.channel)
+            await add_infraction(
+                user_id=message.author.id,
+                moderator_id=self.bot.user.id,
+                action_type="BAD_WORD",
+                reason=f"Used bad word(s): {', '.join(detected_words)}",
+                guild_id=message.guild.id if message.guild else None
+            )
+
+    # Slash command /banz
+    @app_commands.command(name="banz", description="Ban a user from the server with confirmation")
+    @app_commands.describe(
+        user="Username, User Mention, or User ID to ban",
+        reason="Reason for the ban (optional)"
+    )
+    async def banz_slash(self, interaction: discord.Interaction, user: str, reason: str = None):
+        log_command(interaction.user, "/banz", interaction.channel, f"user={user}, reason={reason}")
+        if not can_ban(interaction.user):
+            log_mod("Permission Denied for /banz", interaction.user, user)
+            await interaction.response.send_message(
+                embed=error("You do not have permission to use this command."),
+                ephemeral=True
+            )
+            return
+
+        target_obj, target_name, target_id = await resolve_user(interaction.guild, self.bot, user)
+
+        if not target_obj and not target_id:
+            await interaction.response.send_message(
+                embed=error(f"Could not find or resolve user: `{user}`"),
+                ephemeral=True
+            )
+            return
+
+        desc = f"Are you sure you want to ban **{target_name}**?"
+        if reason:
+            desc += f"\n\n{reason}"
+
+        embed = discord.Embed(
+            title="Ban",
+            description=desc,
+            color=discord.Color.from_rgb(255, 255, 255)
+        )
+
+        view = BanConfirmView(
+            author_id=interaction.user.id,
+            target_user=target_obj or target_id,
+            target_name=target_name,
+            reason=reason
+        )
+
+        await interaction.response.send_message(embed=embed, view=view)
+
+    # Prefix command !banZ or !banz
+    @commands.command(name="banZ", aliases=["banz"])
+    async def banz_prefix(self, ctx: commands.Context, user_input: str = None, *, reason: str = None):
+        log_command(ctx.author, "!banZ", ctx.channel, f"user={user_input}, reason={reason}")
+        if not can_ban(ctx.author):
+            log_mod("Permission Denied for !banZ", ctx.author, user_input)
+            await ctx.send(embed=error("You do not have permission to use this command."))
+            return
+
+        if not user_input:
+            await ctx.send(embed=error("Please specify a Username, Mention, or User ID to ban."))
+            return
+
+        target_obj, target_name, target_id = await resolve_user(ctx.guild, self.bot, user_input)
+
+        if not target_obj and not target_id:
+            await ctx.send(embed=error(f"Could not find or resolve user: `{user_input}`"))
+            return
+
+        desc = f"Are you sure you want to ban **{target_name}**?"
+        if reason:
+            desc += f"\n\n{reason}"
+
+        embed = discord.Embed(
+            title="Ban",
+            description=desc,
+            color=discord.Color.from_rgb(255, 255, 255)
+        )
+
+        view = BanConfirmView(
+            author_id=ctx.author.id,
+            target_user=target_obj or target_id,
+            target_name=target_name,
+            reason=reason
+        )
+
+        await ctx.send(embed=embed, view=view)
+
+    # Slash command /unbanz
+    @app_commands.command(name="unbanz", description="Unban a user from the server with confirmation")
+    @app_commands.describe(
+        user="Username, User Mention, or User ID to unban",
+        reason="Reason for unbanning (optional)"
+    )
+    async def unbanz_slash(self, interaction: discord.Interaction, user: str, reason: str = None):
+        log_command(interaction.user, "/unbanz", interaction.channel, f"user={user}, reason={reason}")
+        if not can_ban(interaction.user):
+            log_mod("Permission Denied for /unbanz", interaction.user, user)
+            await interaction.response.send_message(
+                embed=error("You do not have permission to use this command."),
+                ephemeral=True
+            )
+            return
+
+        target_obj, target_name, target_id = await resolve_banned_user(interaction.guild, self.bot, user)
+
+        if not target_obj and not target_id:
+            await interaction.response.send_message(
+                embed=error(f"Could not resolve banned user: `{user}`"),
+                ephemeral=True
+            )
+            return
+
+        desc = f"Are you sure you want to unban **{target_name}**?"
+        if reason:
+            desc += f"\n\n{reason}"
+
+        embed = discord.Embed(
+            title="Unban",
+            description=desc,
+            color=discord.Color.from_rgb(255, 255, 255)
+        )
+
+        view = UnbanConfirmView(
+            author_id=interaction.user.id,
+            target_user=target_obj or target_id,
+            target_name=target_name,
+            reason=reason
+        )
+
+        await interaction.response.send_message(embed=embed, view=view)
+
+    # Prefix command !unbanZ or !unbanz
+    @commands.command(name="unbanZ", aliases=["unbanz"])
+    async def unbanz_prefix(self, ctx: commands.Context, user_input: str = None, *, reason: str = None):
+        log_command(ctx.author, "!unbanZ", ctx.channel, f"user={user_input}, reason={reason}")
+        if not can_ban(ctx.author):
+            log_mod("Permission Denied for !unbanZ", ctx.author, user_input)
+            await ctx.send(embed=error("You do not have permission to use this command."))
+            return
+
+        if not user_input:
+            await ctx.send(embed=error("Please specify a Username or User ID to unban."))
+            return
+
+        target_obj, target_name, target_id = await resolve_banned_user(ctx.guild, self.bot, user_input)
+
+        if not target_obj and not target_id:
+            await ctx.send(embed=error(f"Could not resolve banned user: `{user_input}`"))
+            return
+
+        desc = f"Are you sure you want to unban **{target_name}**?"
+        if reason:
+            desc += f"\n\n{reason}"
+
+        embed = discord.Embed(
+            title="Unban",
+            description=desc,
+            color=discord.Color.from_rgb(255, 255, 255)
+        )
+
+        view = UnbanConfirmView(
+            author_id=ctx.author.id,
+            target_user=target_obj or target_id,
+            target_name=target_name,
+            reason=reason
+        )
+
+        await ctx.send(embed=embed, view=view)
+
+    # Slash command /warnz
+    @app_commands.command(name="warnz", description="Warn a user and send them a DM notification")
+    @app_commands.describe(
+        user="Username, User Mention, or User ID to warn",
+        reason="Reason for the warning"
+    )
+    async def warnz_slash(self, interaction: discord.Interaction, user: str, reason: str):
+        await interaction.response.defer()
+        log_command(interaction.user, "/warnz", interaction.channel, f"user={user}, reason={reason}")
+        if not can_warn_or_view_history(interaction.user):
+            log_mod("Permission Denied for /warnz", interaction.user, user)
+            await interaction.followup.send(
+                embed=error("You do not have permission to use this command."),
+                ephemeral=True
+            )
+            return
+
+        target_obj, target_name, target_id = await resolve_user(interaction.guild, self.bot, user)
+
+        if not target_obj and not target_id:
+            await interaction.followup.send(
+                embed=error(f"Could not find or resolve user: `{user}`"),
+                ephemeral=True
+            )
+            return
+
+        dm_sent = False
+        if isinstance(target_obj, (discord.Member, discord.User)):
+            try:
+                dm_embed = discord.Embed(
+                    title="Warning Notice",
+                    description=f"You have been issued a warning in **{interaction.guild.name}**.",
+                    color=discord.Color.from_rgb(241, 196, 15)
+                )
+                dm_embed.add_field(name="REASON", value=reason, inline=False)
+                dm_embed.add_field(name="ISSUED BY", value=interaction.user.display_name, inline=True)
+                dm_embed.set_footer(text=f"{config.BOT_NAME} | Moderation Operations")
+                await target_obj.send(embed=dm_embed)
+                dm_sent = True
+                log_dm(target_obj, "Warning Notice", success=True)
+            except Exception as e:
+                dm_sent = False
+                log_dm(target_obj, "Warning Notice", success=False, error_detail=str(e))
+
+        actual_id = target_id or getattr(target_obj, "id", None)
+        if actual_id:
+            await add_infraction(
+                user_id=actual_id,
+                moderator_id=interaction.user.id,
+                action_type="WARN",
+                reason=reason,
+                guild_id=interaction.guild.id if interaction.guild else None
+            )
+
+        log_mod("warned", interaction.user, target_obj or target_name, reason=reason, extra=f"DM Delivered: {dm_sent}")
+
+        embed = discord.Embed(
+            title="Warning Issued",
+            description=f"An official warning has been registered for **{target_name}**.",
+            color=discord.Color.from_rgb(241, 196, 15)
+        )
+        embed.add_field(name="TARGET USER", value=f"**{target_name}** (`{actual_id}`)", inline=True)
+        embed.add_field(name="MODERATOR", value=interaction.user.mention, inline=True)
+        embed.add_field(name="REASON", value=reason, inline=False)
+        embed.add_field(
+            name="DIRECT MESSAGE STATUS",
+            value="Delivered to Direct Messages" if dm_sent else "Failed to Deliver (Direct Messages Disabled)",
+            inline=False
+        )
+        embed.set_footer(text=f"{config.BOT_NAME} | Infraction Logged")
+
+        await interaction.followup.send(embed=embed)
+
+    # Prefix command !warnZ or !warnz
+    @commands.command(name="warnZ", aliases=["warnz"])
+    async def warnz_prefix(self, ctx: commands.Context, user_input: str = None, *, reason: str = "No reason specified"):
+        log_command(ctx.author, "!warnZ", ctx.channel, f"user={user_input}, reason={reason}")
+        if not can_warn_or_view_history(ctx.author):
+            log_mod("Permission Denied for !warnZ", ctx.author, user_input)
+            await ctx.send(embed=error("You do not have permission to use this command."))
+            return
+
+        if not user_input:
+            await ctx.send(embed=error("Please specify a Username, Mention, or User ID to warn."))
+            return
+
+        target_obj, target_name, target_id = await resolve_user(ctx.guild, self.bot, user_input)
+
+        if not target_obj and not target_id:
+            await ctx.send(embed=error(f"Could not find or resolve user: `{user_input}`"))
+            return
+
+        dm_sent = False
+        if isinstance(target_obj, (discord.Member, discord.User)):
+            try:
+                dm_embed = discord.Embed(
+                    title="Warning Notice",
+                    description=f"You have been issued a warning in **{ctx.guild.name}**.",
+                    color=discord.Color.from_rgb(241, 196, 15)
+                )
+                dm_embed.add_field(name="REASON", value=reason, inline=False)
+                dm_embed.add_field(name="ISSUED BY", value=ctx.author.display_name, inline=True)
+                dm_embed.set_footer(text=f"{config.BOT_NAME} | Moderation Operations")
+                await target_obj.send(embed=dm_embed)
+                dm_sent = True
+                log_dm(target_obj, "Warning Notice", success=True)
+            except Exception as e:
+                dm_sent = False
+                log_dm(target_obj, "Warning Notice", success=False, error_detail=str(e))
+
+        actual_id = target_id or getattr(target_obj, "id", None)
+        if actual_id:
+            await add_infraction(
+                user_id=actual_id,
+                moderator_id=ctx.author.id,
+                action_type="WARN",
+                reason=reason,
+                guild_id=ctx.guild.id if ctx.guild else None
+            )
+
+        log_mod("warned", ctx.author, target_obj or target_name, reason=reason, extra=f"DM Delivered: {dm_sent}")
+
+        embed = discord.Embed(
+            title="Warning Issued",
+            description=f"An official warning has been registered for **{target_name}**.",
+            color=discord.Color.from_rgb(241, 196, 15)
+        )
+        embed.add_field(name="TARGET USER", value=f"**{target_name}** (`{actual_id}`)", inline=True)
+        embed.add_field(name="MODERATOR", value=ctx.author.mention, inline=True)
+        embed.add_field(name="REASON", value=reason, inline=False)
+        embed.add_field(
+            name="DIRECT MESSAGE STATUS",
+            value="Delivered to Direct Messages" if dm_sent else "Failed to Deliver (Direct Messages Disabled)",
+            inline=False
+        )
+        embed.set_footer(text=f"{config.BOT_NAME} | Infraction Logged")
+
+        await ctx.send(embed=embed)
+
+    # Slash command /warnremovez
+    @app_commands.command(name="warnremovez", description="Remove warning(s) from a user and notify them via DM")
+    @app_commands.describe(
+        user="Username, User Mention, or User ID to remove warn from",
+        warn_id="Specific Warning ID to remove (optional - leave blank to remove all warnings)",
+        reason="Reason for removing the warning"
+    )
+    async def warnremovez_slash(
+        self,
+        interaction: discord.Interaction,
+        user: str,
+        warn_id: int = None,
+        reason: str = "No reason specified"
+    ):
+        log_command(interaction.user, "/warnremovez", interaction.channel, f"user={user}, warn_id={warn_id}, reason={reason}")
+        if not can_warn_or_view_history(interaction.user):
+            log_mod("Permission Denied for /warnremovez", interaction.user, user)
+            await interaction.response.send_message(
+                embed=error("You do not have permission to use this command."),
+                ephemeral=True
+            )
+            return
+
+        target_obj, target_name, target_id = await resolve_user(interaction.guild, self.bot, user)
+
+        actual_id = target_id or getattr(target_obj, "id", None)
+        if not actual_id:
+            await interaction.response.send_message(
+                embed=error(f"Could not find or resolve user: `{user}`"),
+                ephemeral=True
+            )
+            return
+
+        count_removed, records = await remove_user_warning(actual_id, warn_id=warn_id, guild_id=interaction.guild.id if interaction.guild else None)
+
+        if count_removed == 0:
+            msg = f"No warning found with ID `{warn_id}` for **{target_name}**." if warn_id else f"No active warning records found for **{target_name}** (`{actual_id}`)."
+            await interaction.response.send_message(embed=error(msg), ephemeral=True)
+            return
+
+        log_mod("Removed Warning", interaction.user, target_obj or target_name, reason=reason, extra=f"Removed count: {count_removed}, Warn ID: {warn_id}")
+
+        dm_sent = False
+        if isinstance(target_obj, (discord.Member, discord.User)):
+            try:
+                dm_embed = discord.Embed(
+                    title="Warning Removed",
+                    description=f"A warning issued on your account in **{interaction.guild.name}** has been removed.",
+                    color=discord.Color.from_rgb(46, 204, 113)
+                )
+                if warn_id:
+                    dm_embed.add_field(name="WARNING ID", value=f"`#{warn_id}`", inline=True)
+                else:
+                    dm_embed.add_field(name="WARNINGS CLEARED", value=f"`{count_removed}` warning(s)", inline=True)
+                dm_embed.add_field(name="REASON FOR REMOVAL", value=reason, inline=False)
+                dm_embed.add_field(name="MODERATOR", value=interaction.user.display_name, inline=True)
+                dm_embed.set_footer(text=f"{config.BOT_NAME} | Moderation Operations")
+                await target_obj.send(embed=dm_embed)
+                dm_sent = True
+                log_dm(target_obj, "Warning Removal Notice", success=True)
+            except Exception as e:
+                dm_sent = False
+                log_dm(target_obj, "Warning Removal Notice", success=False, error_detail=str(e))
+
+        embed = discord.Embed(
+            title="Warning Removed",
+            description=f"Warning record updated for **{target_name}**.",
+            color=discord.Color.from_rgb(46, 204, 113)
+        )
+        embed.add_field(name="TARGET USER", value=f"**{target_name}** (`{actual_id}`)", inline=True)
+        embed.add_field(name="MODERATOR", value=interaction.user.mention, inline=True)
+        if warn_id:
+            embed.add_field(name="REMOVED WARNING ID", value=f"`#{warn_id}`", inline=True)
+        else:
+            embed.add_field(name="TOTAL REMOVED", value=f"`{count_removed}` warning(s)", inline=True)
+        embed.add_field(name="REASON", value=reason, inline=False)
+        embed.add_field(
+            name="DIRECT MESSAGE STATUS",
+            value="Delivered to Direct Messages" if dm_sent else "Failed to Deliver (Direct Messages Disabled)",
+            inline=False
+        )
+        embed.set_footer(text=f"{config.BOT_NAME} | Infraction Removed")
+
+        await interaction.response.send_message(embed=embed)
+
+    # Prefix command !warnremoveZ or !warnremovez
+    @commands.command(name="warnremoveZ", aliases=["warnremovez"])
+    async def warnremovez_prefix(self, ctx: commands.Context, user_input: str = None, warn_id_or_reason: str = None, *, reason: str = "No reason specified"):
+        log_command(ctx.author, "!warnremoveZ", ctx.channel, f"user={user_input}, warn_id_or_reason={warn_id_or_reason}, reason={reason}")
+        if not can_warn_or_view_history(ctx.author):
+            log_mod("Permission Denied for !warnremoveZ", ctx.author, user_input)
+            await ctx.send(embed=error("You do not have permission to use this command."))
+            return
+
+        if not user_input:
+            await ctx.send(embed=error("Please specify a Username, Mention, or User ID to remove warning from."))
+            return
+
+        warn_id = None
+        if warn_id_or_reason:
+            if warn_id_or_reason.isdigit():
+                warn_id = int(warn_id_or_reason)
+            else:
+                if reason == "No reason specified":
+                    reason = warn_id_or_reason
+                else:
+                    reason = f"{warn_id_or_reason} {reason}"
+
+        target_obj, target_name, target_id = await resolve_user(ctx.guild, self.bot, user_input)
+
+        actual_id = target_id or getattr(target_obj, "id", None)
+        if not actual_id:
+            await ctx.send(embed=error(f"Could not find or resolve user: `{user_input}`"))
+            return
+
+        count_removed, records = await remove_user_warning(actual_id, warn_id=warn_id, guild_id=ctx.guild.id if ctx.guild else None)
+
+        if count_removed == 0:
+            msg = f"No warning found with ID `{warn_id}` for **{target_name}**." if warn_id else f"No active warning records found for **{target_name}** (`{actual_id}`)."
+            await ctx.send(embed=error(msg))
+            return
+
+        log_mod("Removed Warning", ctx.author, target_obj or target_name, reason=reason, extra=f"Removed count: {count_removed}, Warn ID: {warn_id}")
+
+        dm_sent = False
+        if isinstance(target_obj, (discord.Member, discord.User)):
+            try:
+                dm_embed = discord.Embed(
+                    title="Warning Removed",
+                    description=f"A warning issued on your account in **{ctx.guild.name}** has been removed.",
+                    color=discord.Color.from_rgb(46, 204, 113)
+                )
+                if warn_id:
+                    dm_embed.add_field(name="WARNING ID", value=f"`#{warn_id}`", inline=True)
+                else:
+                    dm_embed.add_field(name="WARNINGS CLEARED", value=f"`{count_removed}` warning(s)", inline=True)
+                dm_embed.add_field(name="REASON FOR REMOVAL", value=reason, inline=False)
+                dm_embed.add_field(name="MODERATOR", value=ctx.author.display_name, inline=True)
+                dm_embed.set_footer(text=f"{config.BOT_NAME} | Moderation Operations")
+                await target_obj.send(embed=dm_embed)
+                dm_sent = True
+                log_dm(target_obj, "Warning Removal Notice", success=True)
+            except Exception as e:
+                dm_sent = False
+                log_dm(target_obj, "Warning Removal Notice", success=False, error_detail=str(e))
+
+        embed = discord.Embed(
+            title="Warning Removed",
+            description=f"Warning record updated for **{target_name}**.",
+            color=discord.Color.from_rgb(46, 204, 113)
+        )
+        embed.add_field(name="TARGET USER", value=f"**{target_name}** (`{actual_id}`)", inline=True)
+        embed.add_field(name="MODERATOR", value=ctx.author.mention, inline=True)
+        if warn_id:
+            embed.add_field(name="REMOVED WARNING ID", value=f"`#{warn_id}`", inline=True)
+        else:
+            embed.add_field(name="TOTAL REMOVED", value=f"`{count_removed}` warning(s)", inline=True)
+        embed.add_field(name="REASON", value=reason, inline=False)
+        embed.add_field(
+            name="DIRECT MESSAGE STATUS",
+            value="Delivered to Direct Messages" if dm_sent else "Failed to Deliver (Direct Messages Disabled)",
+            inline=False
+        )
+        embed.set_footer(text=f"{config.BOT_NAME} | Infraction Removed")
+
+        await ctx.send(embed=embed)
+
+    # Slash command /historyz
+    @app_commands.command(name="historyz", description="View full message count, bad words, and warning/ban history of a user")
+    @app_commands.describe(
+        user="Username, User Mention, or User ID to check"
+    )
+    async def historyz_slash(self, interaction: discord.Interaction, user: str = None):
+        log_command(interaction.user, "/historyz", interaction.channel, f"user={user}")
+        if not can_warn_or_view_history(interaction.user):
+            log_mod("Permission Denied for /historyz", interaction.user, user)
+            await interaction.response.send_message(
+                embed=error("You do not have permission to view user history."),
+                ephemeral=True
+            )
+            return
+
+        search_user = user or str(interaction.user.id)
+        target_obj, target_name, target_id = await resolve_user(interaction.guild, self.bot, search_user)
+
+        actual_id = target_id or getattr(target_obj, "id", None)
+        if not actual_id:
+            await interaction.response.send_message(
+                embed=error(f"Could not find or resolve user: `{search_user}`"),
+                ephemeral=True
+            )
+            return
+
+        gid = interaction.guild.id if interaction.guild else None
+        stats = await get_user_stats(actual_id, guild_id=gid)
+        infractions = await get_user_infractions(actual_id, guild_id=gid)
+
+        warnings = [i for i in infractions if i["action_type"] == "WARN"]
+        bad_word_logs = [i for i in infractions if i["action_type"] == "BAD_WORD"]
+        other_mods = [i for i in infractions if i["action_type"] in ("BAN", "UNBAN", "KICK")]
+
+        warn_count = len(warnings)
+        total_bad_words = stats["bad_word_count"]
+
+        if warn_count >= 3 or len(other_mods) >= 2:
+            risk_status = "[HIGH RISK - REPEAT OFFENDER]"
+            risk_color = discord.Color.from_rgb(231, 76, 60)
+        elif warn_count >= 1 or total_bad_words >= 3:
+            risk_status = "[NOTICE - WARNINGS RECORDED]"
+            risk_color = discord.Color.from_rgb(241, 196, 15)
+        else:
+            risk_status = "[CLEAN MEMBER]"
+            risk_color = discord.Color.from_rgb(46, 204, 113)
+
+        server_name = interaction.guild.name if interaction.guild else "Server"
+        embed = discord.Embed(
+            title=f"User History Audit Profile ({server_name}) | {target_name}",
+            color=risk_color
+        )
+        if isinstance(target_obj, (discord.Member, discord.User)) and target_obj.display_avatar:
+            embed.set_thumbnail(url=target_obj.display_avatar.url)
+
+        embed.add_field(name="TARGET USER ID", value=f"`{actual_id}`", inline=True)
+        embed.add_field(name="RISK STATUS", value=f"`{risk_status}`", inline=True)
+        embed.add_field(name="LAST ACTIVE", value=f"`{stats['last_active']}`", inline=True)
+
+        embed.add_field(
+            name="ACTIVITY & MESSAGES",
+            value=(
+                f"• Total Messages Sent : `{stats['message_count']}`\n"
+                f"• Flagged Bad Words   : `{stats['bad_word_count']}`"
+            ),
+            inline=False
+        )
+
+        if warnings:
+            warn_lines = []
+            for w in warnings[:5]:
+                mod_user = interaction.guild.get_member(w['moderator_id']) if interaction.guild else None
+                mod_name = mod_user.display_name if mod_user else f"ID: {w['moderator_id']}"
+                warn_lines.append(f"• [{w['timestamp']}] Reason: `{w['reason']}` | Issued by: {mod_name}")
+            warn_str = "\n".join(warn_lines)
+            if len(warnings) > 5:
+                warn_str += f"\n*...and {len(warnings) - 5} older warning(s)*"
+        else:
+            warn_str = "*No warnings recorded in database.*"
+
+        embed.add_field(name=f"WARNING RECORDS ({len(warnings)})", value=warn_str, inline=False)
+
+        if other_mods:
+            mod_lines = []
+            for m in other_mods[:5]:
+                mod_lines.append(f"• [{m['timestamp']}] Action: `{m['action_type']}` | Reason: {m['reason']}")
+            mod_str = "\n".join(mod_lines)
+        else:
+            mod_str = "*No ban, unban, or kick actions recorded.*"
+
+        embed.add_field(name=f"MODERATION HISTORY ({len(other_mods)})", value=mod_str, inline=False)
+
+        if bad_word_logs:
+            bw_lines = []
+            for bw in bad_word_logs[:3]:
+                bw_lines.append(f"• [{bw['timestamp']}] {bw['reason']}")
+            bw_str = "\n".join(bw_lines)
+        else:
+            bw_str = "*No profanity flags recorded.*"
+
+        embed.add_field(name=f"BAD WORD LOGS ({len(bad_word_logs)})", value=bw_str, inline=False)
+
+        embed.set_footer(text=f"{config.BOT_NAME} | Audit Record ID: {actual_id}")
+        await interaction.response.send_message(embed=embed)
+
+    # Prefix command !historyZ or !historyz
+    @commands.command(name="historyZ", aliases=["historyz"])
+    async def historyz_prefix(self, ctx: commands.Context, user_input: str = None):
+        log_command(ctx.author, "!historyZ", ctx.channel, f"user={user_input}")
+        if not can_warn_or_view_history(ctx.author):
+            log_mod("Permission Denied for !historyZ", ctx.author, user_input)
+            await ctx.send(embed=error("You do not have permission to view user history."))
+            return
+
+        search_user = user_input or str(ctx.author.id)
+        target_obj, target_name, target_id = await resolve_user(ctx.guild, self.bot, search_user)
+
+        actual_id = target_id or getattr(target_obj, "id", None)
+        if not actual_id:
+            await ctx.send(embed=error(f"Could not find or resolve user: `{search_user}`"))
+            return
+
+        gid = ctx.guild.id if ctx.guild else None
+        stats = await get_user_stats(actual_id, guild_id=gid)
+        infractions = await get_user_infractions(actual_id, guild_id=gid)
+
+        warnings = [i for i in infractions if i["action_type"] == "WARN"]
+        bad_word_logs = [i for i in infractions if i["action_type"] == "BAD_WORD"]
+        other_mods = [i for i in infractions if i["action_type"] in ("BAN", "UNBAN", "KICK")]
+
+        warn_count = len(warnings)
+        total_bad_words = stats["bad_word_count"]
+
+        if warn_count >= 3 or len(other_mods) >= 2:
+            risk_status = "[HIGH RISK - REPEAT OFFENDER]"
+            risk_color = discord.Color.from_rgb(231, 76, 60)
+        elif warn_count >= 1 or total_bad_words >= 3:
+            risk_status = "[NOTICE - WARNINGS RECORDED]"
+            risk_color = discord.Color.from_rgb(241, 196, 15)
+        else:
+            risk_status = "[CLEAN MEMBER]"
+            risk_color = discord.Color.from_rgb(46, 204, 113)
+
+        server_name = ctx.guild.name if ctx.guild else "Server"
+        embed = discord.Embed(
+            title=f"User History Audit Profile ({server_name}) | {target_name}",
+            color=risk_color
+        )
+        if isinstance(target_obj, (discord.Member, discord.User)) and target_obj.display_avatar:
+            embed.set_thumbnail(url=target_obj.display_avatar.url)
+
+        embed.add_field(name="TARGET USER ID", value=f"`{actual_id}`", inline=True)
+        embed.add_field(name="RISK STATUS", value=f"`{risk_status}`", inline=True)
+        embed.add_field(name="LAST ACTIVE", value=f"`{stats['last_active']}`", inline=True)
+
+        embed.add_field(
+            name="ACTIVITY & MESSAGES",
+            value=(
+                f"• Total Messages Sent : `{stats['message_count']}`\n"
+                f"• Flagged Bad Words   : `{stats['bad_word_count']}`"
+            ),
+            inline=False
+        )
+
+        if warnings:
+            warn_lines = []
+            for w in warnings[:5]:
+                mod_user = ctx.guild.get_member(w['moderator_id']) if ctx.guild else None
+                mod_name = mod_user.display_name if mod_user else f"ID: {w['moderator_id']}"
+                warn_lines.append(f"• [{w['timestamp']}] Reason: `{w['reason']}` | Issued by: {mod_name}")
+            warn_str = "\n".join(warn_lines)
+            if len(warnings) > 5:
+                warn_str += f"\n*...and {len(warnings) - 5} older warning(s)*"
+        else:
+            warn_str = "*No warnings recorded in database.*"
+
+        embed.add_field(name=f"WARNING RECORDS ({len(warnings)})", value=warn_str, inline=False)
+
+        if other_mods:
+            mod_lines = []
+            for m in other_mods[:5]:
+                mod_lines.append(f"• [{m['timestamp']}] Action: `{m['action_type']}` | Reason: {m['reason']}")
+            mod_str = "\n".join(mod_lines)
+        else:
+            mod_str = "*No ban, unban, or kick actions recorded.*"
+
+        embed.add_field(name=f"MODERATION HISTORY ({len(other_mods)})", value=mod_str, inline=False)
+
+        if bad_word_logs:
+            bw_lines = []
+            for bw in bad_word_logs[:3]:
+                bw_lines.append(f"• [{bw['timestamp']}] {bw['reason']}")
+            bw_str = "\n".join(bw_lines)
+        else:
+            bw_str = "*No profanity flags recorded.*"
+
+        embed.add_field(name=f"BAD WORD LOGS ({len(bad_word_logs)})", value=bw_str, inline=False)
+
+        embed.set_footer(text=f"{config.BOT_NAME} | Audit Record ID: {actual_id}")
+        await ctx.send(embed=embed)
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(BanCog(bot))
