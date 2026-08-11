@@ -17,9 +17,6 @@ from utils.database import setup_database
 
 
 
-# ==========================================
-# Time / Logger
-# ==========================================
 
 
 timezone = pytz.timezone(
@@ -42,10 +39,6 @@ def log(message):
 
 
 
-
-# ==========================================
-# Bot Setup
-# ==========================================
 
 
 intents = discord.Intents.default()
@@ -71,10 +64,6 @@ bot = commands.Bot(
 
 
 
-
-# ==========================================
-# Startup
-# ==========================================
 
 
 extensions = [
@@ -171,7 +160,7 @@ async def on_ready():
 
     log("Bot starting...")
     
-    # Set premium status activity
+
     try:
         await bot.change_presence(
             activity=discord.Activity(
@@ -183,7 +172,7 @@ async def on_ready():
     except Exception as e:
         log(f"Failed to set status: {str(e)}")
 
-    # Server connection filter: Ignore events from unapproved servers without leaving automatically
+
     for guild_connected in list(bot.guilds):
         if guild_connected.id == 1490348711182733495 or guild_connected.id not in config.GUILDS:
             log(f"Ignoring events from unapproved server: {guild_connected.name} ({guild_connected.id})")
@@ -306,13 +295,6 @@ async def on_app_command_error(
 
 
 
-
-
-
-
-# ==========================================
-# Run
-# ==========================================
 
 
 if __name__ == "__main__":
