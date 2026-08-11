@@ -9,7 +9,7 @@ WARNING = discord.Color.orange()
 
 
 def ticket_panel(bot=None, guild=None):
-    server_name = guild.name if guild else "Secret Hideout"
+    server_name = guild.name if guild else "Zer's Lobby"
     embed = discord.Embed(
         title="ZER's Support Bot",
         description=(
@@ -42,7 +42,7 @@ def ticket_panel(bot=None, guild=None):
     embed.set_footer(text=f"{server_name} Operations • Select ticket type below")
     return embed
 
-def ticket_created(user, application, form):
+def ticket_created(user, application, form, ticket_uuid=None):
     title = "Support Ticket Created" if not form else "Application Ticket Initiated"
     desc = "Hello! Your private ticket has been successfully created. Please describe your request below."
     
@@ -70,6 +70,13 @@ def ticket_created(user, application, form):
         value=application,
         inline=True
     )
+    
+    if ticket_uuid:
+        embed.add_field(
+            name="Ticket UUID",
+            value=f"`{ticket_uuid}`",
+            inline=False
+        )
     
     if form:
         embed.add_field(
