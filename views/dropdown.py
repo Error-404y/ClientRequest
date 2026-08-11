@@ -161,7 +161,7 @@ class ApplicationDropdown(Select):
             return
 
         # Write to database record
-        await create_ticket_record(
+        ticket_uuid = await create_ticket_record(
             channel.id,
             guild.id,
             user.id,
@@ -180,7 +180,7 @@ class ApplicationDropdown(Select):
 
         await channel.send(
             content=user.mention,
-            embed=ticket_created(user, application, form),
+            embed=ticket_created(user, application, form, ticket_uuid),
             view=view
         )
 
