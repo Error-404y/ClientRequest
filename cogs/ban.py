@@ -8,6 +8,7 @@ import config
 
 from utils.permissions import (
     can_ban,
+    can_kick,
     can_warn_or_view_history
 )
 
@@ -15,6 +16,7 @@ from utils.embeds import error
 
 from views.ban_buttons import BanConfirmView
 from views.unban_buttons import UnbanConfirmView
+from views.kick_buttons import KickConfirmView
 
 from utils.database import (
     add_infraction,
@@ -698,6 +700,124 @@ class BanCog(commands.Cog):
             embed=embed,
             view=view
         )
+
+    @app_commands.command(
+        name="kickz",
+        description="Kick a user from the server with confirmation"
+    )
+    @app_commands.describe(
+        user="Username, User Mention, or User ID to kick",
+        reason="Reason for the kick (optional)"
+    )
+    async def kickz_slash(
+        self,
+        interaction: discord.Interaction,
+        user: str,
+        reason: str = None
+    ):
+
+        log_command(
+            interaction.user,
+            "/kickz",
+            interaction.channel,
+            f"user={user}, reason={reason}"
+        )
+
+        if not can_kick(interaction.user):
+            log_mod("Permission Denied for /kickz", interaction.user, user)
+            await interaction.response.send_message(
+                embed=error("You do not have permission to use this command."),
+                ephemeral=True
+            )
+            return
+
+        target_obj, target_name, target_id = await resolve_user(interaction.guild, self.bot, user)
+
+        if not target_obj and not target_id:
+            await interaction.response.send_message(
+                embed=error(f"Could not find or resolve user: `{user}`"),
+                ephemeral=True
+            )
+            return
+
+        description = f"Are you sure you want to kick **{target_name}**?"
+        if reason:
+            description += f"\n\n{reason}"
+
+        embed = discord.Embed(
+            title="Kick",
+            description=description,
+            color=discord.Color.from_rgb(255, 255, 255)
+        )
+
+        view = KickConfirmView(
+            author_id=interaction.user.id,
+            target_user=target_obj or target_id,
+            target_name=target_name,
+            reason=reason
+        )
+
+        await interaction.response.send_message(embed=embed, view=view)
+
+
+    @commands.command(
+        name="kickZ",
+        aliases=["kickz"]
+    )
+    async def kickz_prefix(
+        self,
+        ctx: commands.Context,
+        user_input: str = None,
+        *,
+        reason: str = None
+    ):
+
+        log_command(
+            ctx.author,
+            "!kickZ",
+            ctx.channel,
+            f"user={user_input}, reason={reason}"
+        )
+
+        if not can_kick(ctx.author):
+            log_mod("Permission Denied for !kickZ", ctx.author, user_input)
+            await ctx.send(
+                embed=error("You do not have permission to use this command.")
+            )
+            return
+
+        if not user_input:
+            await ctx.send(
+                embed=error("Please specify a Username, Mention, or User ID to kick.")
+            )
+            return
+
+        target_obj, target_name, target_id = await resolve_user(ctx.guild, self.bot, user_input)
+
+        if not target_obj and not target_id:
+            await ctx.send(
+                embed=error(f"Could not find or resolve user: `{user_input}`")
+            )
+            return
+
+        description = f"Are you sure you want to kick **{target_name}**?"
+        if reason:
+            description += f"\n\n{reason}"
+
+        embed = discord.Embed(
+            title="Kick",
+            description=description,
+            color=discord.Color.from_rgb(255, 255, 255)
+        )
+
+        view = KickConfirmView(
+            author_id=ctx.author.id,
+            target_user=target_obj or target_id,
+            target_name=target_name,
+            reason=reason
+        )
+
+        await ctx.send(embed=embed, view=view)
 
 
     @app_commands.command(
