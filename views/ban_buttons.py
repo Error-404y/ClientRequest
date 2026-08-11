@@ -13,15 +13,17 @@ class BanConfirmView(discord.ui.View):
         self.reason = reason
 
     @discord.ui.button(
-        label="Confirm",
-        style=discord.ButtonStyle.success,
+        label="Confirm ban",
+        style=discord.ButtonStyle.danger,
         custom_id="banz_confirm"
     )
     async def confirm_ban(self, interaction: discord.Interaction, button: discord.ui.Button):
         log_interaction(interaction.user, "banz_confirm", interaction.channel, details=f"Target: {self.target_name}")
         if not can_ban(interaction.user) or interaction.user.id != self.author_id:
+
             log_mod("Ban Confirm Rejected (Unauthorized)", interaction.user, self.target_name)
             await interaction.response.send_message(
+
                 "Unauthorized action. Permission denied.",
                 ephemeral=True
             )
@@ -29,7 +31,6 @@ class BanConfirmView(discord.ui.View):
 
         await interaction.response.defer()
 
-        # 1. Fetch user if target_user is just an ID to attempt DM
         user_to_dm = None
         if isinstance(self.target_user, (discord.Member, discord.User)):
             user_to_dm = self.target_user
@@ -41,14 +42,14 @@ class BanConfirmView(discord.ui.View):
                 except Exception:
                     user_to_dm = None
 
-        # 2. Attempt to DM the user BEFORE banning them
+
         dm_sent = False
         if user_to_dm:
             try:
                 dm_embed = discord.Embed(
-                    title="Ban Notice",
+                    title="Ban Notification",
                     description=f"You have been banned from **{interaction.guild.name}**.",
-                    color=discord.Color.from_rgb(231, 76, 60)
+                    color=discord.Color.from_rgb(220, 53, 69)
                 )
                 dm_embed.add_field(name="REASON", value=self.reason or "No reason specified", inline=False)
                 dm_embed.add_field(name="ISSUED BY", value=interaction.user.display_name, inline=True)
@@ -67,19 +68,19 @@ class BanConfirmView(discord.ui.View):
                 await interaction.guild.ban(
                     self.target_user,
                     reason=ban_reason,
-                    delete_message_days=7
+                    delete_message_days=14
                 )
             elif isinstance(self.target_user, int):
                 await interaction.guild.ban(
                     discord.Object(id=self.target_user),
                     reason=ban_reason,
-                    delete_message_days=7
+                    delete_message_days=14
                 )
             elif hasattr(self.target_user, "id"):
                 await interaction.guild.ban(
                     discord.Object(id=self.target_user.id),
                     reason=ban_reason,
-                    delete_message_days=7
+                    delete_message_days=14
                 )
             else:
                 await interaction.followup.send(
@@ -100,27 +101,27 @@ class BanConfirmView(discord.ui.View):
                     guild_id=interaction.guild.id if interaction.guild else None
                 )
 
-            log_mod("banned", interaction.user, self.target_user or self.target_name, reason=self.reason or "No reason specified", extra=f"DM Delivered: {dm_sent}", infraction_uuid=inf_uuid)
+            log_mod("banned", interaction.user, self.target_user or self.target_name, reason=self.reason or "No reason specified", extra=f"DM Delivered: {dm_sent} | UUID: {inf_uuid}")
 
-            # Success Embed matching exact screenshot design (No Emojis)
+
             desc = f"**{self.target_name}** has successfully been banned!"
             if self.reason:
                 desc += f"\n\n{self.reason}"
             else:
                 desc += f"\n\nNo reason specified"
-            if inf_uuid:
-                desc += f"\n\n**Infraction UUID:** `{inf_uuid}`"
 
             embed = discord.Embed(
                 title="Ban",
                 description=desc,
                 color=discord.Color.from_rgb(255, 255, 255)
             )
+            if inf_uuid:
+                embed.add_field(name="INFRACTION UUID", value=f"`{inf_uuid}`", inline=False)
 
             await interaction.message.edit(embed=embed, view=None)
 
         except discord.Forbidden:
-            log_mod("Ban Failed (Bot Lacks Permission)", interaction.user, self.target_name)
+            log_mod("Ban Failed (Bot Lacks Permission) -> DB has been Notified.", interaction.user, self.target_name)
             await interaction.followup.send(
                 "Failed to ban user: Bot lacks required permissions or target role is superior.",
                 ephemeral=True
