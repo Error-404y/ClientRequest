@@ -33,10 +33,6 @@ from utils.logger import (
 )
 
 
-# ============================================================
-# USER RESOLUTION
-# ============================================================
-
 async def resolve_user(
     guild: discord.Guild,
     bot: commands.Bot,
@@ -58,9 +54,6 @@ async def resolve_user(
 
     clean_input = user_input.strip()
 
-    # --------------------------------------------------------
-    # Mention
-    # --------------------------------------------------------
 
     mention_match = re.match(
         r"^<@!?(\d+)>$",
@@ -91,10 +84,6 @@ async def resolve_user(
                 user_id
             )
 
-    # --------------------------------------------------------
-    # Raw User ID
-    # --------------------------------------------------------
-
     if clean_input.isdigit():
 
         user_id = int(clean_input)
@@ -124,9 +113,6 @@ async def resolve_user(
                 user_id
             )
 
-    # --------------------------------------------------------
-    # Guild username/name search
-    # --------------------------------------------------------
 
     if guild:
 
@@ -174,10 +160,6 @@ async def resolve_user(
     )
 
 
-# ============================================================
-# BANNED USER RESOLUTION
-# ============================================================
-
 async def resolve_banned_user(
     guild: discord.Guild,
     bot: commands.Bot,
@@ -210,9 +192,6 @@ async def resolve_banned_user(
     elif clean_input.isdigit():
         user_id = int(clean_input)
 
-    # --------------------------------------------------------
-    # Get ban list
-    # --------------------------------------------------------
 
     ban_entries = []
 
@@ -226,10 +205,8 @@ async def resolve_banned_user(
         except Exception:
             ban_entries = []
 
-    # --------------------------------------------------------
-    # Search by ID
-    # --------------------------------------------------------
-
+ 
+ 
     if user_id:
 
         for entry in ban_entries:
@@ -257,10 +234,6 @@ async def resolve_banned_user(
                 str(user_id),
                 user_id
             )
-
-    # --------------------------------------------------------
-    # Search username
-    # --------------------------------------------------------
 
     search_term = clean_input.lstrip("@").lower()
 
@@ -290,18 +263,12 @@ async def resolve_banned_user(
     )
 
 
-# ============================================================
-# BAN COG
-# ============================================================
 
 class BanCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # ========================================================
-    # MESSAGE ACTIVITY TRACKER
-    # ========================================================
 
     @commands.Cog.listener()
     async def on_message(
@@ -345,9 +312,6 @@ class BanCog(commands.Cog):
                     bad_word
                 )
 
-        # ----------------------------------------------------
-        # Track activity
-        # ----------------------------------------------------
 
         await increment_user_activity(
             message.author.id,
@@ -355,9 +319,7 @@ class BanCog(commands.Cog):
             has_bad_word=has_bad_word
         )
 
-        # ----------------------------------------------------
-        # Log bad word
-        # ----------------------------------------------------
+
 
         if has_bad_word:
 
@@ -378,9 +340,6 @@ class BanCog(commands.Cog):
                 guild_id=message.guild.id
             )
 
-    # ========================================================
-    # /BANZ
-    # ========================================================
 
     @app_commands.command(
         name="banz",
@@ -468,9 +427,6 @@ class BanCog(commands.Cog):
             view=view
         )
 
-    # ========================================================
-    # !BANZ
-    # ========================================================
 
     @commands.command(
         name="banZ",
@@ -563,9 +519,7 @@ class BanCog(commands.Cog):
             view=view
         )
 
-    # ========================================================
-    # /UNBANZ
-    # ========================================================
+
 
     @app_commands.command(
         name="unbanz",
@@ -653,9 +607,6 @@ class BanCog(commands.Cog):
             view=view
         )
 
-    # ========================================================
-    # !UNBANZ
-    # ========================================================
 
     @commands.command(
         name="unbanZ",
@@ -748,13 +699,6 @@ class BanCog(commands.Cog):
             view=view
         )
 
-    # ========================================================
-    # /WARNZ
-    #
-    # IMPORTANT:
-    # The UUID returned by add_infraction() is stored in
-    # infraction_uuid and directly displayed in the embed.
-    # ========================================================
 
     @app_commands.command(
         name="warnz",
@@ -799,10 +743,6 @@ class BanCog(commands.Cog):
 
             return
 
-        # ----------------------------------------------------
-        # Resolve target
-        # ----------------------------------------------------
-
         target_obj, target_name, target_id = await resolve_user(
             interaction.guild,
             self.bot,
@@ -836,9 +776,6 @@ class BanCog(commands.Cog):
 
             return
 
-        # ----------------------------------------------------
-        # DM user
-        # ----------------------------------------------------
 
         dm_sent = False
 
@@ -904,12 +841,7 @@ class BanCog(commands.Cog):
                     error_detail=str(exc)
                 )
 
-        # ----------------------------------------------------
-        # CREATE INFRACTION
-        #
-        # THIS RETURNS THE REAL UUID FROM DATABASE.PY
-        # ----------------------------------------------------
-
+ 
         infraction_uuid = await add_infraction(
             user_id=actual_id,
             moderator_id=interaction.user.id,
@@ -922,15 +854,6 @@ class BanCog(commands.Cog):
             )
         )
 
-        # ----------------------------------------------------
-        # LOG
-        #
-        # DO NOT use:
-        #
-        # infraction_uuid=infraction_uuid
-        #
-        # because your log_mod() does not accept that argument.
-        # ----------------------------------------------------
 
         log_mod(
             "warned",
@@ -942,10 +865,6 @@ class BanCog(commands.Cog):
                 f"Infraction UUID: {infraction_uuid}"
             )
         )
-
-        # ----------------------------------------------------
-        # WARNING EMBED
-        # ----------------------------------------------------
 
         embed = discord.Embed(
             title="Warning Issued",
@@ -974,10 +893,6 @@ class BanCog(commands.Cog):
             value=interaction.user.mention,
             inline=True
         )
-
-        # ----------------------------------------------------
-        # UUID
-        # ----------------------------------------------------
 
         embed.add_field(
             name="INFRACTION UUID",
@@ -1014,9 +929,6 @@ class BanCog(commands.Cog):
             embed=embed
         )
 
-    # ========================================================
-    # !WARNZ
-    # ========================================================
 
     @commands.command(
         name="warnZ",
@@ -1094,10 +1006,6 @@ class BanCog(commands.Cog):
 
             return
 
-        # ----------------------------------------------------
-        # DM
-        # ----------------------------------------------------
-
         dm_sent = False
 
         if isinstance(
@@ -1162,10 +1070,6 @@ class BanCog(commands.Cog):
                     error_detail=str(exc)
                 )
 
-        # ----------------------------------------------------
-        # DATABASE
-        # ----------------------------------------------------
-
         infraction_uuid = await add_infraction(
             user_id=actual_id,
             moderator_id=ctx.author.id,
@@ -1178,10 +1082,6 @@ class BanCog(commands.Cog):
             )
         )
 
-        # ----------------------------------------------------
-        # LOG
-        # ----------------------------------------------------
-
         log_mod(
             "warned",
             ctx.author,
@@ -1192,10 +1092,6 @@ class BanCog(commands.Cog):
                 f"Infraction UUID: {infraction_uuid}"
             )
         )
-
-        # ----------------------------------------------------
-        # EMBED
-        # ----------------------------------------------------
 
         embed = discord.Embed(
             title="Warning Issued",
@@ -1260,9 +1156,7 @@ class BanCog(commands.Cog):
             embed=embed
         )
 
-    # ========================================================
-    # /WARNREMOVEZ
-    # ========================================================
+
 
     @app_commands.command(
         name="warnremovez",
@@ -1307,9 +1201,6 @@ class BanCog(commands.Cog):
 
             return
 
-        # ----------------------------------------------------
-        # UUID passed as user
-        # ----------------------------------------------------
 
         if user and (
             "-"
@@ -1357,10 +1248,7 @@ class BanCog(commands.Cog):
             )
 
             return
-
-        # ----------------------------------------------------
-        # Remove warning
-        # ----------------------------------------------------
+        
 
         count_removed, records = await remove_user_warning(
             actual_id,
@@ -1412,9 +1300,6 @@ class BanCog(commands.Cog):
             else None
         )
 
-        # ----------------------------------------------------
-        # Log
-        # ----------------------------------------------------
 
         log_mod(
             "Removed Warning",
@@ -1427,10 +1312,6 @@ class BanCog(commands.Cog):
                 f"UUID: {removed_uuid}"
             )
         )
-
-        # ----------------------------------------------------
-        # DM
-        # ----------------------------------------------------
 
         dm_sent = False
 
@@ -1513,9 +1394,6 @@ class BanCog(commands.Cog):
                     error_detail=str(exc)
                 )
 
-        # ----------------------------------------------------
-        # Response
-        # ----------------------------------------------------
 
         embed = discord.Embed(
             title="Warning Removed",
@@ -1590,9 +1468,6 @@ class BanCog(commands.Cog):
             embed=embed
         )
 
-    # ========================================================
-    # !WARNREMOVEZ
-    # ========================================================
 
     @commands.command(
         name="warnremoveZ",
@@ -1670,9 +1545,6 @@ class BanCog(commands.Cog):
                         f"{reason}"
                     )
 
-        # ----------------------------------------------------
-        # UUID as user input
-        # ----------------------------------------------------
 
         if user_input and (
             "-"
@@ -1781,9 +1653,6 @@ class BanCog(commands.Cog):
             )
         )
 
-        # ----------------------------------------------------
-        # DM
-        # ----------------------------------------------------
 
         dm_sent = False
 
@@ -1866,9 +1735,6 @@ class BanCog(commands.Cog):
                     error_detail=str(exc)
                 )
 
-        # ----------------------------------------------------
-        # Response
-        # ----------------------------------------------------
 
         embed = discord.Embed(
             title="Warning Removed",
@@ -1943,9 +1809,6 @@ class BanCog(commands.Cog):
             embed=embed
         )
 
-    # ========================================================
-    # USER HISTORY BUILDER
-    # ========================================================
 
     async def build_history_embed(
         self,
@@ -1998,9 +1861,6 @@ class BanCog(commands.Cog):
             stats["bad_word_count"]
         )
 
-        # ----------------------------------------------------
-        # Risk
-        # ----------------------------------------------------
 
         if (
             warn_count >= 3
@@ -2209,10 +2069,6 @@ class BanCog(commands.Cog):
             inline=False
         )
 
-        # ----------------------------------------------------
-        # Bad word logs
-        # ----------------------------------------------------
-
         if bad_word_logs:
 
             bad_word_lines = []
@@ -2255,10 +2111,6 @@ class BanCog(commands.Cog):
         )
 
         return embed
-
-    # ========================================================
-    # /HISTORYZ
-    # ========================================================
 
     @app_commands.command(
         name="historyz",
@@ -2340,9 +2192,6 @@ class BanCog(commands.Cog):
             embed=embed
         )
 
-    # ========================================================
-    # !HISTORYZ
-    # ========================================================
 
     @commands.command(
         name="historyZ",
@@ -2416,10 +2265,6 @@ class BanCog(commands.Cog):
             embed=embed
         )
 
-    # ========================================================
-    # /INFRACTION
-    # ========================================================
-
     @app_commands.command(
         name="infraction",
         description=(
@@ -2481,9 +2326,6 @@ class BanCog(commands.Cog):
 
             return
 
-        # ----------------------------------------------------
-        # Remove
-        # ----------------------------------------------------
 
         if action.lower() == "remove":
 
@@ -2559,10 +2401,6 @@ class BanCog(commands.Cog):
 
             return
 
-        # ----------------------------------------------------
-        # View
-        # ----------------------------------------------------
-
         if infraction["action_type"] == "BAN":
 
             embed_color = discord.Color.from_rgb(
@@ -2629,10 +2467,6 @@ class BanCog(commands.Cog):
             embed=embed
         )
 
-    # ========================================================
-    # !INFRACTION
-    # ========================================================
-
     @commands.command(
         name="infraction"
     )
@@ -2691,10 +2525,6 @@ class BanCog(commands.Cog):
             )
 
             return
-
-        # ----------------------------------------------------
-        # Remove
-        # ----------------------------------------------------
 
         if action.lower() == "remove":
 
@@ -2770,9 +2600,6 @@ class BanCog(commands.Cog):
 
             return
 
-        # ----------------------------------------------------
-        # View
-        # ----------------------------------------------------
 
         if infraction["action_type"] == "BAN":
 
@@ -2840,10 +2667,6 @@ class BanCog(commands.Cog):
             embed=embed
         )
 
-
-# ============================================================
-# SETUP
-# ============================================================
 
 async def setup(bot: commands.Bot):
 
