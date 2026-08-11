@@ -1,8 +1,6 @@
 import config
 
-# ==========================================
-# Owner Check
-# ==========================================
+
 def is_owner(member):
     if member is None:
         return False
@@ -19,9 +17,7 @@ def is_owner(member):
         for role in roles
     )
 
-# ==========================================
-# Moderator Check
-# ==========================================
+
 def is_moderator(member):
     if member is None:
         return False
@@ -35,9 +31,7 @@ def is_moderator(member):
         for role in roles
     )
 
-# ==========================================
-# Trial Moderator Check
-# ==========================================
+
 def is_trial_moderator(member):
     if member is None:
         return False
@@ -52,16 +46,11 @@ def is_trial_moderator(member):
     )
 
 
-# ==========================================
-# Staff Check
-# ==========================================
+
 def is_staff(member):
     return is_owner(member) or is_moderator(member) or is_trial_moderator(member)
 
 
-# ==========================================
-# Setup Permission Check
-# ==========================================
 def can_setup(member):
     if member is None:
         return False
@@ -72,9 +61,7 @@ def can_setup(member):
     return is_owner(member)
 
 
-# ==========================================
-# Ban Permission Check
-# ==========================================
+
 def can_ban(member):
     if member is None:
         return False
@@ -91,9 +78,22 @@ def can_ban(member):
 
 
 
-# ==========================================
-# Warn & History Permission Check
-# ==========================================
+def can_kick(member):
+    if member is None:
+        return False
+
+    if is_staff(member):
+        return True
+
+    user_id = getattr(member, "id", None)
+    if not user_id:
+        return False
+
+    allowed_ids = getattr(config, "ALLOWED_BAN_USERS", [1508934920377204950, 1269233770834165860])
+    return user_id in allowed_ids
+
+
+
 def can_warn_or_view_history(member):
     if member is None:
         return False
