@@ -34,7 +34,7 @@ class LoggingMonitor(commands.Cog):
         are exactly the same.
         """
 
-        # Safely get IDs
+    
         user_id = getattr(user, "id", user)
 
         if hasattr(moderator, "id"):
@@ -42,7 +42,6 @@ class LoggingMonitor(commands.Cog):
         else:
             moderator_id = None
 
-        # Safely get usernames
         if hasattr(user, "name"):
             user_name = str(user)
         else:
@@ -53,8 +52,6 @@ class LoggingMonitor(commands.Cog):
         else:
             moderator_name = str(moderator)
 
-        # Create the infraction in the database.
-        # This returns the REAL guild-prefixed UUID.
         event_uuid = await add_infraction(
             user_id=user_id,
             moderator_id=moderator_id or 0,
@@ -67,7 +64,6 @@ class LoggingMonitor(commands.Cog):
             datetime.timezone.utc
         ).strftime("%d/%m/%Y - %H:%M")
 
-        # Save the SAME UUID to MonitorUUID.
         log_content = (
             f"Event UUID: {event_uuid}\n"
             f"Action: {action_type}\n"
