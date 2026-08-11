@@ -139,10 +139,10 @@ class Stats(commands.Cog):
             color=discord.Color.blurple()
         )
         embed.set_thumbnail(url=target_member.display_avatar.url)
-        embed.add_field(name="Tickets Claimed", value=f"🏆 `{claimed_count}`", inline=True)
-        embed.add_field(name="Tickets Closed", value=f"🔒 `{closed_count}`", inline=True)
-        embed.add_field(name="Avg. Claim Response", value=f"⏳ `{avg_claim_time}`", inline=False)
-        embed.add_field(name="Avg. Resolution Time", value=f"⚡ `{avg_resolve_time}`", inline=False)
+        embed.add_field(name="Tickets Claimed", value=f" `{claimed_count}`", inline=True)
+        embed.add_field(name="Tickets Closed", value=f" `{closed_count}`", inline=True)
+        embed.add_field(name="Avg. Claim Response", value=f" `{avg_claim_time}`", inline=False)
+        embed.add_field(name="Avg. Resolution Time", value=f" `{avg_resolve_time}`", inline=False)
         embed.set_footer(text="ZER Staff Management System")
         
         await ctx.send(embed=embed)
@@ -204,8 +204,8 @@ class Stats(commands.Cog):
             color=discord.Color.gold(),
             description="Leaderboard of active staff members sorted by claims and closures."
         )
-        embed.add_field(name="Top Claims 🏆", value=claims_str, inline=False)
-        embed.add_field(name="Top Closures 🔒", value=closures_str, inline=False)
+        embed.add_field(name="Top Claims ", value=claims_str, inline=False)
+        embed.add_field(name="Top Closures ", value=closures_str, inline=False)
         embed.set_footer(text="ZER Staff Management System")
 
         await ctx.send(embed=embed)
