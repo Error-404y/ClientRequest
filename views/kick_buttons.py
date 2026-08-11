@@ -82,7 +82,7 @@ class KickConfirmView(discord.ui.View):
                     guild_id=interaction.guild.id if interaction.guild else None
                 )
 
-            log_mod("kicked", interaction.user, self.target_user or self.target_name, reason=self.reason or "No reason specified", extra=f"DM Delivered: {dm_sent}", infraction_uuid=inf_uuid)
+            log_mod("kicked", interaction.user, self.target_user or self.target_name, reason=self.reason or "No reason specified", extra=f"DM Delivered: {dm_sent} | UUID: {inf_uuid}")
 
             desc = f"**{self.target_name}** has successfully been kicked!"
             if self.reason:
