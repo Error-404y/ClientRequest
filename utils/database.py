@@ -9,16 +9,11 @@ import config
 from utils.logger import log_db
 
 
-# ============================================================
-# DATABASE SETUP
-# ============================================================
+
 
 async def setup_database():
     async with aiosqlite.connect(config.DATABASE) as db:
 
-        # ----------------------------------------------------
-        # TICKETS
-        # ----------------------------------------------------
         await db.execute("""
             CREATE TABLE IF NOT EXISTS tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,7 +23,8 @@ async def setup_database():
                 application TEXT,
                 status TEXT,
                 created_at TEXT,
-                closed_at TEXT
+                closed_at TEXT,
+                uuid TEXT
             )
         """)
 
@@ -64,6 +60,27 @@ async def setup_database():
             await db.execute(
                 "ALTER TABLE tickets ADD COLUMN claimed_at TEXT DEFAULT NULL"
             )
+
+        if "uuid" not in columns:
+            await db.execute(
+                "ALTER TABLE tickets ADD COLUMN uuid TEXT DEFAULT NULL"
+            )
+
+            # Give old tickets UUIDs.
+            cursor = await db.execute("""
+                SELECT id
+                FROM tickets
+                WHERE uuid IS NULL OR uuid = ''
+            """)
+
+            old_rows = await cursor.fetchall()
+
+            for (row_id,) in old_rows:
+                new_uuid = str(uuid_lib.uuid4())
+                await db.execute(
+                    "UPDATE tickets SET uuid=? WHERE id=?",
+                    (new_uuid, row_id)
+                )
 
         # ----------------------------------------------------
         # INFRACTIONS
@@ -110,9 +127,6 @@ async def setup_database():
                 (new_uuid, row_id)
             )
 
-        # ----------------------------------------------------
-        # USER STATS
-        # ----------------------------------------------------
         cursor = await db.execute("PRAGMA table_info(user_stats)")
         stats_columns = [row[1] for row in await cursor.fetchall()]
 
@@ -167,9 +181,6 @@ async def setup_database():
     )
 
 
-# ============================================================
-# UUID HELPER
-# ============================================================
 
 def generate_infraction_uuid(guild_id=None):
     """
@@ -184,10 +195,7 @@ def generate_infraction_uuid(guild_id=None):
     return f"{prefix}{uuid_lib.uuid4()}"
 
 
-# ============================================================
-# ADD INFRACTION
-# ============================================================
-
+ 
 async def add_infraction(
     user_id: int,
     moderator_id: int,
@@ -265,10 +273,7 @@ async def add_infraction(
         )
     )
 
-    # --------------------------------------------------------
-    # SAVE UUID MONITOR FILE
-    # --------------------------------------------------------
-
+   
     monitor_dir = os.path.join(
         os.path.dirname(os.path.dirname(__file__)),
         "MonitorUUID"
@@ -299,9 +304,6 @@ async def add_infraction(
     return infraction_uuid
 
 
-# ============================================================
-# GET USER INFRACTIONS
-# ============================================================
 
 async def get_user_infractions(
     user_id: int,
@@ -357,9 +359,6 @@ async def get_user_infractions(
     ]
 
 
-# ============================================================
-# GET INFRACTION BY UUID
-# ============================================================
 
 async def get_infraction_by_uuid(uuid_str: str):
     if not uuid_str:
@@ -403,10 +402,6 @@ async def get_infraction_by_uuid(uuid_str: str):
         "uuid": row[7]
     }
 
-
-# ============================================================
-# REMOVE USER WARNING
-# ============================================================
 
 async def remove_user_warning(
     user_id: int,
@@ -500,10 +495,7 @@ async def remove_user_warning(
                 "user_id": row[4]
             }]
 
-        # ----------------------------------------------------
-        # Remove all warnings
-        # ----------------------------------------------------
-
+    
         if guild_id is not None:
             cursor = await db.execute("""
                 SELECT
@@ -566,9 +558,6 @@ async def remove_user_warning(
         ]
 
 
-# ============================================================
-# REMOVE INFRACTION BY UUID
-# ============================================================
 
 async def remove_infraction_by_uuid(uuid_str: str):
     if not uuid_str:
@@ -625,10 +614,6 @@ async def remove_infraction_by_uuid(uuid_str: str):
     }
 
 
-# ============================================================
-# USER ACTIVITY
-# ============================================================
-
 async def increment_user_activity(
     user_id: int,
     guild_id: int = None,
@@ -678,9 +663,6 @@ async def increment_user_activity(
             )
 
 
-# ============================================================
-# GET USER STATS
-# ============================================================
 
 async def get_user_stats(
     user_id: int,
@@ -721,10 +703,6 @@ async def get_user_stats(
     }
 
 
-# ============================================================
-# TICKETS
-# ============================================================
-
 async def create_ticket_record(
     channel_id,
     guild_id,
@@ -732,6 +710,7 @@ async def create_ticket_record(
     application,
     created_at
 ):
+    ticket_uuid = str(uuid_lib.uuid4())
     async with aiosqlite.connect(config.DATABASE) as db:
 
         await db.execute("""
@@ -741,16 +720,18 @@ async def create_ticket_record(
                 user_id,
                 application,
                 status,
-                created_at
+                created_at,
+                uuid
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             channel_id,
             guild_id,
             user_id,
             application,
             "open",
-            created_at
+            created_at,
+            ticket_uuid
         ))
 
         await db.commit()
@@ -760,9 +741,10 @@ async def create_ticket_record(
         "tickets",
         (
             f"Created record for Channel: {channel_id}, "
-            f"User: {user_id}, App: {application}"
+            f"User: {user_id}, App: {application}, UUID: {ticket_uuid}"
         )
     )
+    return ticket_uuid
 
 
 async def close_ticket(
