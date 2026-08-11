@@ -44,7 +44,7 @@ class Stats(commands.Cog):
         gid = ctx.guild.id if ctx.guild else None
 
         async with aiosqlite.connect(config.DATABASE) as db:
-            # 1. Total Claimed
+            
             if gid:
                 cursor = await db.execute(
                     "SELECT COUNT(*) FROM tickets WHERE claimed_by = ? AND guild_id = ?",
@@ -57,7 +57,6 @@ class Stats(commands.Cog):
                 )
             claimed_count = (await cursor.fetchone())[0]
 
-            # 2. Total Closed
             if gid:
                 cursor = await db.execute(
                     "SELECT COUNT(*) FROM tickets WHERE closed_by = ? AND guild_id = ?",
@@ -70,7 +69,6 @@ class Stats(commands.Cog):
                 )
             closed_count = (await cursor.fetchone())[0]
 
-            # 3. Average Claim Response Time
             if gid:
                 cursor = await db.execute(
                     "SELECT created_at, claimed_at FROM tickets WHERE claimed_by = ? AND claimed_at IS NOT NULL AND guild_id = ?",
@@ -102,7 +100,6 @@ class Stats(commands.Cog):
                 else "N/A"
             )
 
-            # 4. Average Resolution Time (from Claimed to Closed)
             if gid:
                 cursor = await db.execute(
                     "SELECT claimed_at, closed_at FROM tickets WHERE claimed_by = ? AND claimed_at IS NOT NULL AND closed_at IS NOT NULL AND guild_id = ?",
@@ -157,7 +154,7 @@ class Stats(commands.Cog):
 
         gid = ctx.guild.id if ctx.guild else None
         async with aiosqlite.connect(config.DATABASE) as db:
-            # Query claims
+
             if gid:
                 cursor = await db.execute(
                     "SELECT claimed_by, COUNT(*) as count FROM tickets WHERE claimed_by IS NOT NULL AND guild_id = ? GROUP BY claimed_by ORDER BY count DESC LIMIT 10",
@@ -169,7 +166,6 @@ class Stats(commands.Cog):
                 )
             claims_rows = await cursor.fetchall()
 
-            # Query closures
             if gid:
                 cursor = await db.execute(
                     "SELECT closed_by, COUNT(*) as count FROM tickets WHERE closed_by IS NOT NULL AND guild_id = ? GROUP BY closed_by ORDER BY count DESC LIMIT 10",
@@ -181,7 +177,6 @@ class Stats(commands.Cog):
                 )
             closures_rows = await cursor.fetchall()
 
-        # Format claims leaderboard
         claims_list = []
         for index, (user_id, count) in enumerate(claims_rows, start=1):
             member = ctx.guild.get_member(user_id)
@@ -190,7 +185,6 @@ class Stats(commands.Cog):
 
         claims_str = "\n".join(claims_list) if claims_list else "*No claim data available.*"
 
-        # Format closures leaderboard
         closures_list = []
         for index, (user_id, count) in enumerate(closures_rows, start=1):
             member = ctx.guild.get_member(user_id)
