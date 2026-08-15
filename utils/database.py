@@ -10,7 +10,14 @@ from utils.logger import log_db
 
 
 async def setup_database():
-    async with aiosqlite.connect(config.DATABASE) as db:
+
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
+
+        # ----------------------------------------------------
+        # TICKETS
+        # ----------------------------------------------------
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS tickets (
@@ -26,59 +33,108 @@ async def setup_database():
             )
         """)
 
-        cursor = await db.execute("PRAGMA table_info(tickets)")
-        columns = [row[1] for row in await cursor.fetchall()]
+        cursor = await db.execute(
+            "PRAGMA table_info(tickets)"
+        )
+
+        columns = [
+            row[1]
+            for row in await cursor.fetchall()
+        ]
 
         if "claimed_by" not in columns:
-            await db.execute(
-                "ALTER TABLE tickets ADD COLUMN claimed_by INTEGER DEFAULT NULL"
-            )
 
-        if "close_reason" not in columns:
-            await db.execute(
-                "ALTER TABLE tickets ADD COLUMN close_reason TEXT DEFAULT NULL"
-            )
-
-        if "warned_inactive" not in columns:
-            await db.execute(
-                "ALTER TABLE tickets ADD COLUMN warned_inactive INTEGER DEFAULT 0"
-            )
-
-        if "priority" not in columns:
-            await db.execute(
-                "ALTER TABLE tickets ADD COLUMN priority TEXT DEFAULT 'Medium'"
-            )
-
-        if "closed_by" not in columns:
-            await db.execute(
-                "ALTER TABLE tickets ADD COLUMN closed_by INTEGER DEFAULT NULL"
-            )
-
-        if "claimed_at" not in columns:
-            await db.execute(
-                "ALTER TABLE tickets ADD COLUMN claimed_at TEXT DEFAULT NULL"
-            )
-
-        if "uuid" not in columns:
-            await db.execute(
-                "ALTER TABLE tickets ADD COLUMN uuid TEXT DEFAULT NULL"
-            )
-
-            cursor = await db.execute("""
-                SELECT id
-                FROM tickets
-                WHERE uuid IS NULL OR uuid = ''
+            await db.execute("""
+                ALTER TABLE tickets
+                ADD COLUMN claimed_by INTEGER DEFAULT NULL
             """)
 
-            old_rows = await cursor.fetchall()
+        if "close_reason" not in columns:
 
-            for (row_id,) in old_rows:
-                new_uuid = str(uuid_lib.uuid4())
+            await db.execute("""
+                ALTER TABLE tickets
+                ADD COLUMN close_reason TEXT DEFAULT NULL
+            """)
 
-                await db.execute(
-                    "UPDATE tickets SET uuid=? WHERE id=?",
-                    (new_uuid, row_id)
+        if "warned_inactive" not in columns:
+
+            await db.execute("""
+                ALTER TABLE tickets
+                ADD COLUMN warned_inactive INTEGER DEFAULT 0
+            """)
+
+        if "priority" not in columns:
+
+            await db.execute("""
+                ALTER TABLE tickets
+                ADD COLUMN priority TEXT DEFAULT 'Medium'
+            """)
+
+        if "closed_by" not in columns:
+
+            await db.execute("""
+                ALTER TABLE tickets
+                ADD COLUMN closed_by INTEGER DEFAULT NULL
+            """)
+
+        if "claimed_at" not in columns:
+
+            await db.execute("""
+                ALTER TABLE tickets
+                ADD COLUMN claimed_at TEXT DEFAULT NULL
+            """)
+
+        if "uuid" not in columns:
+
+            await db.execute("""
+                ALTER TABLE tickets
+                ADD COLUMN uuid TEXT DEFAULT NULL
+            """)
+
+        # ----------------------------------------------------
+        # REPAIR MISSING TICKET UUIDS
+        #
+        # IMPORTANT:
+        # This runs EVERY startup.
+        #
+        # Old tickets that already have a uuid column but
+        # have NULL/empty UUIDs will also be repaired.
+        # ----------------------------------------------------
+
+        cursor = await db.execute("""
+            SELECT id
+            FROM tickets
+            WHERE uuid IS NULL
+               OR TRIM(uuid) = ''
+        """)
+
+        old_ticket_rows = await cursor.fetchall()
+
+        repaired_ticket_count = 0
+
+        for (row_id,) in old_ticket_rows:
+
+            new_uuid = str(
+                uuid_lib.uuid4()
+            )
+
+            await db.execute(
+                """
+                UPDATE tickets
+                SET uuid=?
+                WHERE id=?
+                """,
+                (
+                    new_uuid,
+                    row_id
                 )
+            )
+
+            repaired_ticket_count += 1
+
+        # ----------------------------------------------------
+        # INFRACTIONS
+        # ----------------------------------------------------
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS infractions (
@@ -93,39 +149,77 @@ async def setup_database():
             )
         """)
 
-        cursor = await db.execute("PRAGMA table_info(infractions)")
-        inf_columns = [row[1] for row in await cursor.fetchall()]
+        cursor = await db.execute(
+            "PRAGMA table_info(infractions)"
+        )
+
+        inf_columns = [
+            row[1]
+            for row in await cursor.fetchall()
+        ]
 
         if "guild_id" not in inf_columns:
-            await db.execute(
-                "ALTER TABLE infractions ADD COLUMN guild_id INTEGER DEFAULT NULL"
-            )
+
+            await db.execute("""
+                ALTER TABLE infractions
+                ADD COLUMN guild_id INTEGER DEFAULT NULL
+            """)
 
         if "uuid" not in inf_columns:
-            await db.execute(
-                "ALTER TABLE infractions ADD COLUMN uuid TEXT DEFAULT NULL"
-            )
+
+            await db.execute("""
+                ALTER TABLE infractions
+                ADD COLUMN uuid TEXT DEFAULT NULL
+            """)
+
+        # ----------------------------------------------------
+        # REPAIR MISSING INFRACTION UUIDS
+        # ----------------------------------------------------
 
         cursor = await db.execute("""
             SELECT id
             FROM infractions
-            WHERE uuid IS NULL OR uuid = ''
+            WHERE uuid IS NULL
+               OR TRIM(uuid) = ''
         """)
 
-        old_rows = await cursor.fetchall()
+        old_infraction_rows = await cursor.fetchall()
 
-        for (row_id,) in old_rows:
-            new_uuid = str(uuid_lib.uuid4())
+        repaired_infraction_count = 0
+
+        for (row_id,) in old_infraction_rows:
+
+            new_uuid = generate_infraction_uuid()
 
             await db.execute(
-                "UPDATE infractions SET uuid=? WHERE id=?",
-                (new_uuid, row_id)
+                """
+                UPDATE infractions
+                SET uuid=?
+                WHERE id=?
+                """,
+                (
+                    new_uuid,
+                    row_id
+                )
             )
 
-        cursor = await db.execute("PRAGMA table_info(user_stats)")
-        stats_columns = [row[1] for row in await cursor.fetchall()]
+            repaired_infraction_count += 1
+
+        # ----------------------------------------------------
+        # USER STATS
+        # ----------------------------------------------------
+
+        cursor = await db.execute(
+            "PRAGMA table_info(user_stats)"
+        )
+
+        stats_columns = [
+            row[1]
+            for row in await cursor.fetchall()
+        ]
 
         if not stats_columns:
+
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS user_stats (
                     guild_id INTEGER,
@@ -136,10 +230,13 @@ async def setup_database():
                     PRIMARY KEY (guild_id, user_id)
                 )
             """)
+
         elif "guild_id" not in stats_columns:
-            await db.execute(
-                "ALTER TABLE user_stats RENAME TO old_user_stats"
-            )
+
+            await db.execute("""
+                ALTER TABLE user_stats
+                RENAME TO old_user_stats
+            """)
 
             await db.execute("""
                 CREATE TABLE user_stats (
@@ -160,25 +257,58 @@ async def setup_database():
                     bad_word_count,
                     last_active
                 )
-                SELECT ?, user_id, message_count, bad_word_count, last_active
+                SELECT
+                    ?,
+                    user_id,
+                    message_count,
+                    bad_word_count,
+                    last_active
                 FROM old_user_stats
-            """, (config.GUILD_ID,))
+            """, (
+                config.GUILD_ID,
+            ))
 
-            await db.execute("DROP TABLE old_user_stats")
+            await db.execute(
+                "DROP TABLE old_user_stats"
+            )
 
         await db.commit()
 
     log_db(
         "INITIALIZE",
         "database",
-        "Verified tables and schema columns"
+        (
+            "Verified tables, schema columns, "
+            f"repaired {repaired_ticket_count} ticket UUID(s), "
+            f"repaired {repaired_infraction_count} infraction UUID(s)"
+        )
     )
 
 
-def generate_infraction_uuid(guild_id=None):
-    prefix = f"G{guild_id}-" if guild_id else "GLOBAL-"
-    return f"{prefix}{uuid_lib.uuid4()}"
+# ============================================================
+# UUID GENERATORS
+# ============================================================
 
+def generate_infraction_uuid(
+    guild_id=None
+):
+
+    prefix = (
+        f"G{guild_id}-"
+        if guild_id
+        else
+        "GLOBAL-"
+    )
+
+    return (
+        f"{prefix}"
+        f"{uuid_lib.uuid4()}"
+    )
+
+
+# ============================================================
+# INFRACTIONS
+# ============================================================
 
 async def add_infraction(
     user_id: int,
@@ -189,27 +319,48 @@ async def add_infraction(
     custom_uuid: str = None
 ) -> str:
 
-    tz = pytz.timezone("Europe/Berlin")
-    now_str = datetime.now(tz).strftime("%d/%m/%Y - %H:%M")
+    tz = pytz.timezone(
+        "Europe/Berlin"
+    )
+
+    now_str = datetime.now(
+        tz
+    ).strftime(
+        "%d/%m/%Y - %H:%M"
+    )
 
     infraction_uuid = (
         str(custom_uuid).strip()
         if custom_uuid
-        else generate_infraction_uuid(guild_id)
+        else
+        generate_infraction_uuid(
+            guild_id
+        )
     )
 
     if not infraction_uuid:
+
         raise RuntimeError(
             "Failed to generate an infraction UUID."
         )
 
-    async with aiosqlite.connect(config.DATABASE) as db:
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
 
         if not custom_uuid:
+
             while True:
+
                 cursor = await db.execute(
-                    "SELECT 1 FROM infractions WHERE uuid=?",
-                    (infraction_uuid,)
+                    """
+                    SELECT 1
+                    FROM infractions
+                    WHERE uuid=?
+                    """,
+                    (
+                        infraction_uuid,
+                    )
                 )
 
                 exists = await cursor.fetchone()
@@ -217,7 +368,11 @@ async def add_infraction(
                 if not exists:
                     break
 
-                infraction_uuid = generate_infraction_uuid(guild_id)
+                infraction_uuid = (
+                    generate_infraction_uuid(
+                        guild_id
+                    )
+                )
 
         await db.execute("""
             INSERT INTO infractions (
@@ -256,11 +411,16 @@ async def add_infraction(
     )
 
     monitor_dir = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)),
+        os.path.dirname(
+            os.path.dirname(__file__)
+        ),
         "MonitorUUID"
     )
 
-    os.makedirs(monitor_dir, exist_ok=True)
+    os.makedirs(
+        monitor_dir,
+        exist_ok=True
+    )
 
     log_content = (
         f"Event UUID: {infraction_uuid}\n"
@@ -277,8 +437,15 @@ async def add_infraction(
         f"{infraction_uuid}.txt"
     )
 
-    with open(file_path, "w", encoding="utf-8") as file:
-        file.write(log_content)
+    with open(
+        file_path,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        file.write(
+            log_content
+        )
 
     return infraction_uuid
 
@@ -287,9 +454,13 @@ async def get_user_infractions(
     user_id: int,
     guild_id: int = None
 ):
-    async with aiosqlite.connect(config.DATABASE) as db:
+
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
 
         if guild_id is not None:
+
             cursor = await db.execute("""
                 SELECT
                     id,
@@ -303,8 +474,13 @@ async def get_user_infractions(
                 FROM infractions
                 WHERE user_id=? AND guild_id=?
                 ORDER BY id DESC
-            """, (user_id, guild_id))
+            """, (
+                user_id,
+                guild_id
+            ))
+
         else:
+
             cursor = await db.execute("""
                 SELECT
                     id,
@@ -318,7 +494,9 @@ async def get_user_infractions(
                 FROM infractions
                 WHERE user_id=?
                 ORDER BY id DESC
-            """, (user_id,))
+            """, (
+                user_id,
+            ))
 
         rows = await cursor.fetchall()
 
@@ -337,18 +515,26 @@ async def get_user_infractions(
     ]
 
 
-async def get_infraction_by_uuid(uuid_str: str):
+async def get_infraction_by_uuid(
+    uuid_str: str
+):
+
     if not uuid_str:
         return None
 
-    uuid_str = str(uuid_str).strip()
+    uuid_str = (
+        str(uuid_str)
+        .strip()
+        .strip("`")
+        .strip()
+    )
 
-    if uuid_str.lower().startswith("g") and "-" in uuid_str:
-        search_uuid = uuid_str
-    else:
-        search_uuid = uuid_str
+    if not uuid_str:
+        return None
 
-    async with aiosqlite.connect(config.DATABASE) as db:
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
 
         cursor = await db.execute("""
             SELECT
@@ -368,9 +554,9 @@ async def get_infraction_by_uuid(uuid_str: str):
             ORDER BY id DESC
             LIMIT 1
         """, (
-            search_uuid,
-            f"{search_uuid}%",
-            f"%{search_uuid}"
+            uuid_str,
+            f"{uuid_str}%",
+            f"%{uuid_str}"
         ))
 
         row = await cursor.fetchone()
@@ -390,13 +576,30 @@ async def get_infraction_by_uuid(uuid_str: str):
     }
 
 
-async def get_ticket_by_uuid(uuid_str: str):
+# ============================================================
+# TICKET LOOKUP
+# ============================================================
+
+async def get_ticket_by_uuid(
+    uuid_str: str
+):
+
     if not uuid_str:
         return None
 
-    uuid_str = str(uuid_str).strip()
+    uuid_str = (
+        str(uuid_str)
+        .strip()
+        .strip("`")
+        .strip()
+    )
 
-    async with aiosqlite.connect(config.DATABASE) as db:
+    if not uuid_str:
+        return None
+
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
 
         cursor = await db.execute("""
             SELECT
@@ -452,16 +655,28 @@ async def get_ticket_by_uuid(uuid_str: str):
     }
 
 
+# ============================================================
+# REMOVE WARNING
+# ============================================================
+
 async def remove_user_warning(
     user_id: int,
     warn_id=None,
     guild_id: int = None
 ):
-    async with aiosqlite.connect(config.DATABASE) as db:
+
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
 
         if warn_id is not None:
 
-            warn_str = str(warn_id).strip()
+            warn_str = (
+                str(warn_id)
+                .strip()
+                .strip("`")
+                .strip()
+            )
 
             numeric_id = (
                 int(warn_str)
@@ -470,6 +685,7 @@ async def remove_user_warning(
             )
 
             if guild_id is not None:
+
                 cursor = await db.execute("""
                     SELECT
                         id,
@@ -495,7 +711,9 @@ async def remove_user_warning(
                     numeric_id,
                     guild_id
                 ))
+
             else:
+
                 cursor = await db.execute("""
                     SELECT
                         id,
@@ -528,8 +746,13 @@ async def remove_user_warning(
             infraction_id = row[0]
 
             await db.execute(
-                "DELETE FROM infractions WHERE id=?",
-                (infraction_id,)
+                """
+                DELETE FROM infractions
+                WHERE id=?
+                """,
+                (
+                    infraction_id,
+                )
             )
 
             await db.commit()
@@ -553,6 +776,7 @@ async def remove_user_warning(
             }]
 
         if guild_id is not None:
+
             cursor = await db.execute("""
                 SELECT
                     id,
@@ -565,8 +789,13 @@ async def remove_user_warning(
                     user_id=?
                     AND guild_id=?
                     AND action_type='WARN'
-            """, (user_id, guild_id))
+            """, (
+                user_id,
+                guild_id
+            ))
+
         else:
+
             cursor = await db.execute("""
                 SELECT
                     id,
@@ -578,19 +807,30 @@ async def remove_user_warning(
                 WHERE
                     user_id=?
                     AND action_type='WARN'
-            """, (user_id,))
+            """, (
+                user_id,
+            ))
 
         rows = await cursor.fetchall()
 
         if not rows:
             return 0, []
 
-        ids = [row[0] for row in rows]
+        ids = [
+            row[0]
+            for row in rows
+        ]
 
-        placeholders = ",".join("?" for _ in ids)
+        placeholders = ",".join(
+            "?"
+            for _ in ids
+        )
 
         await db.execute(
-            f"DELETE FROM infractions WHERE id IN ({placeholders})",
+            f"""
+            DELETE FROM infractions
+            WHERE id IN ({placeholders})
+            """,
             ids
         )
 
@@ -599,7 +839,10 @@ async def remove_user_warning(
         log_db(
             "DELETE",
             "infractions",
-            f"Cleared {len(rows)} warnings for User ID {user_id}"
+            (
+                f"Cleared {len(rows)} warnings "
+                f"for User ID {user_id}"
+            )
         )
 
         return len(rows), [
@@ -614,13 +857,27 @@ async def remove_user_warning(
         ]
 
 
-async def remove_infraction_by_uuid(uuid_str: str):
+# ============================================================
+# REMOVE INFRACTION
+# ============================================================
+
+async def remove_infraction_by_uuid(
+    uuid_str: str
+):
+
     if not uuid_str:
         return None
 
-    uuid_str = str(uuid_str).strip()
+    uuid_str = (
+        str(uuid_str)
+        .strip()
+        .strip("`")
+        .strip()
+    )
 
-    async with aiosqlite.connect(config.DATABASE) as db:
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
 
         cursor = await db.execute("""
             SELECT
@@ -649,8 +906,13 @@ async def remove_infraction_by_uuid(uuid_str: str):
             return None
 
         await db.execute(
-            "DELETE FROM infractions WHERE id=?",
-            (row[0],)
+            """
+            DELETE FROM infractions
+            WHERE id=?
+            """,
+            (
+                row[0],
+            )
         )
 
         await db.commit()
@@ -674,19 +936,41 @@ async def remove_infraction_by_uuid(uuid_str: str):
     }
 
 
+# ============================================================
+# USER STATS
+# ============================================================
+
 async def increment_user_activity(
     user_id: int,
     guild_id: int = None,
     has_bad_word: bool = False
 ):
-    tz = pytz.timezone("Europe/Berlin")
-    now_str = datetime.now(tz).strftime("%d/%m/%Y - %H:%M")
 
-    gid = guild_id or config.GUILD_ID
+    tz = pytz.timezone(
+        "Europe/Berlin"
+    )
 
-    async with aiosqlite.connect(config.DATABASE) as db:
+    now_str = datetime.now(
+        tz
+    ).strftime(
+        "%d/%m/%Y - %H:%M"
+    )
 
-        bad_inc = 1 if has_bad_word else 0
+    gid = (
+        guild_id
+        or config.GUILD_ID
+    )
+
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
+
+        bad_inc = (
+            1
+            if has_bad_word
+            else
+            0
+        )
 
         await db.execute("""
             INSERT INTO user_stats (
@@ -712,6 +996,7 @@ async def increment_user_activity(
         await db.commit()
 
         if has_bad_word:
+
             log_db(
                 "UPSERT",
                 "user_stats",
@@ -727,9 +1012,15 @@ async def get_user_stats(
     user_id: int,
     guild_id: int = None
 ):
-    gid = guild_id or config.GUILD_ID
 
-    async with aiosqlite.connect(config.DATABASE) as db:
+    gid = (
+        guild_id
+        or config.GUILD_ID
+    )
+
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
 
         cursor = await db.execute("""
             SELECT
@@ -747,6 +1038,7 @@ async def get_user_stats(
         row = await cursor.fetchone()
 
     if row:
+
         return {
             "user_id": row[0],
             "message_count": row[1],
@@ -762,6 +1054,10 @@ async def get_user_stats(
     }
 
 
+# ============================================================
+# CREATE TICKET
+# ============================================================
+
 async def create_ticket_record(
     channel_id,
     guild_id,
@@ -769,9 +1065,57 @@ async def create_ticket_record(
     application,
     created_at
 ):
-    ticket_uuid = str(uuid_lib.uuid4())
 
-    async with aiosqlite.connect(config.DATABASE) as db:
+    # --------------------------------------------------------
+    # Generate the ONLY UUID that will be used for this ticket.
+    # This exact UUID is returned to dropdown.py and displayed
+    # in the ticket embed.
+    # --------------------------------------------------------
+
+    ticket_uuid = str(
+        uuid_lib.uuid4()
+    ).strip()
+
+    if not ticket_uuid:
+
+        raise RuntimeError(
+            "Failed to generate ticket UUID."
+        )
+
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
+
+        # ----------------------------------------------------
+        # Guarantee uniqueness.
+        # ----------------------------------------------------
+
+        while True:
+
+            cursor = await db.execute(
+                """
+                SELECT 1
+                FROM tickets
+                WHERE uuid=?
+                LIMIT 1
+                """,
+                (
+                    ticket_uuid,
+                )
+            )
+
+            exists = await cursor.fetchone()
+
+            if not exists:
+                break
+
+            ticket_uuid = str(
+                uuid_lib.uuid4()
+            ).strip()
+
+        # ----------------------------------------------------
+        # Store EXACT UUID.
+        # ----------------------------------------------------
 
         await db.execute("""
             INSERT INTO tickets (
@@ -801,12 +1145,18 @@ async def create_ticket_record(
         "tickets",
         (
             f"Created record for Channel: {channel_id}, "
-            f"User: {user_id}, App: {application}, UUID: {ticket_uuid}"
+            f"User: {user_id}, "
+            f"App: {application}, "
+            f"UUID: {ticket_uuid}"
         )
     )
 
     return ticket_uuid
 
+
+# ============================================================
+# TICKET MANAGEMENT
+# ============================================================
 
 async def close_ticket(
     channel_id,
@@ -814,7 +1164,10 @@ async def close_ticket(
     closed_by=None,
     close_reason=None
 ):
-    async with aiosqlite.connect(config.DATABASE) as db:
+
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
 
         await db.execute("""
             UPDATE tickets
@@ -845,8 +1198,13 @@ async def close_ticket(
     )
 
 
-async def reopen_ticket(channel_id):
-    async with aiosqlite.connect(config.DATABASE) as db:
+async def reopen_ticket(
+    channel_id
+):
+
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
 
         await db.execute("""
             UPDATE tickets
@@ -868,25 +1226,43 @@ async def reopen_ticket(channel_id):
     )
 
 
-async def get_ticket_owner(channel_id):
-    async with aiosqlite.connect(config.DATABASE) as db:
+async def get_ticket_owner(
+    channel_id
+):
+
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
 
         cursor = await db.execute("""
             SELECT user_id
             FROM tickets
             WHERE channel_id=?
-        """, (channel_id,))
+        """, (
+            channel_id,
+        ))
 
         result = await cursor.fetchone()
 
-    return result[0] if result else None
+    return (
+        result[0]
+        if result
+        else
+        None
+    )
 
 
 async def get_next_ticket_number():
-    async with aiosqlite.connect(config.DATABASE) as db:
+
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
 
         cursor = await db.execute(
-            "SELECT COUNT(*) FROM tickets"
+            """
+            SELECT COUNT(*)
+            FROM tickets
+            """
         )
 
         result = await cursor.fetchone()
@@ -899,7 +1275,10 @@ async def claim_ticket(
     user_id,
     claimed_at
 ):
-    async with aiosqlite.connect(config.DATABASE) as db:
+
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
 
         await db.execute("""
             UPDATE tickets
@@ -918,12 +1297,20 @@ async def claim_ticket(
     log_db(
         "UPDATE",
         "tickets",
-        f"Claimed Channel: {channel_id} by User: {user_id}"
+        (
+            f"Claimed Channel: {channel_id} "
+            f"by User: {user_id}"
+        )
     )
 
 
-async def get_ticket_record(channel_id):
-    async with aiosqlite.connect(config.DATABASE) as db:
+async def get_ticket_record(
+    channel_id
+):
+
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
 
         cursor = await db.execute("""
             SELECT
@@ -944,7 +1331,9 @@ async def get_ticket_record(channel_id):
                 uuid
             FROM tickets
             WHERE channel_id=?
-        """, (channel_id,))
+        """, (
+            channel_id,
+        ))
 
         row = await cursor.fetchone()
 
@@ -974,7 +1363,10 @@ async def set_ticket_priority(
     channel_id,
     priority
 ):
-    async with aiosqlite.connect(config.DATABASE) as db:
+
+    async with aiosqlite.connect(
+        config.DATABASE
+    ) as db:
 
         await db.execute("""
             UPDATE tickets
