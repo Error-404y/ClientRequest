@@ -1,4 +1,3 @@
-
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -59,7 +58,6 @@ async def resolve_user(
 
     clean_input = user_input.strip()
 
-
     mention_match = re.match(
         r"^<@!?(\d+)>$",
         clean_input
@@ -117,7 +115,6 @@ async def resolve_user(
                 clean_input,
                 user_id
             )
-
 
     if guild:
 
@@ -197,7 +194,6 @@ async def resolve_banned_user(
     elif clean_input.isdigit():
         user_id = int(clean_input)
 
-
     ban_entries = []
 
     if guild:
@@ -210,8 +206,6 @@ async def resolve_banned_user(
         except Exception:
             ban_entries = []
 
- 
- 
     if user_id:
 
         for entry in ban_entries:
@@ -268,12 +262,10 @@ async def resolve_banned_user(
     )
 
 
-
 class BanCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-
 
     @commands.Cog.listener()
     async def on_message(
@@ -317,14 +309,11 @@ class BanCog(commands.Cog):
                     bad_word
                 )
 
-
         await increment_user_activity(
             message.author.id,
             guild_id=message.guild.id,
             has_bad_word=has_bad_word
         )
-
-
 
         if has_bad_word:
 
@@ -344,7 +333,6 @@ class BanCog(commands.Cog):
                 ),
                 guild_id=message.guild.id
             )
-
 
     @app_commands.command(
         name="banz",
@@ -431,7 +419,6 @@ class BanCog(commands.Cog):
             embed=embed,
             view=view
         )
-
 
     @commands.command(
         name="banZ",
@@ -524,8 +511,6 @@ class BanCog(commands.Cog):
             view=view
         )
 
-
-
     @app_commands.command(
         name="unbanz",
         description="Unban a user from the server with confirmation"
@@ -611,7 +596,6 @@ class BanCog(commands.Cog):
             embed=embed,
             view=view
         )
-
 
     @commands.command(
         name="unbanZ",
@@ -728,29 +712,46 @@ class BanCog(commands.Cog):
 
         if not can_kick(interaction.user):
             log_mod("Permission Denied for /kickz", interaction.user, user)
+
             await interaction.response.send_message(
-                embed=error("You do not have permission to use this command."),
+                embed=error(
+                    "You do not have permission to use this command."
+                ),
                 ephemeral=True
             )
+
             return
 
-        target_obj, target_name, target_id = await resolve_user(interaction.guild, self.bot, user)
+        target_obj, target_name, target_id = await resolve_user(
+            interaction.guild,
+            self.bot,
+            user
+        )
 
         if not target_obj and not target_id:
+
             await interaction.response.send_message(
-                embed=error(f"Could not find or resolve user: `{user}`"),
+                embed=error(
+                    f"Could not find or resolve user: `{user}`"
+                ),
                 ephemeral=True
             )
+
             return
 
         description = f"Are you sure you want to kick **{target_name}**?"
+
         if reason:
             description += f"\n\n{reason}"
 
         embed = discord.Embed(
             title="Kick",
             description=description,
-            color=discord.Color.from_rgb(255, 255, 255)
+            color=discord.Color.from_rgb(
+                255,
+                255,
+                255
+            )
         )
 
         view = KickConfirmView(
@@ -760,8 +761,10 @@ class BanCog(commands.Cog):
             reason=reason
         )
 
-        await interaction.response.send_message(embed=embed, view=view)
-
+        await interaction.response.send_message(
+            embed=embed,
+            view=view
+        )
 
     @commands.command(
         name="kickZ",
@@ -783,34 +786,56 @@ class BanCog(commands.Cog):
         )
 
         if not can_kick(ctx.author):
+
             log_mod("Permission Denied for !kickZ", ctx.author, user_input)
+
             await ctx.send(
-                embed=error("You do not have permission to use this command.")
+                embed=error(
+                    "You do not have permission to use this command."
+                )
             )
+
             return
 
         if not user_input:
+
             await ctx.send(
-                embed=error("Please specify a Username, Mention, or User ID to kick.")
+                embed=error(
+                    "Please specify a Username, Mention, or User ID to kick."
+                )
             )
+
             return
 
-        target_obj, target_name, target_id = await resolve_user(ctx.guild, self.bot, user_input)
+        target_obj, target_name, target_id = await resolve_user(
+            ctx.guild,
+            self.bot,
+            user_input
+        )
 
         if not target_obj and not target_id:
+
             await ctx.send(
-                embed=error(f"Could not find or resolve user: `{user_input}`")
+                embed=error(
+                    f"Could not find or resolve user: `{user_input}`"
+                )
             )
+
             return
 
         description = f"Are you sure you want to kick **{target_name}**?"
+
         if reason:
             description += f"\n\n{reason}"
 
         embed = discord.Embed(
             title="Kick",
             description=description,
-            color=discord.Color.from_rgb(255, 255, 255)
+            color=discord.Color.from_rgb(
+                255,
+                255,
+                255
+            )
         )
 
         view = KickConfirmView(
@@ -820,8 +845,10 @@ class BanCog(commands.Cog):
             reason=reason
         )
 
-        await ctx.send(embed=embed, view=view)
-
+        await ctx.send(
+            embed=embed,
+            view=view
+        )
 
     @app_commands.command(
         name="warnz",
@@ -899,7 +926,6 @@ class BanCog(commands.Cog):
 
             return
 
-
         dm_sent = False
 
         if isinstance(
@@ -964,7 +990,6 @@ class BanCog(commands.Cog):
                     error_detail=str(exc)
                 )
 
- 
         infraction_uuid = await add_infraction(
             user_id=actual_id,
             moderator_id=interaction.user.id,
@@ -976,7 +1001,6 @@ class BanCog(commands.Cog):
                 else None
             )
         )
-
 
         log_mod(
             "warned",
@@ -1051,7 +1075,6 @@ class BanCog(commands.Cog):
         await interaction.followup.send(
             embed=embed
         )
-
 
     @commands.command(
         name="warnZ",
@@ -1279,8 +1302,6 @@ class BanCog(commands.Cog):
             embed=embed
         )
 
-
-
     @app_commands.command(
         name="warnremovez",
         description="Remove warning(s) from a user and notify them via DM"
@@ -1323,7 +1344,6 @@ class BanCog(commands.Cog):
             )
 
             return
-
 
         if user and (
             "-"
@@ -1371,7 +1391,6 @@ class BanCog(commands.Cog):
             )
 
             return
-        
 
         count_removed, records = await remove_user_warning(
             actual_id,
@@ -1422,7 +1441,6 @@ class BanCog(commands.Cog):
             if records and len(records) == 1
             else None
         )
-
 
         log_mod(
             "Removed Warning",
@@ -1517,7 +1535,6 @@ class BanCog(commands.Cog):
                     error_detail=str(exc)
                 )
 
-
         embed = discord.Embed(
             title="Warning Removed",
             description=(
@@ -1590,7 +1607,6 @@ class BanCog(commands.Cog):
         await interaction.response.send_message(
             embed=embed
         )
-
 
     @commands.command(
         name="warnremoveZ",
@@ -1667,7 +1683,6 @@ class BanCog(commands.Cog):
                         f"{warn_id_or_reason} "
                         f"{reason}"
                     )
-
 
         if user_input and (
             "-"
@@ -1776,7 +1791,6 @@ class BanCog(commands.Cog):
             )
         )
 
-
         dm_sent = False
 
         if isinstance(
@@ -1858,7 +1872,6 @@ class BanCog(commands.Cog):
                     error_detail=str(exc)
                 )
 
-
         embed = discord.Embed(
             title="Warning Removed",
             description=(
@@ -1932,7 +1945,6 @@ class BanCog(commands.Cog):
             embed=embed
         )
 
-
     async def build_history_embed(
         self,
         guild,
@@ -1983,7 +1995,6 @@ class BanCog(commands.Cog):
         total_bad_words = (
             stats["bad_word_count"]
         )
-
 
         if (
             warn_count >= 3
@@ -2315,7 +2326,6 @@ class BanCog(commands.Cog):
             embed=embed
         )
 
-
     @commands.command(
         name="historyZ",
         aliases=["historyz"]
@@ -2448,7 +2458,6 @@ class BanCog(commands.Cog):
             )
 
             return
-
 
         if action.lower() == "remove":
 
@@ -2722,7 +2731,6 @@ class BanCog(commands.Cog):
             )
 
             return
-
 
         if infraction["action_type"] == "BAN":
 
