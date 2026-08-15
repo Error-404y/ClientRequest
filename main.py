@@ -1,345 +1,430 @@
 import sys
-sys.stdout.reconfigure(encoding='utf-8')
-sys.stderr.reconfigure(encoding='utf-8')
+import os
+import traceback
+from datetime import datetime
 
 import discord
-from discord.ext import commands
-
-import asyncio
-import os
 import pytz
-
-from datetime import datetime
+from discord.ext import commands
 
 import config
 
 from utils.database import setup_database
-
-
-
-# ==========================================
-# Time / Logger
-# ==========================================
-
-
-timezone = pytz.timezone(
-    "Europe/Berlin"
+from utils.logger import (
+    format_user,
+    log,
+    log_command,
+    log_interaction,
+    send_report_to_owner,
 )
 
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
 
-def log(message):
-
-    time = datetime.now(
-        timezone
-    ).strftime(
-        "%d.%m.%Y %H:%M:%S"
-    )
-
-    print(
-        f"[{time}] {message}"
-    )
-
-
-
-
-
-# ==========================================
-# Bot Setup
-# ==========================================
-
+timezone = pytz.timezone("Europe/Berlin")
 
 intents = discord.Intents.default()
-
 intents.message_content = True
-
 intents.guilds = True
-
 intents.members = True
 
-
-
 bot = commands.Bot(
-
     command_prefix="!",
-
     intents=intents,
-
-    help_command=None
-
+    help_command=None,
 )
 
-
-
-
-
-# ==========================================
-# Startup
-# ==========================================
-
-
 extensions = [
-
     "cogs.tickets",
-
     "cogs.transcript",
-
     "cogs.inactivity",
-
     "cogs.stats",
-
     "cogs.ban",
-
-    "cogs.findz"
-
+    "cogs.findz",
 ]
 
 
-
-
-
-
 @bot.event
-
 async def setup_hook():
-
-
-    log(
-        "Bot Setup starting..."
-    )
-
+    log("Bot Setup starting...")
 
     await setup_database()
-
-
-    log(
-        "Database loaded"
-    )
-
-
-    log(
-        "Loading extensions..."
-    )
-
-
+    log("Database loaded")
+    log("Loading extensions...")
 
     for extension in extensions:
-
-
         try:
-
-
-            await bot.load_extension(
-
-                extension
-
-            )
-
-
-            log(
-
-                f"Loaded module: {extension}"
-
-            )
-
-
+            await bot.load_extension(extension)
+            log(f"Loaded module: {extension}")
         except Exception as error:
-
-
+            tb_str = "".join(
+                traceback.format_exception(
+                    type(error),
+                    error,
+                    error.__traceback__,
+                )
+            )
             log(
-
-                f"Failed loading {extension}: {error}"
-
+                f"Failed loading {extension}: {error}\n{tb_str}"
             )
 
-    log("Syncing application slash commands to all configured servers...")
+    log(
+        "Syncing application slash commands to all configured servers..."
+    )
+
     for gid in config.GUILDS.keys():
         try:
             guild_obj = discord.Object(id=gid)
             bot.tree.copy_global_to(guild=guild_obj)
             synced = await bot.tree.sync(guild=guild_obj)
-            log(f"Synced {len(synced)} slash command(s) to guild {gid}")
+            log(
+                f"Synced {len(synced)} slash command(s) to guild {gid}"
+            )
         except Exception as error:
-            log(f"Failed to sync slash commands to guild {gid}: {error}")
-
-
-
-
-
+            tb_str = "".join(
+                traceback.format_exception(
+                    type(error),
+                    error,
+                    error.__traceback__,
+                )
+            )
+            log(
+                f"Failed to sync slash commands to guild {gid}: "
+                f"{error}\n{tb_str}"
+            )
 
 
 @bot.event
 async def on_ready():
     guild = bot.get_guild(config.GUILD_ID)
+
     log("Bot First Fire Up - Catched")
     log("Bot starting...")
-    
-    # Set premium status activity
+
     try:
         await bot.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
-                name="Every Movement - Z&K"
+                name="Every Movement - Z&K",
             )
         )
         log("Activity status set to: Every Movement - Z&K")
-    except Exception as e:
-        log(f"Failed to set status: {str(e)}")
+    except Exception as error:
+        log(f"Failed to set status: {error}")
 
-    # Server connection filter: Ignore events from unapproved servers without leaving automatically
     for guild_connected in list(bot.guilds):
-        if guild_connected.id == 1490348711182733495 or guild_connected.id not in config.GUILDS:
-            log(f"Ignoring events from unapproved server: {guild_connected.name} ({guild_connected.id})")
-            log(f"Developer Team has successfully closed the connection for: {guild_connected.name} ({guild_connected.id})")
+        if (
+            guild_connected.id == 1490348711182733495
+            or guild_connected.id not in config.GUILDS
+        ):
+            log(
+                "Ignoring events from unapproved server: "
+                f"{guild_connected.name} ({guild_connected.id})"
+            )
+            log(
+                "Developer Team has successfully closed the connection for: "
+                f"{guild_connected.name} ({guild_connected.id})"
+            )
 
     for gid, gcfg in config.GUILDS.items():
         if gid == 1490348711182733495:
             continue
-        g = bot.get_guild(gid)
-        if g:
-            log(f"Connected to Server: {g.id} - Name: {g.name}", guild=g)
-            category = g.get_channel(gcfg["TICKET_CATEGORY_ID"])
-            log(f"  Ticket category ({gcfg['TICKET_CATEGORY_ID']}): {'OK' if category else 'WARNING: Missing'}", guild=g)
-            archive_category = g.get_channel(gcfg["TICKET_ARCHIVE_CATEGORY_ID"])
-            log(f"  Archive category ({gcfg['TICKET_ARCHIVE_CATEGORY_ID']}): {'OK' if archive_category else 'WARNING: Missing'}", guild=g)
-            panel = g.get_channel(gcfg["TICKET_PANEL_CHANNEL_ID"])
-            log(f"  Panel channel ({gcfg['TICKET_PANEL_CHANNEL_ID']}): {'OK' if panel else 'WARNING: Missing'}", guild=g)
-            
-            loaded = sum(1 for rid in gcfg["OWNER_ROLES"] if g.get_role(rid))
-            log(f"  Owner roles loaded: {loaded}/{len(gcfg['OWNER_ROLES'])}", guild=g)
+
+        current_guild = bot.get_guild(gid)
+
+        if current_guild:
+            log(
+                f"Connected to Server: {current_guild.id} - "
+                f"Name: {current_guild.name}",
+                guild=current_guild,
+            )
+
+            category = current_guild.get_channel(
+                gcfg["TICKET_CATEGORY_ID"]
+            )
+            log(
+                f"Ticket category ({gcfg['TICKET_CATEGORY_ID']}): "
+                f"{'OK' if category else 'WARNING: Missing'}",
+                guild=current_guild,
+            )
+
+            archive_category = current_guild.get_channel(
+                gcfg["TICKET_ARCHIVE_CATEGORY_ID"]
+            )
+            log(
+                f"Archive category "
+                f"({gcfg['TICKET_ARCHIVE_CATEGORY_ID']}): "
+                f"{'OK' if archive_category else 'WARNING: Missing'}",
+                guild=current_guild,
+            )
+
+            panel = current_guild.get_channel(
+                gcfg["TICKET_PANEL_CHANNEL_ID"]
+            )
+            log(
+                f"Panel channel ({gcfg['TICKET_PANEL_CHANNEL_ID']}): "
+                f"{'OK' if panel else 'WARNING: Missing'}",
+                guild=current_guild,
+            )
+
+            loaded = sum(
+                1
+                for rid in gcfg["OWNER_ROLES"]
+                if current_guild.get_role(rid)
+            )
+
+            log(
+                f"Owner roles loaded: "
+                f"{loaded}/{len(gcfg['OWNER_ROLES'])}",
+                guild=current_guild,
+            )
         else:
-            log(f"Server {gid} ({gcfg['NAME']}) not found", guild=gid)
+            log(
+                f"Server {gid} "
+                f"({gcfg.get('NAME', 'Unknown')}) not found",
+                guild=gid,
+            )
 
     log("Bot Setup completed and successfully connected!")
     log("Bot Setup connected to DB")
 
-
     print()
-    print("\033[96m══════════════════════════════════════\033[0m")
-    print("           \033[95m\033[1mZER Ticket Bot v2\033[0m")
-    print("\033[96m══════════════════════════════════════\033[0m")
-    print(f"  \033[90mStatus:\033[0m    \033[92m● ONLINE\033[0m")
-    print(f"  \033[90mServer:\033[0m    \033[97m{guild.name if guild else 'Unknown'}\033[0m")
-    print(f"  \033[90mLatency:\033[0m   \033[97m{round(bot.latency * 1000)}ms\033[0m")
-    print("\033[96m──────────────────────────────────────\033[0m")
-    print("  \033[93mListening for events:\033[0m")
-    print("    \033[92m✔\033[0m Ticket Creation")
-    print("    \033[92m✔\033[0m Ticket Claiming")
-    print("    \033[92m✔\033[0m Ticket Closing")
-    print("    \033[92m✔\033[0m Ticket Reopening")
-    print("    \033[92m✔\033[0m Ticket Deletion")
-    print("    \033[92m✔\033[0m Transcript Generation")
-    print("\033[96m══════════════════════════════════════\033[0m")
+    print("======================================")
+    print("ZER Ticket Bot v2")
+    print("======================================")
+    print("Status: ONLINE")
+    print(
+        f"Server: {guild.name if guild else 'Unknown'}"
+    )
+    print(f"Latency: {round(bot.latency * 1000)}ms")
+    print("--------------------------------------")
+    print("Listening for events:")
+    print("Ticket Creation")
+    print("Ticket Claiming")
+    print("Ticket Closing")
+    print("Ticket Reopening")
+    print("Ticket Deletion")
+    print("Transcript Generation")
+    print("======================================")
     print()
 
     log("Bot is now listening for reports...")
     log("Debugging is starting to fire")
 
 
-
-
-
-
-from utils.logger import log, log_interaction, log_command
-
 @bot.event
-async def on_interaction(interaction: discord.Interaction):
-    if interaction.guild_id == 1490348711182733495 or (interaction.guild_id and interaction.guild_id not in config.GUILDS):
+async def on_interaction(
+    interaction: discord.Interaction,
+):
+    if (
+        interaction.guild_id == 1490348711182733495
+        or (
+            interaction.guild_id
+            and interaction.guild_id not in config.GUILDS
+        )
+    ):
         return
 
     custom_id = None
+
     if interaction.data:
-        custom_id = interaction.data.get("custom_id") or interaction.data.get("name")
-    interaction_type = str(interaction.type).replace("InteractionType.", "")
+        custom_id = (
+            interaction.data.get("custom_id")
+            or interaction.data.get("name")
+        )
+
+    interaction_type = str(
+        interaction.type
+    ).replace(
+        "InteractionType.",
+        "",
+    )
+
     log_interaction(
         interaction.user,
         custom_id or interaction_type,
         interaction.channel,
-        details=f"Type: {interaction_type}"
+        details=f"Type: {interaction_type}",
     )
-
-
-import traceback
 
 
 @bot.event
 async def on_command_error(
-    ctx,
-    error
+    ctx: commands.Context,
+    error: commands.CommandError,
 ):
     if isinstance(error, commands.CommandNotFound):
         return
 
-    tb_str = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+    original_error = getattr(
+        error,
+        "original",
+        error,
+    )
+
+    tb_str = "".join(
+        traceback.format_exception(
+            type(original_error),
+            original_error,
+            original_error.__traceback__,
+        )
+    )
+
     log(
-        f"[DEBUG/ERROR] Prefix Command Error in '{ctx.command}': {error} (User: {format_user(ctx.author)})\n{tb_str}"
+        f"[DEBUG/ERROR] Prefix Command Error in "
+        f"'{ctx.command}': {original_error} "
+        f"(User: {format_user(ctx.author)})\n{tb_str}",
+        guild=ctx.guild,
     )
+
     embed = discord.Embed(
-        title="⚠️ Bot Command Error Alert",
-        description=f"An error occurred while executing command - Messaged the Owner.`{ctx.command}`.",
+        title="Bot Command Error Alert",
+        description=(
+            "An error occurred while executing "
+            f"`{ctx.command}`."
+        ),
         color=discord.Color.red(),
-        timestamp=datetime.now(timezone)
+        timestamp=datetime.now(timezone),
     )
-    embed.add_field(name="User", value=f"{ctx.author.mention} (`{ctx.author.id}`)", inline=True)
-    embed.add_field(name="Channel", value=f"{ctx.channel.mention if hasattr(ctx.channel, 'mention') else 'DM'}", inline=True)
-    embed.add_field(name="Error", value=f"```{str(error)[:1000]}```", inline=False)
-    bot.loop.create_task(send_report_to_owner(bot, embed, is_error=True))
+
+    embed.add_field(
+        name="User",
+        value=(
+            f"{ctx.author.mention} "
+            f"(`{ctx.author.id}`)"
+        ),
+        inline=True,
+    )
+
+    channel_value = (
+        ctx.channel.mention
+        if hasattr(ctx.channel, "mention")
+        else "DM"
+    )
+
+    embed.add_field(
+        name="Channel",
+        value=channel_value,
+        inline=True,
+    )
+
+    embed.add_field(
+        name="Error",
+        value=f"```{str(original_error)[:1000]}```",
+        inline=False,
+    )
+
+    bot.loop.create_task(
+        send_report_to_owner(
+            bot,
+            embed,
+            is_error=True,
+        )
+    )
 
 
 @bot.tree.error
 async def on_app_command_error(
     interaction: discord.Interaction,
-    error: discord.app_commands.AppCommandError
+    error: discord.app_commands.AppCommandError,
 ):
-    cmd_name = interaction.command.name if interaction.command else "Unknown Slash Command"
-    tb_str = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-    log(
-        f"[DEBUG/ERROR] Slash Command Error in '/{cmd_name}': {error} (User: {format_user(interaction.user)})\n{tb_str}"
+    cmd_name = (
+        interaction.command.name
+        if interaction.command
+        else "Unknown Slash Command"
     )
-    embed = discord.Embed(
-        title="⚠️ Bot Slash Command Error Alert",
-        description=f"An error occurred while executing slash command `/{cmd_name}`.",
-        color=discord.Color.red(),
-        timestamp=datetime.now(timezone)
-    )
-    embed.add_field(name="User", value=f"{interaction.user.mention} (`{interaction.user.id}`)", inline=True)
-    embed.add_field(name="Error", value=f"```{str(error)[:1000]}```", inline=False)
-    bot.loop.create_task(send_report_to_owner(bot, embed, is_error=True))
 
+    original_error = getattr(
+        error,
+        "original",
+        error,
+    )
+
+    tb_str = "".join(
+        traceback.format_exception(
+            type(original_error),
+            original_error,
+            original_error.__traceback__,
+        )
+    )
+
+    log(
+        f"[DEBUG/ERROR] Slash Command Error in "
+        f"'/{cmd_name}': {original_error} "
+        f"(User: {format_user(interaction.user)})\n{tb_str}",
+        guild=interaction.guild,
+    )
+
+    embed = discord.Embed(
+        title="Bot Slash Command Error Alert",
+        description=(
+            "An error occurred while executing "
+            f"`/{cmd_name}`."
+        ),
+        color=discord.Color.red(),
+        timestamp=datetime.now(timezone),
+    )
+
+    embed.add_field(
+        name="User",
+        value=(
+            f"{interaction.user.mention} "
+            f"(`{interaction.user.id}`)"
+        ),
+        inline=True,
+    )
+
+    if interaction.channel:
+        channel_value = (
+            interaction.channel.mention
+            if hasattr(interaction.channel, "mention")
+            else str(interaction.channel)
+        )
+
+        embed.add_field(
+            name="Channel",
+            value=channel_value,
+            inline=True,
+        )
+
+    embed.add_field(
+        name="Error",
+        value=f"```{str(original_error)[:1000]}```",
+        inline=False,
+    )
+
+    bot.loop.create_task(
+        send_report_to_owner(
+            bot,
+            embed,
+            is_error=True,
+        )
+    )
+
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(
+                "An internal error occurred while executing this command.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                "An internal error occurred while executing this command.",
+                ephemeral=True,
+            )
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
-
-
-    if not os.path.exists(
-
-        config.TRANSCRIPT_FOLDER
-
-    ):
-
-        os.makedirs(
-
-            config.TRANSCRIPT_FOLDER
-
-        )
-
-
-
-    if not os.path.exists(
-
-        config.LOG_FOLDER
-
-    ):
-
-        os.makedirs(
-
-            config.LOG_FOLDER
-
-        )
-
-
-
-    bot.run(
-
-        config.TOKEN
-
+    os.makedirs(
+        config.TRANSCRIPT_FOLDER,
+        exist_ok=True,
     )
+
+    os.makedirs(
+        config.LOG_FOLDER,
+        exist_ok=True,
+    )
+
+    bot.run(config.TOKEN)
