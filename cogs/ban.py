@@ -2048,6 +2048,30 @@ class BanCog(commands.Cog):
         infraction = await get_infraction_by_uuid(uuid_value)
 
         if infraction:
+            try:
+                infraction_guild_id = int(infraction["guild_id"])
+            except (KeyError, IndexError, TypeError, ValueError):
+                infraction_guild_id = None
+
+            if (
+                not ctx.guild
+                or infraction_guild_id != ctx.guild.id
+            ):
+                infraction = None
+
+        if infraction:
+            try:
+                infraction_guild_id = int(infraction["guild_id"])
+            except (KeyError, IndexError, TypeError, ValueError):
+                infraction_guild_id = None
+
+            if (
+                not interaction.guild
+                or infraction_guild_id != interaction.guild.id
+            ):
+                infraction = None
+
+        if infraction:
             if action_value == "remove":
                 removed = await remove_infraction_by_uuid(uuid_value)
 
@@ -2088,6 +2112,30 @@ class BanCog(commands.Cog):
                                                          
                                                                   
         ticket = await get_ticket_by_uuid(uuid_value)
+
+        if ticket:
+            try:
+                ticket_guild_id = int(ticket["guild_id"])
+            except (KeyError, IndexError, TypeError, ValueError):
+                ticket_guild_id = None
+
+            if (
+                not ctx.guild
+                or ticket_guild_id != ctx.guild.id
+            ):
+                ticket = None
+
+        if ticket:
+            try:
+                ticket_guild_id = int(ticket["guild_id"])
+            except (KeyError, IndexError, TypeError, ValueError):
+                ticket_guild_id = None
+
+            if (
+                not interaction.guild
+                or ticket_guild_id != interaction.guild.id
+            ):
+                ticket = None
 
         if ticket:
             if action_value == "remove":
