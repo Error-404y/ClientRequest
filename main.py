@@ -17,6 +17,9 @@ from utils.database import setup_database
 
 
 
+# ==========================================
+# Time / Logger
+# ==========================================
 
 
 timezone = pytz.timezone(
@@ -39,6 +42,10 @@ def log(message):
 
 
 
+
+# ==========================================
+# Bot Setup
+# ==========================================
 
 
 intents = discord.Intents.default()
@@ -65,6 +72,10 @@ bot = commands.Bot(
 
 
 
+# ==========================================
+# Startup
+# ==========================================
+
 
 extensions = [
 
@@ -77,8 +88,6 @@ extensions = [
     "cogs.stats",
 
     "cogs.ban"
-
-    "cogs.findz"
 
 ]
 
@@ -159,25 +168,26 @@ async def setup_hook():
 @bot.event
 async def on_ready():
     guild = bot.get_guild(config.GUILD_ID)
-
+    log("Bot First Fire Up - Catched")
     log("Bot starting...")
     
-
+    # Set premium status activity
     try:
         await bot.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
-                name="application tickets"
+                name="Every Movement - Z&K"
             )
         )
-        log("Activity status set to: Watching application tickets")
+        log("Activity status set to: Every Movement - Z&K")
     except Exception as e:
         log(f"Failed to set status: {str(e)}")
 
-
+    # Server connection filter: Ignore events from unapproved servers without leaving automatically
     for guild_connected in list(bot.guilds):
         if guild_connected.id == 1490348711182733495 or guild_connected.id not in config.GUILDS:
             log(f"Ignoring events from unapproved server: {guild_connected.name} ({guild_connected.id})")
+            log(f"Developer Team has successfully closed the connection for: {guild_connected.name} ({guild_connected.id})")
 
     for gid, gcfg in config.GUILDS.items():
         if gid == 1490348711182733495:
@@ -198,6 +208,7 @@ async def on_ready():
             log(f"Server {gid} ({gcfg['NAME']}) not found", guild=gid)
 
     log("Bot Setup completed and successfully connected!")
+    log("Bot Setup connected to DB")
 
 
     print()
@@ -219,6 +230,7 @@ async def on_ready():
     print()
 
     log("Bot is now listening for reports...")
+    log("Debugging is starting to fire")
 
 
 
@@ -246,10 +258,6 @@ async def on_interaction(interaction: discord.Interaction):
 
 import traceback
 
-# ==========================================
-# Error Handling
-# ==========================================
-
 
 @bot.event
 async def on_command_error(
@@ -265,7 +273,7 @@ async def on_command_error(
     )
     embed = discord.Embed(
         title="⚠️ Bot Command Error Alert",
-        description=f"An error occurred while executing command `{ctx.command}`.",
+        description=f"An error occurred while executing command - Messaged the Owner.`{ctx.command}`.",
         color=discord.Color.red(),
         timestamp=datetime.now(timezone)
     )
@@ -294,8 +302,6 @@ async def on_app_command_error(
     embed.add_field(name="User", value=f"{interaction.user.mention} (`{interaction.user.id}`)", inline=True)
     embed.add_field(name="Error", value=f"```{str(error)[:1000]}```", inline=False)
     bot.loop.create_task(send_report_to_owner(bot, embed, is_error=True))
-
-
 
 
 
