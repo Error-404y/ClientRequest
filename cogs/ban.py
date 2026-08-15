@@ -23,7 +23,10 @@ from utils.database import (
     get_user_infractions,
     remove_user_warning,
     increment_user_activity,
-    get_user_stats
+    get_user_stats,
+    get_infraction_by_uuid,
+    get_ticket_by_uuid,
+    remove_infraction_by_uuid
 )
 
 from utils.logger import (
