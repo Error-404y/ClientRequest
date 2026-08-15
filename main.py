@@ -87,7 +87,9 @@ extensions = [
 
     "cogs.stats",
 
-    "cogs.ban"
+    "cogs.ban",
+
+    "cogs.findz"
 
 ]
 
