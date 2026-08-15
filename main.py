@@ -78,6 +78,8 @@ extensions = [
 
     "cogs.ban"
 
+    "cogs.findz"
+
 ]
 
 
