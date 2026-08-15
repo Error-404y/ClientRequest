@@ -1,24 +1,95 @@
 import discord
+
 from discord import app_commands
+
 from discord.ext import commands
+
 import aiosqlite
+
 import config
 
+
 class UUIDLookup(commands.Cog):
-    def __init__(self, bot):
+
+    def __init__(
+        self,
+        bot
+    ):
+
         self.bot = bot
 
-    async def get_infraction(self, uuid_value):
-        async with aiosqlite.connect(config.DATABASE) as db:
+    # ========================================================
+    # UUID NORMALIZATION
+    # ========================================================
+
+    @staticmethod
+    def normalize_uuid(
+        uuid_value
+    ):
+
+        if uuid_value is None:
+            return ""
+
+        value = str(
+            uuid_value
+        ).strip()
+
+        value = value.strip(
+            "`"
+        )
+
+        value = value.strip(
+            " \t\r\n"
+        )
+
+        return value
+
+    # ========================================================
+    # INFRACTION LOOKUP
+    # ========================================================
+
+    async def get_infraction(
+        self,
+        uuid_value
+    ):
+
+        uuid_value = self.normalize_uuid(
+            uuid_value
+        )
+
+        if not uuid_value:
+            return None
+
+        async with aiosqlite.connect(
+            config.DATABASE
+        ) as db:
+
             cursor = await db.execute(
                 """
-                SELECT id, uuid, guild_id, user_id, moderator_id, action_type, reason, timestamp
+                SELECT
+                    id,
+                    uuid,
+                    guild_id,
+                    user_id,
+                    moderator_id,
+                    action_type,
+                    reason,
+                    timestamp
                 FROM infractions
-                WHERE uuid = ? OR uuid LIKE ?
+                WHERE
+                    uuid = ?
+                    OR uuid LIKE ?
+                    OR uuid LIKE ?
+                ORDER BY id DESC
                 LIMIT 1
                 """,
-                (uuid_value, f"{uuid_value}%")
+                (
+                    uuid_value,
+                    f"{uuid_value}%",
+                    f"%{uuid_value}"
+                )
             )
+
             row = await cursor.fetchone()
 
         if not row:
@@ -36,19 +107,59 @@ class UUIDLookup(commands.Cog):
             "timestamp": row[7]
         }
 
-    async def get_ticket(self, uuid_value):
-        async with aiosqlite.connect(config.DATABASE) as db:
+    # ========================================================
+    # TICKET LOOKUP
+    # ========================================================
+
+    async def get_ticket(
+        self,
+        uuid_value
+    ):
+
+        uuid_value = self.normalize_uuid(
+            uuid_value
+        )
+
+        if not uuid_value:
+            return None
+
+        async with aiosqlite.connect(
+            config.DATABASE
+        ) as db:
+
             cursor = await db.execute(
                 """
-                SELECT id, uuid, channel_id, guild_id, user_id, application,
-                       status, created_at, closed_at, claimed_by, close_reason,
-                       priority, claimed_at, closed_by
+                SELECT
+                    id,
+                    uuid,
+                    channel_id,
+                    guild_id,
+                    user_id,
+                    application,
+                    status,
+                    created_at,
+                    closed_at,
+                    claimed_by,
+                    close_reason,
+                    priority,
+                    claimed_at,
+                    closed_by,
+                    warned_inactive
                 FROM tickets
-                WHERE uuid = ? OR uuid LIKE ?
+                WHERE
+                    uuid = ?
+                    OR uuid LIKE ?
+                    OR uuid LIKE ?
+                ORDER BY id DESC
                 LIMIT 1
                 """,
-                (uuid_value, f"{uuid_value}%")
+                (
+                    uuid_value,
+                    f"{uuid_value}%",
+                    f"%{uuid_value}"
+                )
             )
+
             row = await cursor.fetchone()
 
         if not row:
@@ -69,56 +180,130 @@ class UUIDLookup(commands.Cog):
             "close_reason": row[10],
             "priority": row[11],
             "claimed_at": row[12],
-            "closed_by": row[13]
+            "closed_by": row[13],
+            "warned_inactive": row[14]
         }
 
-    async def fetch_user_text(self, user_id):
-        if not user_id:
-            return "Unknown User -> Unknown"
+    # ========================================================
+    # USER DISPLAY
+    # ========================================================
 
-        user = self.bot.get_user(user_id)
+    async def fetch_user_text(
+        self,
+        user_id
+    ):
+
+        if not user_id:
+
+            return (
+                "Unknown User -> Unknown"
+            )
+
+        user = self.bot.get_user(
+            user_id
+        )
 
         if user is None:
-            try:
-                user = await self.bot.fetch_user(user_id)
-            except (discord.NotFound, discord.HTTPException):
-                return f"Unknown User -> {user_id}"
 
-        return f"{user} -> {user.id}"
+            try:
+
+                user = await self.bot.fetch_user(
+                    user_id
+                )
+
+            except (
+                discord.NotFound,
+                discord.HTTPException
+            ):
+
+                return (
+                    f"Unknown User -> {user_id}"
+                )
+
+        return (
+            f"{user} -> {user.id}"
+        )
+
+    # ========================================================
+    # /findz
+    # ========================================================
 
     @app_commands.command(
         name="findz",
-        description="Find information connected to a generated UUID."
+        description=(
+            "Find information connected "
+            "to a generated UUID."
+        )
     )
-    @app_commands.describe(uuid="The UUID you want to look up.")
-    async def findz(self, interaction: discord.Interaction, uuid: str):
-        uuid = uuid.strip()
+    @app_commands.describe(
+        uuid=(
+            "The ticket or infraction UUID "
+            "you want to look up."
+        )
+    )
+    async def findz(
+        self,
+        interaction: discord.Interaction,
+        uuid: str
+    ):
+
+        uuid = self.normalize_uuid(
+            uuid
+        )
 
         if not uuid:
+
             await interaction.response.send_message(
                 "Please provide a UUID.",
                 ephemeral=True
             )
+
             return
 
-        infraction = await self.get_infraction(uuid)
+        # ====================================================
+        # FIRST: SEARCH INFRACTIONS
+        # ====================================================
+
+        infraction = await self.get_infraction(
+            uuid
+        )
 
         if infraction:
-            user_text = await self.fetch_user_text(infraction["user_id"])
-            moderator_text = await self.fetch_user_text(infraction["moderator_id"])
 
-            if infraction["action_type"].upper() == "WARN":
+            user_text = (
+                await self.fetch_user_text(
+                    infraction["user_id"]
+                )
+            )
+
+            moderator_text = (
+                await self.fetch_user_text(
+                    infraction["moderator_id"]
+                )
+            )
+
+            if (
+                str(
+                    infraction["action_type"]
+                ).upper()
+                == "WARN"
+            ):
+
                 description = (
-                    f"**identified information**\n"
+                    "**identified information**\n"
+                    f"Type: Infraction / Warn\n"
                     f"Warn Issued by: {moderator_text}\n"
                     f"Date: {infraction['timestamp']}\n"
                     f"Received Warn: {user_text}\n"
                     f"UUID: `{infraction['uuid']}`\n"
                     f"Reason: {infraction['reason']}"
                 )
+
             else:
+
                 description = (
-                    f"**identified information**\n"
+                    "**identified information**\n"
+                    f"Type: Infraction\n"
                     f"Action: {infraction['action_type']}\n"
                     f"Issued by: {moderator_text}\n"
                     f"Date: {infraction['timestamp']}\n"
@@ -134,9 +319,12 @@ class UUIDLookup(commands.Cog):
             )
 
             if infraction["guild_id"]:
+
                 embed.add_field(
                     name="Guild ID",
-                    value=str(infraction["guild_id"]),
+                    value=str(
+                        infraction["guild_id"]
+                    ),
                     inline=True
                 )
 
@@ -144,17 +332,46 @@ class UUIDLookup(commands.Cog):
                 embed=embed,
                 ephemeral=True
             )
+
             return
 
-        ticket = await self.get_ticket(uuid)
+        # ====================================================
+        # SECOND: SEARCH TICKETS
+        #
+        # IMPORTANT:
+        # A ticket UUID is stored in tickets.uuid.
+        #
+        # We only reach this section if the UUID was NOT
+        # found inside infractions.
+        # ====================================================
+
+        ticket = await self.get_ticket(
+            uuid
+        )
 
         if ticket:
-            user_text = await self.fetch_user_text(ticket["user_id"])
-            claimed_text = await self.fetch_user_text(ticket["claimed_by"])
-            closed_text = await self.fetch_user_text(ticket["closed_by"])
+
+            user_text = (
+                await self.fetch_user_text(
+                    ticket["user_id"]
+                )
+            )
+
+            claimed_text = (
+                await self.fetch_user_text(
+                    ticket["claimed_by"]
+                )
+            )
+
+            closed_text = (
+                await self.fetch_user_text(
+                    ticket["closed_by"]
+                )
+            )
 
             description = (
-                f"**identified information**\n"
+                "**identified information**\n"
+                f"Type: Support Ticket\n"
                 f"Ticket User: {user_text}\n"
                 f"Created: {ticket['created_at']}\n"
                 f"Status: {ticket['status']}\n"
@@ -165,10 +382,18 @@ class UUIDLookup(commands.Cog):
             )
 
             if ticket["closed_at"]:
-                description += f"\nClosed: {ticket['closed_at']}"
+
+                description += (
+                    f"\nClosed: "
+                    f"{ticket['closed_at']}"
+                )
 
             if ticket["close_reason"]:
-                description += f"\nClose Reason: {ticket['close_reason']}"
+
+                description += (
+                    f"\nClose Reason: "
+                    f"{ticket['close_reason']}"
+                )
 
             embed = discord.Embed(
                 title="UUID Information",
@@ -177,29 +402,67 @@ class UUIDLookup(commands.Cog):
             )
 
             if ticket["guild_id"]:
+
                 embed.add_field(
                     name="Guild ID",
-                    value=str(ticket["guild_id"]),
+                    value=str(
+                        ticket["guild_id"]
+                    ),
                     inline=True
                 )
 
             if ticket["channel_id"]:
+
                 embed.add_field(
                     name="Channel ID",
-                    value=str(ticket["channel_id"]),
+                    value=str(
+                        ticket["channel_id"]
+                    ),
                     inline=True
                 )
+
+            if ticket["priority"]:
+
+                embed.add_field(
+                    name="Priority",
+                    value=str(
+                        ticket["priority"]
+                    ),
+                    inline=True
+                )
+
+            embed.add_field(
+                name="Ticket Database ID",
+                value=str(
+                    ticket["id"]
+                ),
+                inline=True
+            )
 
             await interaction.response.send_message(
                 embed=embed,
                 ephemeral=True
             )
+
             return
 
+        # ====================================================
+        # NOTHING FOUND
+        # ====================================================
+
         await interaction.response.send_message(
-            f"No information was found for `{uuid}`.",
+            (
+                f"No ticket or infraction was found "
+                f"for UUID `{uuid}`."
+            ),
             ephemeral=True
         )
 
-async def setup(bot):
-    await bot.add_cog(UUIDLookup(bot))
+
+async def setup(
+    bot
+):
+
+    await bot.add_cog(
+        UUIDLookup(bot)
+    )
