@@ -38,15 +38,6 @@ async def resolve_user(
     bot: commands.Bot,
     user_input: str,
 ):
-    """
-    Resolve a Discord user from:
-    - Mention
-    - User ID
-    - Username
-    - Global name
-    - Display name
-    - Partial username/display name
-    """
 
     if not user_input:
         return None, "", None
@@ -84,7 +75,7 @@ async def resolve_user(
     if guild:
         search_term = clean_input.lstrip("@").lower()
 
-        # Exact match
+                     
         for member in guild.members:
             if (
                 member.name.lower() == search_term
@@ -97,7 +88,7 @@ async def resolve_user(
             ):
                 return member, member.name, member.id
 
-        # Partial match
+                       
         for member in guild.members:
             if (
                 search_term in member.name.lower()
@@ -117,14 +108,6 @@ async def resolve_banned_user(
     bot: commands.Bot,
     user_input: str,
 ):
-    """
-    Resolve a banned Discord user.
-
-    Supports:
-    - Mention
-    - User ID
-    - Username
-    """
 
     if not user_input:
         return None, "", None
@@ -180,9 +163,9 @@ class BanCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # ============================================================
-    # MESSAGE ACTIVITY / BAD WORD MONITOR
-    # ============================================================
+                                                                  
+                                         
+                                                                  
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -228,9 +211,9 @@ class BanCog(commands.Cog):
                 guild_id=message.guild.id,
             )
 
-    # ============================================================
-    # BAN
-    # ============================================================
+                                                                  
+         
+                                                                  
 
     @app_commands.command(
         name="banz",
@@ -387,9 +370,9 @@ class BanCog(commands.Cog):
             view=view,
         )
 
-    # ============================================================
-    # UNBAN
-    # ============================================================
+                                                                  
+           
+                                                                  
 
     @app_commands.command(
         name="unbanz",
@@ -546,9 +529,9 @@ class BanCog(commands.Cog):
             view=view,
         )
 
-    # ============================================================
-    # KICK
-    # ============================================================
+                                                                  
+          
+                                                                  
 
     @app_commands.command(
         name="kickz",
@@ -705,9 +688,9 @@ class BanCog(commands.Cog):
             view=view,
         )
 
-    # ============================================================
-    # WARN
-    # ============================================================
+                                                                  
+          
+                                                                  
 
     async def _issue_warning(
         self,
@@ -977,9 +960,9 @@ class BanCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    # ============================================================
-    # WARNING REMOVAL
-    # ============================================================
+                                                                  
+                     
+                                                                  
 
     async def _remove_warning(
         self,
@@ -998,7 +981,7 @@ class BanCog(commands.Cog):
             guild_id=guild.id if guild else None,
         )
 
-        # Backward compatibility for older/global records.
+                                                          
         if count_removed == 0 and guild:
             count_removed, records = await remove_user_warning(
                 actual_id,
@@ -1175,7 +1158,7 @@ class BanCog(commands.Cog):
             )
             return
 
-        # Allow the UUID itself in the user argument.
+                                                     
         if user and (
             "-" in user
             or (user.isdigit() and len(user) < 15)
@@ -1296,7 +1279,7 @@ class BanCog(commands.Cog):
                 else:
                     reason = f"{warn_id_or_reason} {reason}"
 
-        # Allow the UUID itself in the first argument.
+                                                      
         if user_input and (
             "-" in user_input
             or (
@@ -1357,9 +1340,9 @@ class BanCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    # ============================================================
-    # HISTORY
-    # ============================================================
+                                                                  
+             
+                                                                  
 
     async def build_history_embed(
         self,
@@ -1682,9 +1665,9 @@ class BanCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    # ============================================================
-    # UUID LOOKUP HELPERS
-    # ============================================================
+                                                                  
+                         
+                                                                  
 
     @staticmethod
     def _normalize_uuid(uuid_value: str) -> str:
@@ -1785,7 +1768,6 @@ class BanCog(commands.Cog):
 
     @staticmethod
     def _ticket_value(ticket, key, default=None):
-        """Safely read sqlite Row/dict values."""
         try:
             value = ticket[key]
         except (KeyError, IndexError, TypeError):
@@ -1793,83 +1775,126 @@ class BanCog(commands.Cog):
 
         return default if value is None else value
 
-    def _build_ticket_embed(self, ticket):
+    async def _resolve_ticket_user(self, user_id, guild=None):
+        try:
+            user_id_int = int(user_id)
+        except (TypeError, ValueError):
+            return None, "Unknown User", str(user_id)
+
+        user = None
+
+        if guild:
+            user = guild.get_member(user_id_int)
+
+        if user is None:
+            user = self.bot.get_user(user_id_int)
+
+        if user is None:
+            try:
+                user = await self.bot.fetch_user(user_id_int)
+            except Exception:
+                user = None
+
+        if user:
+            return user, user.name, str(user_id_int)
+
+        return None, "Unknown User", str(user_id_int)
+
+    async def _build_ticket_embed(self, ticket, guild=None):
         ticket_uuid = self._ticket_value(ticket, "uuid", "Unknown")
         user_id = self._ticket_value(ticket, "user_id", "Unknown")
-        application = self._ticket_value(
-            ticket,
-            "application",
-            "Unknown",
-        )
+        application = self._ticket_value(ticket, "application", "Unknown")
         status = self._ticket_value(ticket, "status", "Unknown")
-        channel_id = self._ticket_value(
-            ticket,
-            "channel_id",
-            "Unknown",
-        )
-        guild_id = self._ticket_value(
-            ticket,
-            "guild_id",
-            "Unknown",
-        )
-        created_at = self._ticket_value(
-            ticket,
-            "created_at",
-            "Unknown",
-        )
-        priority = self._ticket_value(
-            ticket,
-            "priority",
-            "Not set",
-        )
+        channel_id = self._ticket_value(ticket, "channel_id", "Unknown")
+        guild_id = self._ticket_value(ticket, "guild_id", "Unknown")
+        created_at = self._ticket_value(ticket, "created_at", "Unknown")
+        priority = self._ticket_value(ticket, "priority", "Not set")
         claimed_by = self._ticket_value(ticket, "claimed_by")
         claimed_at = self._ticket_value(ticket, "claimed_at")
         closed_by = self._ticket_value(ticket, "closed_by")
         closed_at = self._ticket_value(ticket, "closed_at")
         close_reason = self._ticket_value(ticket, "close_reason")
 
-        embed = discord.Embed(
-            title="Support Ticket Information",
-            description=(
-                "The supplied UUID belongs to the ticket system, "
-                "not the moderation infraction system."
-            ),
-            color=discord.Color.blurple(),
+        if guild is None:
+            try:
+                guild = self.bot.get_guild(int(guild_id))
+            except (TypeError, ValueError):
+                guild = None
+
+        user_obj, user_name, resolved_user_id = await self._resolve_ticket_user(
+            user_id,
+            guild,
         )
 
+        status_text = str(status).strip().title()
+        priority_text = str(priority).strip().title()
+
+        if str(status).lower() == "open":
+            embed_color = discord.Color.from_rgb(46, 204, 113)
+        elif str(status).lower() == "closed":
+            embed_color = discord.Color.from_rgb(99, 110, 114)
+        else:
+            embed_color = discord.Color.blurple()
+
+        embed = discord.Embed(
+            title="Support Ticket",
+            description=f"Ticket `{ticket_uuid}`",
+            color=embed_color,
+        )
+
+        user_value = f"**{user_name}**\n`{resolved_user_id}`"
+
+        if user_obj:
+            user_value = (
+                f"**{user_name}**\n"
+                f"{user_obj.mention}\n"
+                f"`{resolved_user_id}`"
+            )
+
+            if user_obj.display_avatar:
+                embed.set_thumbnail(url=user_obj.display_avatar.url)
+
         embed.add_field(
-            name="TICKET UUID",
-            value=f"`{ticket_uuid}`",
+            name="USER",
+            value=user_value,
             inline=False,
         )
         embed.add_field(
-            name="USER ID",
-            value=f"`{user_id}`",
-            inline=True,
-        )
-        embed.add_field(
             name="CATEGORY",
-            value=f"`{application}`",
+            value=str(application),
             inline=True,
         )
         embed.add_field(
             name="STATUS",
-            value=f"`{status}`",
-            inline=True,
-        )
-        embed.add_field(
-            name="CHANNEL ID",
-            value=f"`{channel_id}`",
-            inline=True,
-        )
-        embed.add_field(
-            name="GUILD ID",
-            value=f"`{guild_id}`",
+            value=status_text,
             inline=True,
         )
         embed.add_field(
             name="PRIORITY",
-            value=f"`{priority}`",
+            value=priority_text,
+            inline=True,
+        )
+
+        try:
+            channel_id_int = int(channel_id)
+            channel_value = f"<#{channel_id_int}>\n`{channel_id_int}`"
+        except (TypeError, ValueError):
+            channel_value = f"`{channel_id}`"
+
+        embed.add_field(
+            name="TICKET CHANNEL",
+            value=channel_value,
+            inline=True,
+        )
+
+        if guild:
+            guild_value = f"**{guild.name}**\n`{guild.id}`"
+        else:
+            guild_value = f"`{guild_id}`"
+
+        embed.add_field(
+            name="SERVER",
+            value=guild_value,
             inline=True,
         )
         embed.add_field(
@@ -1877,11 +1902,29 @@ class BanCog(commands.Cog):
             value=f"`{created_at}`",
             inline=False,
         )
+        embed.add_field(
+            name="TICKET UUID",
+            value=f"`{ticket_uuid}`",
+            inline=False,
+        )
 
         if claimed_by:
+            claimed_obj, claimed_name, claimed_id = await self._resolve_ticket_user(
+                claimed_by,
+                guild,
+            )
+            claimed_value = f"**{claimed_name}**\n`{claimed_id}`"
+
+            if claimed_obj:
+                claimed_value = (
+                    f"**{claimed_name}**\n"
+                    f"{claimed_obj.mention}\n"
+                    f"`{claimed_id}`"
+                )
+
             embed.add_field(
                 name="CLAIMED BY",
-                value=f"<@{claimed_by}> (`{claimed_by}`)",
+                value=claimed_value,
                 inline=True,
             )
 
@@ -1893,9 +1936,22 @@ class BanCog(commands.Cog):
             )
 
         if closed_by:
+            closed_obj, closed_name, closed_id = await self._resolve_ticket_user(
+                closed_by,
+                guild,
+            )
+            closed_value = f"**{closed_name}**\n`{closed_id}`"
+
+            if closed_obj:
+                closed_value = (
+                    f"**{closed_name}**\n"
+                    f"{closed_obj.mention}\n"
+                    f"`{closed_id}`"
+                )
+
             embed.add_field(
                 name="CLOSED BY",
-                value=f"<@{closed_by}> (`{closed_by}`)",
+                value=closed_value,
                 inline=True,
             )
 
@@ -1913,16 +1969,14 @@ class BanCog(commands.Cog):
                 inline=False,
             )
 
-        embed.set_footer(
-            text=f"{config.BOT_NAME} | Ticket UUID Lookup"
-        )
+        embed.set_footer(text=config.BOT_NAME)
 
         return embed
 
-    # ============================================================
-    # /INFRACTION + !INFRACTION
-    # Supports BOTH moderation UUIDs and ticket UUIDs.
-    # ============================================================
+                                                                  
+                               
+                                                      
+                                                                  
 
     @app_commands.command(
         name="infraction",
@@ -1981,9 +2035,9 @@ class BanCog(commands.Cog):
             )
             return
 
-        # --------------------------------------------------------
-        # 1. Search moderation infractions first
-        # --------------------------------------------------------
+                                                                  
+                                                
+                                                                  
         infraction = await get_infraction_by_uuid(uuid_value)
 
         if infraction:
@@ -2023,9 +2077,9 @@ class BanCog(commands.Cog):
             )
             return
 
-        # --------------------------------------------------------
-        # 2. If no infraction exists, search ticket UUIDs
-        # --------------------------------------------------------
+                                                                  
+                                                         
+                                                                  
         ticket = await get_ticket_by_uuid(uuid_value)
 
         if ticket:
@@ -2042,14 +2096,14 @@ class BanCog(commands.Cog):
                 return
 
             await interaction.response.send_message(
-                embed=self._build_ticket_embed(ticket),
+                embed=await self._build_ticket_embed(ticket, interaction.guild),
                 ephemeral=True,
             )
             return
 
-        # --------------------------------------------------------
-        # 3. Neither table contains the UUID
-        # --------------------------------------------------------
+                                                                  
+                                            
+                                                                  
         await interaction.response.send_message(
             embed=error(
                 "No ticket or infraction found matching UUID: "
@@ -2099,9 +2153,9 @@ class BanCog(commands.Cog):
             )
             return
 
-        # --------------------------------------------------------
-        # 1. Search moderation infractions first
-        # --------------------------------------------------------
+                                                                  
+                                                
+                                                                  
         infraction = await get_infraction_by_uuid(uuid_value)
 
         if infraction:
@@ -2140,9 +2194,9 @@ class BanCog(commands.Cog):
             )
             return
 
-        # --------------------------------------------------------
-        # 2. If no infraction exists, search ticket UUIDs
-        # --------------------------------------------------------
+                                                                  
+                                                         
+                                                                  
         ticket = await get_ticket_by_uuid(uuid_value)
 
         if ticket:
@@ -2158,13 +2212,13 @@ class BanCog(commands.Cog):
                 return
 
             await ctx.send(
-                embed=self._build_ticket_embed(ticket)
+                embed=await self._build_ticket_embed(ticket, ctx.guild)
             )
             return
 
-        # --------------------------------------------------------
-        # 3. Neither table contains the UUID
-        # --------------------------------------------------------
+                                                                  
+                                            
+                                                                  
         await ctx.send(
             embed=error(
                 "No ticket or infraction found matching UUID: "
