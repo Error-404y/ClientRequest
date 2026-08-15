@@ -280,4 +280,3 @@ async def setup(bot):
     await bot.add_cog(
         LoggingMonitor(bot)
     )
-
