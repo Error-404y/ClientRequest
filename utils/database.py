@@ -93,12 +93,6 @@ async def setup_database():
 
         # ----------------------------------------------------
         # REPAIR MISSING TICKET UUIDS
-        #
-        # IMPORTANT:
-        # This runs EVERY startup.
-        #
-        # Old tickets that already have a uuid column but
-        # have NULL/empty UUIDs will also be repaired.
         # ----------------------------------------------------
 
         cursor = await db.execute("""
