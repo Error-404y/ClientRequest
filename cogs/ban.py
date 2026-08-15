@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 
 import discord
 from discord import app_commands
@@ -1809,6 +1810,12 @@ class BanCog(commands.Cog):
         guild_id = self._ticket_value(ticket, "guild_id", "Unknown")
         created_at = self._ticket_value(ticket, "created_at", "Unknown")
         priority = self._ticket_value(ticket, "priority", "Not set")
+
+        try:
+            created_dt = datetime.fromisoformat(str(created_at))
+            created_display = created_dt.strftime("%d.%m.%Y, %H:%M")
+        except (ValueError, TypeError):
+            created_display = str(created_at)
         claimed_by = self._ticket_value(ticket, "claimed_by")
         claimed_at = self._ticket_value(ticket, "claimed_at")
         closed_by = self._ticket_value(ticket, "closed_by")
@@ -1899,7 +1906,7 @@ class BanCog(commands.Cog):
         )
         embed.add_field(
             name="CREATED",
-            value=f"`{created_at}`",
+            value=f"`{created_display}`",
             inline=False,
         )
         embed.add_field(
@@ -2097,7 +2104,6 @@ class BanCog(commands.Cog):
 
             await interaction.response.send_message(
                 embed=await self._build_ticket_embed(ticket, interaction.guild),
-                ephemeral=True,
             )
             return
 
