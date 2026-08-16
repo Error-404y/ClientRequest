@@ -8,6 +8,7 @@ import pytz
 
 import config
 from cogs.inactivity import hours_since
+from cogs.escalations import minutes_since
 from utils.database import (
     claim_ticket,
     close_ticket,
@@ -17,6 +18,7 @@ from utils.database import (
     get_staff_availability,
     get_ticket_panels,
     register_ticket_panel,
+    register_escalation_event,
     set_staff_availability,
     setup_database,
 )
@@ -38,6 +40,12 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(estimate_response_time(0), "Currently unavailable")
         self.assertEqual(estimate_response_time(3), "10–20 minutes")
         self.assertEqual(estimate_response_time(5), "5–15 minutes")
+
+    def test_escalation_age(self):
+        zone = pytz.timezone("Europe/Berlin")
+        now = datetime.now(zone)
+        value = (now - timedelta(minutes=31)).isoformat()
+        self.assertGreaterEqual(minutes_since(value, now), 31)
 
 
 class DatabaseTests(unittest.IsolatedAsyncioTestCase):
@@ -81,6 +89,12 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         await register_ticket_panel(guild_id, 300, 400, datetime.now().isoformat())
         panels = await get_ticket_panels(guild_id)
         self.assertEqual(panels, [{"channel_id": 300, "message_id": 400}])
+
+    async def test_escalations_are_deduplicated(self):
+        guild_id = next(iter(config.GUILDS))
+        created_at = datetime.now().isoformat()
+        self.assertTrue(await register_escalation_event(guild_id, 100, "unclaimed", created_at))
+        self.assertFalse(await register_escalation_event(guild_id, 100, "unclaimed", created_at))
 
 
 if __name__ == "__main__":
