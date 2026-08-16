@@ -1,6 +1,5 @@
-# ClientRequest
-- ClientRequest Bot Distance
+# ! maja !
 
+Professional multi-server ticket operations system.
 
-- All codes for ClientRequest Bot
-- Excluded the DataBase
+Created by ! ZER and ! Unbekannt.
