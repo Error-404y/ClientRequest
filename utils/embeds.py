@@ -8,7 +8,19 @@ ERROR =discord .Color .red ()
 WARNING =discord .Color .orange ()
 
 
-def ticket_panel (bot =None ,guild =None ):
+def estimate_response_time(available_staff):
+    if available_staff <= 0:
+        return "Currently unavailable"
+    if available_staff == 1:
+        return "20–30 minutes"
+    if available_staff == 2:
+        return "15–25 minutes"
+    if available_staff == 3:
+        return "10–20 minutes"
+    return "5–15 minutes"
+
+
+def ticket_panel (bot =None ,guild =None, available_staff=0, response_time="Currently unavailable" ):
     server_name =guild .name if guild else "Support Portal"
     embed =discord .Embed (
     title =f"{config.BOT_NAME} Support Portal",
@@ -37,6 +49,8 @@ def ticket_panel (bot =None ,guild =None ):
     ),
     inline =False 
     )
+    embed.add_field(name="Available Staff", value=f"**{available_staff}**", inline=True)
+    embed.add_field(name="Estimated Response Time", value=f"**{response_time}**", inline=True)
     if bot and bot .user and bot .user .avatar :
         embed .set_thumbnail (url =bot .user .avatar .url )
     embed .set_footer (text =f"{server_name } Operations | {config.BOT_CREDITS}")
