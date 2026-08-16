@@ -1,50 +1,38 @@
 import config
 
 
+def _guild_id(member):
+    guild = getattr(member, "guild", None)
+    return getattr(guild, "id", None)
+
+
+def _role_ids(member):
+    return {role.id for role in getattr(member, "roles", [])}
+
+
 def is_owner(member):
     if member is None:
         return False
-
     if getattr(member, "id", None) == config.SETUP_USER_ID:
         return True
-
-    guild_id = member.guild.id if hasattr(member, "guild") and member.guild else config.GUILD_ID
-    owner_roles = config.get_owner_roles(guild_id)
-
-    roles = getattr(member, "roles", [])
-    return any(
-        role.id in owner_roles
-        for role in roles
-    )
+    guild_id = _guild_id(member)
+    if guild_id not in config.GUILDS:
+        return False
+    return bool(_role_ids(member).intersection(config.get_owner_roles(guild_id)))
 
 
 def is_moderator(member):
-    if member is None:
+    guild_id = _guild_id(member)
+    if guild_id not in config.GUILDS:
         return False
-
-    guild_id = member.guild.id if hasattr(member, "guild") and member.guild else config.GUILD_ID
-    mod_role_id = config.get_mod_role(guild_id)
-
-    roles = getattr(member, "roles", [])
-    return any(
-        role.id == mod_role_id
-        for role in roles
-    )
+    return config.get_mod_role(guild_id) in _role_ids(member)
 
 
 def is_trial_moderator(member):
-    if member is None:
+    guild_id = _guild_id(member)
+    if guild_id not in config.GUILDS:
         return False
-
-    guild_id = member.guild.id if hasattr(member, "guild") and member.guild else config.GUILD_ID
-    trial_mod_role_id = config.get_trial_mod_role(guild_id)
-
-    roles = getattr(member, "roles", [])
-    return any(
-        role.id == trial_mod_role_id
-        for role in roles
-    )
-
+    return config.get_trial_mod_role(guild_id) in _role_ids(member)
 
 
 def is_staff(member):
@@ -52,58 +40,35 @@ def is_staff(member):
 
 
 def can_setup(member):
-    if member is None:
-        return False
-
-    if member.id == config.SETUP_USER_ID:
-        return True
-
     return is_owner(member)
 
 
-
-def can_ban(member):
+def _allowed_moderation_user(member):
     if member is None:
         return False
-
     if is_staff(member):
         return True
-
-    user_id = getattr(member, "id", None)
-    if not user_id:
+    guild_id = _guild_id(member)
+    if guild_id not in config.GUILDS:
         return False
+    return getattr(member, "id", None) in config.get_guild_config(guild_id).get("ALLOWED_BAN_USERS", [])
 
-    allowed_ids = getattr(config, "ALLOWED_BAN_USERS", [1508934920377204950, 1269233770834165860])
-    return user_id in allowed_ids
 
+def can_ban(member):
+    return _allowed_moderation_user(member)
 
 
 def can_kick(member):
-    if member is None:
-        return False
-
-    if is_staff(member):
-        return True
-
-    user_id = getattr(member, "id", None)
-    if not user_id:
-        return False
-
-    allowed_ids = getattr(config, "ALLOWED_BAN_USERS", [1508934920377204950, 1269233770834165860])
-    return user_id in allowed_ids
-
+    return _allowed_moderation_user(member)
 
 
 def can_warn_or_view_history(member):
     if member is None:
         return False
-
     if getattr(member, "id", None) == config.SETUP_USER_ID:
         return True
-
-    guild_id = member.guild.id if hasattr(member, "guild") and member.guild else config.GUILD_ID
-    guild_cfg = config.get_guild_config(guild_id)
-    target_role_id = guild_cfg.get("WARN_HISTORY_ROLE_ID", 1492287624067547326)
-
-    roles = getattr(member, "roles", [])
-    return any(role.id == target_role_id for role in roles) or is_owner(member)
+    guild_id = _guild_id(member)
+    if guild_id not in config.GUILDS:
+        return False
+    target_role_id = config.get_guild_config(guild_id)["WARN_HISTORY_ROLE_ID"]
+    return target_role_id in _role_ids(member) or is_owner(member)
