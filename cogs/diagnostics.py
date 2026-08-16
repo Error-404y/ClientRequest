@@ -1,6 +1,6 @@
-import platform
 import io
 import json
+import platform
 import time
 from datetime import datetime, timedelta
 
@@ -30,325 +30,291 @@ def format_uptime(seconds):
     return " ".join(parts)
 
 
+def clean_label(value):
+    return value.replace("_", " ").title()
+
+
 class Diagnostics(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.validated = False
-        self.reported_workers = set()
+        self.ready_reported = False
+        self.reported_worker_failures = set()
         if not hasattr(bot, "started_at_monotonic"):
             bot.started_at_monotonic = time.monotonic()
-        self.monitor_workers.start()
+        self.watch_workers.start()
 
     def cog_unload(self):
-        self.monitor_workers.cancel()
+        self.watch_workers.cancel()
 
-    async def database_status(self):
+    async def database_health(self):
         started = time.perf_counter()
         try:
             async with aiosqlite.connect(config.DATABASE) as database:
-                cursor = await database.execute("PRAGMA integrity_check")
-                result = await cursor.fetchone()
-                cursor = await database.execute("SELECT COUNT(*) FROM tickets WHERE status='open'")
-                open_tickets = (await cursor.fetchone())[0]
-            latency = log_performance("diagnostics.database_health", started, threshold_ms=250)
-            return result[0] == "ok", latency, open_tickets, result[0]
-        except Exception as error:
-            reference = log_exception("DATABASE", error, context="Health check failed")
-            return False, 0.0, 0, reference
-
-    async def error_summary(self, limit=5):
-        async with aiosqlite.connect(config.DATABASE) as database:
-            cursor = await database.execute(
-                "SELECT reference, category, error_type, occurrence_count, last_seen FROM error_events ORDER BY last_seen DESC LIMIT ?",
-                (limit,),
-            )
-            rows = await cursor.fetchall()
-        return [
-            {
-                "reference": row[0],
-                "category": row[1],
-                "error_type": row[2],
-                "occurrences": row[3],
-                "last_seen": row[4],
+                integrity_cursor = await database.execute("PRAGMA integrity_check")
+                integrity = (await integrity_cursor.fetchone())[0]
+                ticket_cursor = await database.execute("SELECT COUNT(*) FROM tickets WHERE status='open'")
+                open_tickets = (await ticket_cursor.fetchone())[0]
+                error_cursor = await database.execute("SELECT COALESCE(SUM(occurrence_count), 0) FROM error_events WHERE last_seen>=?", ((datetime.now() - timedelta(hours=24)).isoformat(),))
+                errors_24h = (await error_cursor.fetchone())[0]
+            latency = log_performance("database.health", started, threshold_ms=250)
+            return {
+                "ok": integrity == "ok",
+                "integrity": integrity,
+                "latency_ms": latency,
+                "open_tickets": open_tickets,
+                "errors_24h": errors_24h,
             }
-            for row in rows
-        ]
+        except Exception as error:
+            reference = log_exception("DATABASE", error, context="Diagnostic database check")
+            return {"ok": False, "integrity": reference, "latency_ms": 0.0, "open_tickets": 0, "errors_24h": 1}
 
-    async def error_details(self, reference):
+    async def recent_errors(self, limit=5, full=False):
+        columns = "reference, category, error_type, message, context, guild_id, channel_id, user_id, occurrence_count, first_seen, last_seen"
+        if full:
+            columns += ", fingerprint, traceback"
+        async with aiosqlite.connect(config.DATABASE) as database:
+            cursor = await database.execute(f"SELECT {columns} FROM error_events ORDER BY last_seen DESC LIMIT ?", (limit,))
+            rows = await cursor.fetchall()
+        keys = [column.strip() for column in columns.split(",")]
+        return [dict(zip(keys, row)) for row in rows]
+
+    async def find_error(self, reference):
         async with aiosqlite.connect(config.DATABASE) as database:
             cursor = await database.execute(
-                "SELECT reference, fingerprint, category, error_type, message, traceback, context, guild_id, channel_id, user_id, occurrence_count, first_seen, last_seen FROM error_events WHERE UPPER(reference)=UPPER(?)",
+                "SELECT reference, category, error_type, message, context, guild_id, channel_id, user_id, occurrence_count, first_seen, last_seen, fingerprint, traceback FROM error_events WHERE UPPER(reference)=UPPER(?)",
                 (reference.strip(),),
             )
             row = await cursor.fetchone()
         if not row:
             return None
-        keys = ("reference", "fingerprint", "category", "error_type", "message", "traceback", "context", "guild_id", "channel_id", "user_id", "occurrence_count", "first_seen", "last_seen")
+        keys = ("reference", "category", "error_type", "message", "context", "guild_id", "channel_id", "user_id", "occurrence_count", "first_seen", "last_seen", "fingerprint", "traceback")
         return dict(zip(keys, row))
 
-    async def performance_summary(self):
+    async def slow_operations(self):
         cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
         async with aiosqlite.connect(config.DATABASE) as database:
-            cursor = await database.execute(
-                "SELECT COUNT(*), COALESCE(AVG(duration_ms), 0), COALESCE(MAX(duration_ms), 0) FROM performance_events WHERE created_at>=?",
+            count_cursor = await database.execute(
+                "SELECT COUNT(*) FROM performance_events WHERE created_at>=?",
                 (cutoff,),
             )
-            row = await cursor.fetchone()
-        return {"operations": row[0], "average_ms": row[1], "maximum_ms": row[2]}
+            count = (await count_cursor.fetchone())[0]
+            slowest_cursor = await database.execute(
+                "SELECT operation, duration_ms FROM performance_events WHERE created_at>=? ORDER BY duration_ms DESC LIMIT 1",
+                (cutoff,),
+            )
+            slowest = await slowest_cursor.fetchone()
+        return {"count": count, "maximum_ms": slowest[1] if slowest else 0.0, "slowest": slowest[0] if slowest else "None"}
 
-    def worker_results(self):
+    def workers(self):
+        definitions = (
+            ("Ticket inactivity audit", "Inactivity", "check_inactivity"),
+            ("Ticket escalation audit", "Escalations", "audit_escalations"),
+            ("Diagnostic watchdog", "Diagnostics", "watch_workers"),
+        )
         results = []
-        monitored = {
-            "Inactivity": "check_inactivity",
-            "Escalations": "audit_escalations",
-            "Diagnostics": "monitor_workers",
-        }
-        for cog_name, attribute in monitored.items():
+        for label, cog_name, attribute in definitions:
             cog = self.bot.get_cog(cog_name)
             worker = getattr(cog, attribute, None) if cog else None
             if worker is None:
-                results.append((f"{cog_name}.{attribute}", "Missing", "Worker or extension not loaded"))
-                continue
-            if worker.failed():
+                status = "Missing"
+            elif worker.failed():
                 status = "Failed"
             elif worker.is_running():
                 status = "Running"
             else:
                 status = "Stopped"
-            next_run = getattr(worker, "next_iteration", None)
-            detail = f"Next run: {next_run.isoformat()}" if next_run else "No next execution scheduled"
-            results.append((f"{cog_name}.{attribute}", status, detail))
+            results.append({"name": label, "status": status})
         return results
 
-    def permission_results(self):
+    def server_checks(self):
         results = []
-        required = (
-            "view_channel",
-            "send_messages",
-            "embed_links",
-            "attach_files",
-            "read_message_history",
-            "manage_channels",
-            "manage_roles",
-        )
-        for guild_id, guild_config in config.GUILDS.items():
+        channel_keys = ("TICKET_CATEGORY_ID", "TICKET_PANEL_CHANNEL_ID", "TICKET_ARCHIVE_CATEGORY_ID")
+        permission_names = ("view_channel", "send_messages", "embed_links", "attach_files", "read_message_history", "manage_channels", "manage_roles")
+        for guild_id, settings in config.GUILDS.items():
             guild = self.bot.get_guild(guild_id)
-            if guild is None or guild.me is None:
-                results.append((guild_config.get("NAME", str(guild_id)), ["bot_not_connected"]))
+            issues = []
+            if guild is None:
+                results.append({"server": settings.get("NAME", str(guild_id)), "issues": ["Bot is not connected"]})
                 continue
-            panel = guild.get_channel(guild_config["TICKET_PANEL_CHANNEL_ID"])
-            permissions = panel.permissions_for(guild.me) if panel else guild.me.guild_permissions
-            missing = [name for name in required if not getattr(permissions, name, False)]
-            results.append((guild.name, missing))
+            for key in channel_keys:
+                if guild.get_channel(settings[key]) is None:
+                    issues.append(f"Missing {clean_label(key)}")
+            role_ids = set(settings["OWNER_ROLES"]) | {settings["MOD_ROLE"], settings["TRIAL_MOD_ROLE"]}
+            for role_id in role_ids:
+                if guild.get_role(role_id) is None:
+                    issues.append(f"Missing staff role {role_id}")
+            if guild.me:
+                panel = guild.get_channel(settings["TICKET_PANEL_CHANNEL_ID"])
+                permissions = panel.permissions_for(guild.me) if panel else guild.me.guild_permissions
+                for permission in permission_names:
+                    if not getattr(permissions, permission, False):
+                        issues.append(f"Missing {clean_label(permission)} permission")
+            results.append({"server": guild.name, "issues": issues})
         return results
+
+    async def snapshot(self):
+        database = await self.database_health()
+        workers = self.workers()
+        servers = self.server_checks()
+        slow = await self.slow_operations()
+        errors = await self.recent_errors()
+        issues = []
+        if not database["ok"]:
+            issues.append(f"Database integrity: {database['integrity']}")
+        for worker in workers:
+            if worker["status"] != "Running":
+                issues.append(f"{worker['name']}: {worker['status']}")
+        for server in servers:
+            issues.extend(f"{server['server']}: {item}" for item in server["issues"])
+        discord_latency = self.bot.latency * 1000
+        if discord_latency >= 750:
+            issues.append(f"Discord latency is high: {discord_latency:.1f} ms")
+        return {
+            "status": "Healthy" if not issues else "Attention Required",
+            "issues": issues,
+            "database": database,
+            "workers": workers,
+            "servers": servers,
+            "slow_operations": slow,
+            "recent_errors": errors,
+            "discord_latency_ms": discord_latency,
+            "uptime": format_uptime(time.monotonic() - self.bot.started_at_monotonic),
+        }
 
     @tasks.loop(minutes=1)
-    async def monitor_workers(self):
-        for name, status, detail in self.worker_results():
-            if name == "Diagnostics.monitor_workers":
+    async def watch_workers(self):
+        for worker in self.workers():
+            name = worker["name"]
+            if name == "Diagnostic watchdog":
                 continue
-            if status == "Running":
-                self.reported_workers.discard(name)
+            if worker["status"] == "Running":
+                self.reported_worker_failures.discard(name)
                 continue
-            if name in self.reported_workers:
-                continue
-            self.reported_workers.add(name)
-            error = RuntimeError(f"Background worker {name} is {status.lower()}")
-            log_exception("WORKER", error, context=detail)
+            if name not in self.reported_worker_failures:
+                self.reported_worker_failures.add(name)
+                log_exception("WORKER", RuntimeError(f"{name} is {worker['status'].lower()}"), context="Background worker watchdog")
 
-    @monitor_workers.before_loop
-    async def before_monitor_workers(self):
+    @watch_workers.before_loop
+    async def before_watch_workers(self):
         await self.bot.wait_until_ready()
-
-    def configuration_results(self):
-        results = []
-        for guild_id, guild_config in config.GUILDS.items():
-            guild = self.bot.get_guild(guild_id)
-            if guild is None:
-                results.append((guild_config.get("NAME", str(guild_id)), "Unavailable", "Bot is not connected"))
-                continue
-            missing = []
-            for key in ("TICKET_CATEGORY_ID", "TICKET_PANEL_CHANNEL_ID", "TICKET_ARCHIVE_CATEGORY_ID"):
-                if guild.get_channel(guild_config[key]) is None:
-                    missing.append(key)
-            for role_id in guild_config["OWNER_ROLES"]:
-                if guild.get_role(role_id) is None:
-                    missing.append(f"OWNER_ROLE:{role_id}")
-            status = "Operational" if not missing else "Attention required"
-            detail = "All configured resources are available" if not missing else ", ".join(missing)
-            results.append((guild.name, status, detail))
-        return results
-
-    async def run_startup_validation(self):
-        database_ok, database_latency, open_tickets, database_detail = await self.database_status()
-        level = "SUCCESS" if database_ok else "ERROR"
-        emit(level, "HEALTH", f"Database status={database_detail} latency={database_latency:.1f}ms open_tickets={open_tickets}")
-        for guild_name, status, detail in self.configuration_results():
-            level = "SUCCESS" if status == "Operational" else "WARNING"
-            emit(level, "HEALTH", f"{guild_name} | {status} | {detail}")
 
     @commands.Cog.listener()
     async def on_ready(self):
-        if self.validated:
+        if self.ready_reported:
             return
-        self.validated = True
-        await self.run_startup_validation()
+        self.ready_reported = True
+        report = await self.snapshot()
+        emit("SUCCESS" if report["status"] == "Healthy" else "WARNING", "HEALTH", f"Startup status: {report['status']} | issues={len(report['issues'])}")
 
-    @app_commands.command(name="healthz", description="Display the current bot and database health")
+    async def require_owner(self, interaction, message):
+        if is_owner(interaction.user):
+            return True
+        await interaction.response.send_message(message, ephemeral=True)
+        return False
+
+    @app_commands.command(name="healthz", description="Show a concise operational health overview")
     async def healthz(self, interaction: discord.Interaction):
-        if not is_owner(interaction.user):
-            await interaction.response.send_message("You do not have permission to view system health.", ephemeral=True)
+        if not await self.require_owner(interaction, "You do not have permission to view system health."):
             return
         await interaction.response.defer(ephemeral=True)
-        database_ok, database_latency, open_tickets, database_detail = await self.database_status()
-        recent_errors = await self.error_summary(limit=1)
-        performance = await self.performance_summary()
-        workers = self.worker_results()
-        failed_workers = sum(1 for _, status, _ in workers if status != "Running")
-        uptime = format_uptime(time.monotonic() - self.bot.started_at_monotonic)
+        report = await self.snapshot()
+        healthy = report["status"] == "Healthy"
+        running = sum(1 for worker in report["workers"] if worker["status"] == "Running")
         embed = discord.Embed(
-            title=f"{config.BOT_NAME} System Health",
-            description="Live operational status for the ticket infrastructure.",
-            color=0x2ECC71 if database_ok else 0xE74C3C,
+            title=f"{config.BOT_NAME} Operations Status",
+            description="All essential systems are being monitored in real time.",
+            color=0x2ECC71 if healthy else 0xF0B232,
+            timestamp=datetime.now(),
         )
-        embed.add_field(name="Overall Status", value="Operational" if database_ok else "Degraded", inline=True)
-        embed.add_field(name="Discord Latency", value=f"{self.bot.latency * 1000:.1f} ms", inline=True)
-        embed.add_field(name="Database Latency", value=f"{database_latency:.1f} ms", inline=True)
-        embed.add_field(name="Uptime", value=uptime, inline=True)
-        embed.add_field(name="Connected Servers", value=str(len(self.bot.guilds)), inline=True)
-        embed.add_field(name="Open Tickets", value=str(open_tickets), inline=True)
-        embed.add_field(name="Loaded Modules", value=str(len(self.bot.extensions)), inline=True)
-        embed.add_field(name="Database Integrity", value=str(database_detail), inline=True)
-        embed.add_field(name="Background Workers", value=f"{len(workers) - failed_workers}/{len(workers)} running", inline=True)
-        embed.add_field(name="24h Operations", value=str(performance["operations"]), inline=True)
-        embed.add_field(name="Slowest Operation", value=f"{performance['maximum_ms']:.1f} ms", inline=True)
-        embed.add_field(name="Latest Error", value=recent_errors[0]["reference"] if recent_errors else "No recorded errors", inline=True)
-        embed.add_field(name="Runtime", value=f"Python {platform.python_version()} | discord.py {discord.__version__}", inline=False)
-        embed.set_footer(text=f"{config.BOT_NAME} | Private diagnostics")
+        embed.add_field(name="System", value=f"**{report['status']}**", inline=True)
+        embed.add_field(name="Discord", value=f"{report['discord_latency_ms']:.1f} ms", inline=True)
+        embed.add_field(name="Database", value=f"{report['database']['latency_ms']:.1f} ms", inline=True)
+        embed.add_field(name="Uptime", value=report["uptime"], inline=True)
+        embed.add_field(name="Open Tickets", value=str(report["database"]["open_tickets"]), inline=True)
+        embed.add_field(name="Workers", value=f"{running}/{len(report['workers'])} running", inline=True)
+        embed.add_field(name="Errors in 24 Hours", value=str(report["database"]["errors_24h"]), inline=True)
+        embed.add_field(name="Slow Operations", value=str(report["slow_operations"]["count"]), inline=True)
+        latest = report["recent_errors"][0]["reference"] if report["recent_errors"] else "None"
+        embed.add_field(name="Latest Error", value=latest, inline=True)
+        embed.set_footer(text=f"{config.BOT_NAME} | Owner operations")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="debugz", description="Run detailed ticket-system configuration diagnostics")
+    @app_commands.command(name="debugz", description="Run a readable full-system diagnostic check")
     async def debugz(self, interaction: discord.Interaction):
-        if not is_owner(interaction.user):
-            await interaction.response.send_message("You do not have permission to run diagnostics.", ephemeral=True)
+        if not await self.require_owner(interaction, "You do not have permission to run diagnostics."):
             return
         await interaction.response.defer(ephemeral=True)
-        results = self.configuration_results()
-        database_ok, database_latency, open_tickets, database_detail = await self.database_status()
-        workers = self.worker_results()
-        permissions = self.permission_results()
-        recent_errors = await self.error_summary()
-        performance = await self.performance_summary()
-        problems = (
-            sum(1 for _, status, _ in results if status != "Operational")
-            + sum(1 for _, status, _ in workers if status != "Running")
-            + sum(1 for _, missing in permissions if missing)
-            + (0 if database_ok else 1)
-        )
+        report = await self.snapshot()
         embed = discord.Embed(
-            title=f"{config.BOT_NAME} Diagnostic Report",
-            description=f"Diagnostic run completed with {problems} item{'s' if problems != 1 else ''} requiring attention.",
-            color=0x2ECC71 if problems == 0 else 0xF0B232,
+            title=f"{config.BOT_NAME} Diagnostic Center",
+            description=f"Result: **{report['status']}**\nDetected issues: **{len(report['issues'])}**",
+            color=0x2ECC71 if not report["issues"] else 0xF0B232,
+            timestamp=datetime.now(),
         )
-        for guild_name, status, detail in results:
-            value = f"Status: **{status}**\n{detail}"
-            embed.add_field(name=guild_name[:256], value=value[:1024], inline=False)
-        extension_names = "\n".join(sorted(self.bot.extensions)) or "No extensions loaded"
-        embed.add_field(name="Loaded Extensions", value=extension_names[:1024], inline=False)
-        embed.add_field(
-            name="Database",
-            value=f"Integrity: {database_detail}\nLatency: {database_latency:.1f} ms\nOpen tickets: {open_tickets}",
-            inline=False,
-        )
-        worker_lines = [f"{name}: **{status}**" for name, status, _ in workers]
-        embed.add_field(name="Background Workers", value="\n".join(worker_lines)[:1024], inline=False)
-        permission_lines = [
-            f"{guild_name}: {'Operational' if not missing else 'Missing ' + ', '.join(missing)}"
-            for guild_name, missing in permissions
-        ]
-        embed.add_field(name="Discord Permissions", value="\n".join(permission_lines)[:1024], inline=False)
-        error_lines = [
-            f"`{item['reference']}` {item['category']} / {item['error_type']} | {item['occurrences']} occurrence(s)"
-            for item in recent_errors
-        ]
-        embed.add_field(name="Recent Error Groups", value="\n".join(error_lines)[:1024] if error_lines else "No recorded errors", inline=False)
-        embed.add_field(
-            name="Performance Window",
-            value=f"Operations: {performance['operations']}\nAverage: {performance['average_ms']:.1f} ms\nMaximum: {performance['maximum_ms']:.1f} ms",
-            inline=False,
-        )
-        embed.set_footer(text=f"{config.BOT_NAME} | Owner diagnostics")
+        issue_text = "\n".join(f"{index}. {issue}" for index, issue in enumerate(report["issues"], 1)) or "No operational issues were detected."
+        embed.add_field(name="Action Required", value=issue_text[:1024], inline=False)
+        worker_text = "\n".join(f"{worker['name']}: **{worker['status']}**" for worker in report["workers"])
+        embed.add_field(name="Background Services", value=worker_text[:1024], inline=False)
+        server_text = "\n".join(f"{server['server']}: **{'Ready' if not server['issues'] else f'{len(server['issues'])} issue(s)'}**" for server in report["servers"])
+        embed.add_field(name="Server Configuration", value=server_text[:1024], inline=False)
+        error_text = "\n".join(f"`{error['reference']}` {error['category']} / {error['error_type']} | {error['occurrence_count']}x" for error in report["recent_errors"]) or "No errors recorded."
+        embed.add_field(name="Recent Error Groups", value=error_text[:1024], inline=False)
+        slow = report["slow_operations"]
+        embed.add_field(name="Performance", value=f"Slow events: {slow['count']}\nSlowest: {slow['slowest']}\nMaximum: {slow['maximum_ms']:.1f} ms", inline=False)
+        embed.set_footer(text=f"{config.BOT_NAME} | Use /debugerror for one reference")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="debugerror", description="Display a stored error group by reference")
-    @app_commands.describe(reference="Error reference such as ERR-A31F9C20")
+    @app_commands.command(name="debugerror", description="Investigate one stored error reference")
+    @app_commands.describe(reference="Reference such as ERR-A31F9C20")
     async def debugerror(self, interaction: discord.Interaction, reference: str):
-        if not is_owner(interaction.user):
-            await interaction.response.send_message("You do not have permission to inspect error records.", ephemeral=True)
+        if not await self.require_owner(interaction, "You do not have permission to inspect errors."):
             return
         await interaction.response.defer(ephemeral=True)
-        record = await self.error_details(reference)
-        if record is None:
-            await interaction.followup.send("No error record was found for that reference.", ephemeral=True)
+        record = await self.find_error(reference)
+        if not record:
+            await interaction.followup.send("No stored error matches that reference.", ephemeral=True)
             return
         embed = discord.Embed(
-            title=f"Error Investigation {record['reference']}",
-            description="Sanitized diagnostic details for the selected grouped error.",
+            title=f"Error {record['reference']}",
+            description=f"**{record['category']} / {record['error_type']}**",
             color=0xED4245,
+            timestamp=datetime.now(),
         )
-        embed.add_field(name="Classification", value=f"{record['category']} / {record['error_type']}", inline=True)
+        embed.add_field(name="Message", value=redact(record["message"])[:1024] or "Unavailable", inline=False)
+        embed.add_field(name="Context", value=redact(record["context"])[:1024] or "No context provided", inline=False)
         embed.add_field(name="Occurrences", value=str(record["occurrence_count"]), inline=True)
-        embed.add_field(name="Fingerprint", value=f"`{record['fingerprint']}`", inline=True)
         embed.add_field(name="First Seen", value=record["first_seen"], inline=False)
         embed.add_field(name="Last Seen", value=record["last_seen"], inline=False)
-        context = record["context"] or "No additional context"
-        embed.add_field(name="Context", value=redact(context)[:1024], inline=False)
-        embed.add_field(name="Error Message", value=redact(record["message"])[:1024], inline=False)
-        identifiers = f"Guild: {record['guild_id'] or 'Unknown'}\nChannel: {record['channel_id'] or 'Unknown'}\nUser: {record['user_id'] or 'Unknown'}"
-        embed.add_field(name="Identifiers", value=identifiers, inline=False)
-        embed.set_footer(text=f"{config.BOT_NAME} | Restricted error intelligence")
+        location = f"Guild: {record['guild_id'] or 'Unknown'}\nChannel: {record['channel_id'] or 'Unknown'}\nUser: {record['user_id'] or 'Unknown'}"
+        embed.add_field(name="Location", value=location, inline=False)
+        embed.set_footer(text=f"{config.BOT_NAME} | Fingerprint {record['fingerprint']}")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="debugexport", description="Export a sanitized system diagnostic package")
+    @app_commands.command(name="debugexport", description="Export a sanitized diagnostic report")
     async def debugexport(self, interaction: discord.Interaction):
-        if not is_owner(interaction.user):
-            await interaction.response.send_message("You do not have permission to export diagnostics.", ephemeral=True)
+        if not await self.require_owner(interaction, "You do not have permission to export diagnostics."):
             return
         await interaction.response.defer(ephemeral=True)
         started = time.perf_counter()
-        database_ok, database_latency, open_tickets, database_detail = await self.database_status()
-        errors = await self.error_summary(limit=50)
-        report = {
-            "generated_at": datetime.now().isoformat(),
-            "bot": config.BOT_NAME,
-            "runtime": {"python": platform.python_version(), "discord_py": discord.__version__},
-            "health": {
-                "database_ok": database_ok,
-                "database_detail": redact(database_detail),
-                "database_latency_ms": database_latency,
-                "discord_latency_ms": self.bot.latency * 1000,
-                "open_tickets": open_tickets,
-                "uptime": format_uptime(time.monotonic() - self.bot.started_at_monotonic),
-            },
-            "configuration": self.configuration_results(),
-            "permissions": self.permission_results(),
-            "workers": self.worker_results(),
-            "performance": await self.performance_summary(),
-            "recent_error_groups": errors,
-            "loaded_extensions": sorted(self.bot.extensions),
-        }
-        payload = json.dumps(report, indent=2, ensure_ascii=False).encode("utf-8")
-        file = discord.File(io.BytesIO(payload), filename=f"maja-diagnostics-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json")
+        report = await self.snapshot()
+        report["generated_at"] = datetime.now().isoformat()
+        report["runtime"] = {"python": platform.python_version(), "discord_py": discord.__version__}
+        report["loaded_extensions"] = sorted(self.bot.extensions)
+        report["error_details"] = await self.recent_errors(limit=25, full=True)
+        payload = redact(json.dumps(report, indent=2, ensure_ascii=False)).encode("utf-8")
+        filename = f"maja-diagnostics-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+        file = discord.File(io.BytesIO(payload), filename=filename)
         duration = log_performance("diagnostics.export", started, threshold_ms=1000, guild=interaction.guild)
         embed = discord.Embed(
-            title=f"{config.BOT_NAME} Diagnostic Export",
-            description="The sanitized operations package was generated successfully.",
+            title=f"{config.BOT_NAME} Diagnostic Package",
+            description="A sanitized technical report is attached for owner review.",
             color=0x5865F2,
+            timestamp=datetime.now(),
         )
-        embed.add_field(name="Error Groups", value=str(len(errors)), inline=True)
-        embed.add_field(name="Generation Time", value=f"{duration:.1f} ms", inline=True)
-        embed.add_field(name="Sensitive Values", value="Redacted", inline=True)
-        embed.set_footer(text=f"{config.BOT_NAME} | Owner-only export")
+        embed.add_field(name="Status", value=report["status"], inline=True)
+        embed.add_field(name="Issues", value=str(len(report["issues"])), inline=True)
+        embed.add_field(name="Generated In", value=f"{duration:.1f} ms", inline=True)
+        embed.set_footer(text=f"{config.BOT_NAME} | Credentials are automatically redacted")
         await interaction.followup.send(embed=embed, file=file, ephemeral=True)
 
 
