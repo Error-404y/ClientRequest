@@ -98,6 +98,9 @@ TRANSCRIPT_FOLDER = str(BASE_DIR / "transcripts")
 LOG_FOLDER = str(BASE_DIR / "logs")
 INACTIVITY_WARN_HOURS = 24
 INACTIVITY_CLOSE_HOURS = 24
+ESCALATION_SCAN_MINUTES = 5
+UNCLAIMED_ESCALATION_MINUTES = 15
+CUSTOMER_WAIT_ESCALATION_MINUTES = 30
 BAD_WORDS = [
     "fuck", "shit", "bitch", "asshole", "bastard", "cunt", "dick", "pussy",
     "nigger", "nigga", "retard", "whore", "slut", "motherfucker", "faggot",
