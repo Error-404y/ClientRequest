@@ -284,6 +284,9 @@ async def setup_database ():
         await db.execute(
             "CREATE TABLE IF NOT EXISTS ticket_panels (guild_id INTEGER NOT NULL, channel_id INTEGER NOT NULL, message_id INTEGER NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (guild_id, message_id))"
         )
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS escalation_events (guild_id INTEGER NOT NULL, channel_id INTEGER NOT NULL, event_key TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (guild_id, channel_id, event_key))"
+        )
         await db.execute("CREATE INDEX IF NOT EXISTS idx_staff_availability_status ON staff_availability(guild_id, status)")
         for guild_id in config.GUILDS:
             cursor = await db.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM tickets WHERE guild_id=?", (guild_id,))
@@ -1481,4 +1484,23 @@ async def get_ticket_panels(guild_id):
 async def remove_ticket_panel(guild_id, message_id):
     async with aiosqlite.connect(config.DATABASE) as db:
         await db.execute("DELETE FROM ticket_panels WHERE guild_id=? AND message_id=?", (guild_id, message_id))
+        await db.commit()
+
+
+async def register_escalation_event(guild_id, channel_id, event_key, created_at):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "INSERT OR IGNORE INTO escalation_events(guild_id, channel_id, event_key, created_at) VALUES(?, ?, ?, ?)",
+            (guild_id, channel_id, event_key, created_at),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def clear_escalation_event(guild_id, channel_id, event_key):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute(
+            "DELETE FROM escalation_events WHERE guild_id=? AND channel_id=? AND event_key=?",
+            (guild_id, channel_id, event_key),
+        )
         await db.commit()
