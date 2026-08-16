@@ -8,7 +8,19 @@ import pytz
 
 import config
 from cogs.inactivity import hours_since
-from utils.database import claim_ticket, close_ticket, create_ticket_record, get_next_ticket_number, setup_database
+from utils.database import (
+    claim_ticket,
+    close_ticket,
+    create_ticket_record,
+    get_available_staff_count,
+    get_next_ticket_number,
+    get_staff_availability,
+    get_ticket_panels,
+    register_ticket_panel,
+    set_staff_availability,
+    setup_database,
+)
+from utils.embeds import estimate_response_time
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -21,6 +33,11 @@ class ConfigurationTests(unittest.TestCase):
         now = datetime.now(zone)
         value = (now - timedelta(hours=25)).isoformat()
         self.assertGreaterEqual(hours_since(value, now), 25)
+
+    def test_response_time_estimates(self):
+        self.assertEqual(estimate_response_time(0), "Currently unavailable")
+        self.assertEqual(estimate_response_time(3), "10–20 minutes")
+        self.assertEqual(estimate_response_time(5), "5–15 minutes")
 
 
 class DatabaseTests(unittest.IsolatedAsyncioTestCase):
@@ -53,6 +70,17 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             cursor = await database.execute("PRAGMA table_info(tickets)")
             names = {row[1] for row in await cursor.fetchall()}
         self.assertIn("warned_at", names)
+
+    async def test_staff_availability_and_panel_registration(self):
+        guild_id = next(iter(config.GUILDS))
+        await set_staff_availability(guild_id, 200, "Available", datetime.now().isoformat())
+        await set_staff_availability(guild_id, 201, "Busy", datetime.now().isoformat())
+        self.assertEqual(await get_available_staff_count(guild_id), 1)
+        records = await get_staff_availability(guild_id)
+        self.assertEqual(len(records), 2)
+        await register_ticket_panel(guild_id, 300, 400, datetime.now().isoformat())
+        panels = await get_ticket_panels(guild_id)
+        self.assertEqual(panels, [{"channel_id": 300, "message_id": 400}])
 
 
 if __name__ == "__main__":
