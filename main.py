@@ -46,6 +46,7 @@ extensions =[
 "cogs.findz",
 "cogs.updates",
 "cogs.diagnostics",
+"cogs.availability",
 ]
 
 
