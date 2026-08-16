@@ -278,6 +278,13 @@ async def setup_database ():
         await db.execute(
             "CREATE TABLE IF NOT EXISTS ticket_counters (guild_id INTEGER PRIMARY KEY, next_number INTEGER NOT NULL)"
         )
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS staff_availability (guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (guild_id, user_id))"
+        )
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS ticket_panels (guild_id INTEGER NOT NULL, channel_id INTEGER NOT NULL, message_id INTEGER NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (guild_id, message_id))"
+        )
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_staff_availability_status ON staff_availability(guild_id, status)")
         for guild_id in config.GUILDS:
             cursor = await db.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM tickets WHERE guild_id=?", (guild_id,))
             suggested = (await cursor.fetchone())[0]
@@ -1420,3 +1427,58 @@ priority
     f"for Channel: {channel_id }"
     )
     )
+
+
+async def set_staff_availability(guild_id, user_id, status, updated_at):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute(
+            "INSERT INTO staff_availability(guild_id, user_id, status, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(guild_id, user_id) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at",
+            (guild_id, user_id, status, updated_at),
+        )
+        await db.commit()
+    log_db("UPSERT", "staff_availability", f"Guild: {guild_id}, User: {user_id}, Status: {status}")
+
+
+async def get_staff_availability(guild_id):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT user_id, status, updated_at FROM staff_availability WHERE guild_id=? ORDER BY CASE status WHEN 'Available' THEN 0 WHEN 'Busy' THEN 1 WHEN 'On Break' THEN 2 WHEN 'Away' THEN 3 ELSE 4 END, updated_at DESC",
+            (guild_id,),
+        )
+        rows = await cursor.fetchall()
+    return [{"user_id": row[0], "status": row[1], "updated_at": row[2]} for row in rows]
+
+
+async def get_available_staff_count(guild_id):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM staff_availability WHERE guild_id=? AND status='Available'",
+            (guild_id,),
+        )
+        row = await cursor.fetchone()
+    return row[0]
+
+
+async def register_ticket_panel(guild_id, channel_id, message_id, created_at):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO ticket_panels(guild_id, channel_id, message_id, created_at) VALUES(?, ?, ?, ?)",
+            (guild_id, channel_id, message_id, created_at),
+        )
+        await db.commit()
+
+
+async def get_ticket_panels(guild_id):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT channel_id, message_id FROM ticket_panels WHERE guild_id=? ORDER BY created_at DESC",
+            (guild_id,),
+        )
+        rows = await cursor.fetchall()
+    return [{"channel_id": row[0], "message_id": row[1]} for row in rows]
+
+
+async def remove_ticket_panel(guild_id, message_id):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute("DELETE FROM ticket_panels WHERE guild_id=? AND message_id=?", (guild_id, message_id))
+        await db.commit()
