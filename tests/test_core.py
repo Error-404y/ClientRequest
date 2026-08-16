@@ -23,6 +23,7 @@ from utils.database import (
     setup_database,
 )
 from utils.embeds import estimate_response_time
+from utils.logger import log_exception
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -95,6 +96,22 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         created_at = datetime.now().isoformat()
         self.assertTrue(await register_escalation_event(guild_id, 100, "unclaimed", created_at))
         self.assertFalse(await register_escalation_event(guild_id, 100, "unclaimed", created_at))
+
+    async def test_repeated_errors_share_reference(self):
+        references = []
+        for _ in range(2):
+            try:
+                raise RuntimeError("Database test failure")
+            except RuntimeError as error:
+                references.append(log_exception("TEST", error, context="Grouped failure"))
+        self.assertEqual(references[0], references[1])
+        async with aiosqlite.connect(config.DATABASE) as database:
+            cursor = await database.execute(
+                "SELECT occurrence_count FROM error_events WHERE reference=?",
+                (references[0],),
+            )
+            row = await cursor.fetchone()
+        self.assertEqual(row[0], 2)
 
 
 if __name__ == "__main__":
