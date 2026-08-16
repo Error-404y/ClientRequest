@@ -1,6 +1,6 @@
-import logging
 import hashlib
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -11,7 +11,6 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-import discord
 import pytz
 
 import config
@@ -19,7 +18,12 @@ import config
 timezone = pytz.timezone("Europe/Berlin")
 MAX_LOG_BYTES = 5 * 1024 * 1024
 LOG_BACKUPS = 5
-ANSI = {
+SENSITIVE_PATTERNS = (
+    re.compile(r"(?i)(discord_token|token|authorization|password|secret)(\s*[=:]\s*)([^\s,;]+)"),
+    re.compile(r"[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{20,}"),
+    re.compile(r"https://(?:discord|discordapp)\.com/api/webhooks/[^\s]+", re.IGNORECASE),
+)
+COLORS = {
     "DEBUG": "\033[90m",
     "INFO": "\033[36m",
     "SUCCESS": "\033[32m",
@@ -28,44 +32,55 @@ ANSI = {
     "CRITICAL": "\033[1;31m",
     "RESET": "\033[0m",
 }
-SENSITIVE_PATTERNS = [
-    re.compile(r"(?i)(discord_token|token|authorization|password|secret)(\s*[=:]\s*)([^\s,;]+)"),
-    re.compile(r"[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{20,}"),
-    re.compile(r"https://(?:discord|discordapp)\.com/api/webhooks/[^\s]+", re.IGNORECASE),
-]
 _initialized = False
-_file_handlers = {}
 
 
-class StructuredFormatter(logging.Formatter):
+def redact(value):
+    text = str(value)
+    for pattern in SENSITIVE_PATTERNS:
+        text = pattern.sub(r"\1\2[REDACTED]", text) if pattern.groups >= 3 else pattern.sub("[REDACTED]", text)
+    token = getattr(config, "TOKEN", "")
+    return text.replace(token, "[REDACTED]") if token else text
+
+
+def _identity(value):
+    if value is None:
+        return None
+    return value if isinstance(value, int) else getattr(value, "id", None)
+
+
+def _guild(value):
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    direct = getattr(value, "id", None) if hasattr(value, "channels") else None
+    related = getattr(getattr(value, "guild", None), "id", None)
+    return direct or related
+
+
+class ReadableFormatter(logging.Formatter):
     def format(self, record):
-        timestamp = datetime.fromtimestamp(record.created, timezone).strftime("%d.%m.%Y %H:%M:%S")
+        timestamp = datetime.fromtimestamp(record.created, timezone).strftime("%Y-%m-%d %H:%M:%S")
         level = getattr(record, "display_level", record.levelname)
         category = getattr(record, "category", "SYSTEM")
-        reference = getattr(record, "reference", None)
-        guild_id = getattr(record, "guild_id", None)
-        channel_id = getattr(record, "channel_id", None)
-        user_id = getattr(record, "user_id", None)
         context = []
-        if guild_id:
-            context.append(f"guild={guild_id}")
-        if channel_id:
-            context.append(f"channel={channel_id}")
-        if user_id:
-            context.append(f"user={user_id}")
+        reference = getattr(record, "reference", None)
         if reference:
-            context.append(f"ref={reference}")
-        suffix = f" | {' '.join(context)}" if context else ""
+            context.append(reference)
+        for label in ("guild_id", "channel_id", "user_id"):
+            value = getattr(record, label, None)
+            if value:
+                context.append(f"{label.removesuffix('_id')}={value}")
+        suffix = f" | {' | '.join(context)}" if context else ""
         return f"{timestamp} | {level:<8} | {category:<12} | {record.getMessage()}{suffix}"
 
 
-class ColorFormatter(StructuredFormatter):
+class ConsoleFormatter(ReadableFormatter):
     def format(self, record):
-        plain = super().format(record)
+        rendered = super().format(record)
         level = getattr(record, "display_level", record.levelname)
-        if not os.isatty(1):
-            return plain
-        return f"{ANSI.get(level, '')}{plain}{ANSI['RESET']}"
+        return f"{COLORS.get(level, '')}{rendered}{COLORS['RESET']}" if os.isatty(1) else rendered
 
 
 class JsonFormatter(logging.Formatter):
@@ -83,53 +98,30 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-def get_time():
-    return datetime.now(timezone).strftime("%d.%m.%Y %H:%M:%S")
-
-
-def redact(value):
-    text = str(value)
-    for pattern in SENSITIVE_PATTERNS:
-        if pattern.groups >= 3:
-            text = pattern.sub(r"\1\2[REDACTED]", text)
-        else:
-            text = pattern.sub("[REDACTED]", text)
-    token = getattr(config, "TOKEN", "")
-    if token:
-        text = text.replace(token, "[REDACTED]")
-    return text
-
-
-def _safe_filename(value):
-    safe = "".join(character if character.isalnum() or character in ("_", "-") else "_" for character in str(value))
-    return safe.strip("_") or "unknown"
-
-
-def _handler(filename):
-    path = str(Path(config.LOG_FOLDER) / filename)
-    if path not in _file_handlers:
-        handler = RotatingFileHandler(path, maxBytes=MAX_LOG_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8")
-        handler.setFormatter(StructuredFormatter())
-        _file_handlers[path] = handler
-    return _file_handlers[path]
+def _file_handler(filename, formatter):
+    Path(config.LOG_FOLDER).mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(Path(config.LOG_FOLDER) / filename, maxBytes=MAX_LOG_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8")
+    handler.setFormatter(formatter)
+    return handler
 
 
 def setup_logs():
     global _initialized
-    Path(config.LOG_FOLDER).mkdir(parents=True, exist_ok=True)
     if _initialized:
         return
     logger = logging.getLogger("maja")
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
     console = logging.StreamHandler()
-    console.setFormatter(ColorFormatter())
+    console.setLevel(logging.INFO)
+    console.setFormatter(ConsoleFormatter())
+    readable_file = _file_handler("bot.log", ReadableFormatter())
+    readable_file.setLevel(logging.INFO)
+    structured_file = _file_handler("structured.jsonl", JsonFormatter())
+    structured_file.setLevel(logging.DEBUG)
     logger.addHandler(console)
-    logger.addHandler(_handler("bot.log"))
-    json_path = str(Path(config.LOG_FOLDER) / "structured.jsonl")
-    json_handler = RotatingFileHandler(json_path, maxBytes=MAX_LOG_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8")
-    json_handler.setFormatter(JsonFormatter())
-    logger.addHandler(json_handler)
+    logger.addHandler(readable_file)
+    logger.addHandler(structured_file)
     _initialized = True
 
 
@@ -138,63 +130,38 @@ def create_error_reference():
 
 
 def create_error_fingerprint(category, error, context=None):
-    extracted = traceback.extract_tb(error.__traceback__)
+    frames = traceback.extract_tb(error.__traceback__)
     location = "unknown"
-    if extracted:
-        frame = extracted[-1]
-        location = f"{Path(frame.filename).name}:{frame.name}:{frame.lineno}"
-    source = f"{category.upper()}|{type(error).__name__}|{context or ''}|{location}"
-    return hashlib.sha256(source.encode("utf-8")).hexdigest()[:24]
+    if frames:
+        frame = frames[-1]
+        location = f"{Path(frame.filename).name}:{frame.name}"
+    raw = f"{category.upper()}|{type(error).__name__}|{context or ''}|{location}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
-def persist_error_event(reference, fingerprint, category, error, details, context, guild_id, channel_id, user_id):
+def _store_error(reference, fingerprint, category, error, trace, context, guild_id, channel_id, user_id):
     timestamp = datetime.now(timezone).isoformat()
     try:
         with sqlite3.connect(config.DATABASE, timeout=2) as database:
-            row = database.execute(
-                "SELECT reference FROM error_events WHERE fingerprint=?",
-                (fingerprint,),
-            ).fetchone()
+            row = database.execute("SELECT reference FROM error_events WHERE fingerprint=?", (fingerprint,)).fetchone()
             if row:
                 database.execute(
                     "UPDATE error_events SET occurrence_count=occurrence_count+1, last_seen=?, message=?, traceback=?, context=?, guild_id=COALESCE(?, guild_id), channel_id=COALESCE(?, channel_id), user_id=COALESCE(?, user_id) WHERE fingerprint=?",
-                    (timestamp, redact(error), redact(details), redact(context or ""), guild_id, channel_id, user_id, fingerprint),
+                    (timestamp, redact(error), redact(trace), redact(context or ""), guild_id, channel_id, user_id, fingerprint),
                 )
                 return row[0]
             database.execute(
                 "INSERT INTO error_events(reference, fingerprint, category, error_type, message, traceback, context, guild_id, channel_id, user_id, occurrence_count, first_seen, last_seen) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
-                (
-                    reference,
-                    fingerprint,
-                    category.upper(),
-                    type(error).__name__,
-                    redact(error),
-                    redact(details),
-                    redact(context or ""),
-                    guild_id,
-                    channel_id,
-                    user_id,
-                    timestamp,
-                    timestamp,
-                ),
+                (reference, fingerprint, category.upper(), type(error).__name__, redact(error), redact(trace), redact(context or ""), guild_id, channel_id, user_id, timestamp, timestamp),
             )
     except (sqlite3.Error, OSError):
         return reference
     return reference
 
 
-def _guild_details(guild):
-    if isinstance(guild, int):
-        return guild, config.GUILDS.get(guild, {}).get("NAME", str(guild))
-    if guild is not None:
-        return getattr(guild, "id", None), getattr(guild, "name", None)
-    return None, None
-
-
 def emit(level, category, message, guild=None, channel=None, user=None, reference=None):
     setup_logs()
-    logger = logging.getLogger("maja")
-    normalized_level = level.upper()
+    normalized = level.upper()
     python_level = {
         "DEBUG": logging.DEBUG,
         "INFO": logging.INFO,
@@ -202,105 +169,94 @@ def emit(level, category, message, guild=None, channel=None, user=None, referenc
         "WARNING": logging.WARNING,
         "ERROR": logging.ERROR,
         "CRITICAL": logging.CRITICAL,
-    }.get(normalized_level, logging.INFO)
-    guild_id, guild_name = _guild_details(guild or _extract_guild(channel) or _extract_guild(user))
+    }.get(normalized, logging.INFO)
     extra = {
-        "display_level": normalized_level,
+        "display_level": normalized,
         "category": category.upper(),
         "reference": reference,
-        "guild_id": guild_id,
-        "channel_id": getattr(channel, "id", None),
-        "user_id": getattr(user, "id", user if isinstance(user, int) else None),
+        "guild_id": _guild(guild) or _guild(channel) or _guild(user),
+        "channel_id": _identity(channel),
+        "user_id": _identity(user),
     }
-    safe_message = redact(message)
-    record = logger.makeRecord("maja", python_level, "", 0, safe_message, (), None, extra=extra)
+    logger = logging.getLogger("maja")
+    record = logger.makeRecord("maja", python_level, "", 0, redact(message).replace("\n", " "), (), None, extra=extra)
     logger.handle(record)
-    category_handler = _handler(f"{category.lower()}.log")
-    category_handler.handle(record)
-    if normalized_level in {"ERROR", "CRITICAL"}:
-        _handler("errors.log").handle(record)
-    if guild_id:
-        server_name = _safe_filename(guild_name or guild_id)
-        _handler(f"server_{server_name}.log").handle(record)
-
-
-def log(message, guild=None):
-    text = str(message)
-    match = re.match(r"\[(?:DEBUG|INFO|WARNING|ERROR)/([^]]+)]\s*(.*)", text, re.DOTALL)
-    if match:
-        category, text = match.groups()
-    else:
-        category = "SYSTEM"
-    upper = text.upper()
-    if category.upper() == "ERROR" or "FAILED" in upper or "ERROR" in upper:
-        level = "ERROR"
-    elif "WARNING" in upper or "MISSING" in upper:
-        level = "WARNING"
-    elif any(word in upper for word in ("SUCCESS", "LOADED", "ONLINE", "COMPLETED", "CONNECTED")):
-        level = "SUCCESS"
-    else:
-        level = "INFO"
-    emit(level, category, text, guild=guild)
+    if normalized in {"ERROR", "CRITICAL"}:
+        handler = _file_handler("errors.log", ReadableFormatter())
+        handler.handle(record)
+        handler.close()
 
 
 def log_exception(category, error, guild=None, channel=None, user=None, context=None):
-    reference = create_error_reference()
-    details = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-    guild_id, _ = _guild_details(guild or _extract_guild(channel) or _extract_guild(user))
+    trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
     fingerprint = create_error_fingerprint(category, error, context)
-    reference = persist_error_event(
-        reference,
-        fingerprint,
-        category,
-        error,
-        details,
-        context,
-        guild_id,
-        getattr(channel, "id", None),
-        getattr(user, "id", user if isinstance(user, int) else None),
+    reference = _store_error(
+        create_error_reference(), fingerprint, category, error, trace, context,
+        _guild(guild) or _guild(channel) or _guild(user), _identity(channel), _identity(user),
     )
-    message = f"{context + ' | ' if context else ''}{type(error).__name__}: {error}\n{details}"
-    emit("ERROR", category, message, guild=guild, channel=channel, user=user, reference=reference)
+    summary = f"{context + ' | ' if context else ''}{type(error).__name__}: {error}"
+    emit("ERROR", category, summary, guild=guild, channel=channel, user=user, reference=reference)
+    try:
+        handler = _file_handler("tracebacks.log", logging.Formatter("%(message)s"))
+        record = logging.LogRecord("maja.traceback", logging.ERROR, "", 0, f"{datetime.now(timezone).isoformat()} | {reference}\n{redact(trace)}", (), None)
+        handler.handle(record)
+        handler.close()
+    except OSError:
+        pass
     return reference
 
 
 def log_performance(operation, started_at, threshold_ms=500, guild=None):
-    duration_ms = (time.perf_counter() - started_at) * 1000
-    guild_id, _ = _guild_details(guild)
-    timestamp = datetime.now(timezone).isoformat()
+    duration = (time.perf_counter() - started_at) * 1000
+    if duration < threshold_ms:
+        return duration
     try:
         with sqlite3.connect(config.DATABASE, timeout=2) as database:
             database.execute(
                 "INSERT INTO performance_events(operation, duration_ms, threshold_ms, guild_id, created_at) VALUES(?, ?, ?, ?, ?)",
-                (operation, duration_ms, threshold_ms, guild_id, timestamp),
+                (operation, duration, threshold_ms, _guild(guild), datetime.now(timezone).isoformat()),
             )
     except (sqlite3.Error, OSError):
         pass
-    if duration_ms >= threshold_ms:
-        emit("WARNING", "PERFORMANCE", f"Slow operation detected | operation={operation} duration={duration_ms:.1f}ms threshold={threshold_ms:.1f}ms", guild=guild)
-    return duration_ms
+    emit("WARNING", "PERFORMANCE", f"Slow operation | {operation} | {duration:.1f} ms | limit {threshold_ms:.1f} ms", guild=guild)
+    return duration
+
+
+def get_time():
+    return datetime.now(timezone).strftime("%d.%m.%Y %H:%M:%S")
 
 
 def format_user(user):
     if user is None:
         return "Unknown User"
     if isinstance(user, int):
-        return f"User ID {user}"
-    name = getattr(user, "name", getattr(user, "display_name", str(user)))
-    user_id = getattr(user, "id", None)
-    return f"{name} ({user_id})" if user_id else str(name)
+        return f"User {user}"
+    name = getattr(user, "display_name", getattr(user, "name", str(user)))
+    return f"{name} ({getattr(user, 'id', 'Unknown')})"
 
 
 def format_channel(channel):
     if channel is None:
         return "Unknown Channel"
-    name = getattr(channel, "name", str(channel))
-    channel_id = getattr(channel, "id", None)
-    return f"#{name} ({channel_id})" if channel_id else str(name)
+    if isinstance(channel, str):
+        return channel
+    return f"#{getattr(channel, 'name', 'unknown')} ({getattr(channel, 'id', 'Unknown')})"
 
 
-def _extract_guild(obj):
-    return getattr(obj, "guild", None) if obj is not None else None
+def log(message, guild=None):
+    text = str(message)
+    match = re.match(r"\[(?:DEBUG|INFO|WARNING|ERROR)/([^]]+)]\s*(.*)", text, re.DOTALL)
+    category, text = match.groups() if match else ("SYSTEM", text)
+    upper = text.upper()
+    if "FAILED" in upper or "ERROR" in upper:
+        level = "ERROR"
+    elif "WARNING" in upper or "MISSING" in upper:
+        level = "WARNING"
+    elif any(value in upper for value in ("SUCCESS", "LOADED", "ONLINE", "COMPLETED", "CONNECTED")):
+        level = "SUCCESS"
+    else:
+        level = "INFO"
+    emit(level, category, text, guild=guild)
 
 
 def log_debug(category, message, guild=None):
@@ -308,64 +264,45 @@ def log_debug(category, message, guild=None):
 
 
 def log_dm(recipient, subject, success=True, error_detail=None):
-    level = "SUCCESS" if success else "ERROR"
-    message = f"DM {'sent to' if success else 'failed for'} {format_user(recipient)} | subject={subject}"
-    if error_detail:
-        message += f" | error={error_detail}"
-    emit(level, "DM", message, guild=_extract_guild(recipient), user=recipient)
+    emit("SUCCESS" if success else "WARNING", "DM", f"{subject} | {format_user(recipient)}{f' | {error_detail}' if error_detail else ''}", user=recipient)
 
 
 def log_mod(action, moderator, target, reason=None, extra=None):
-    message = f"{action} | moderator={format_user(moderator)} | target={format_user(target)}"
+    details = [action, f"moderator={format_user(moderator)}", f"target={format_user(target)}"]
     if reason:
-        message += f" | reason={reason}"
+        details.append(f"reason={reason}")
     if extra:
-        message += f" | {extra}"
-    emit("INFO", "MODERATION", message, guild=_extract_guild(moderator) or _extract_guild(target), user=moderator)
+        details.append(str(extra))
+    emit("INFO", "MODERATION", " | ".join(details), user=moderator)
 
 
 def log_command(user, command_name, channel=None, details=None):
-    message = f"{format_user(user)} executed {command_name}"
-    if details:
-        message += f" | {details}"
-    emit("INFO", "COMMAND", message, channel=channel, user=user)
+    emit("INFO", "COMMAND", f"{format_user(user)} used {command_name}{f' | {details}' if details else ''}", channel=channel, user=user)
 
 
 def log_ticket(action, channel, user=None, details=None):
-    message = f"{action} | ticket={format_channel(channel)}"
-    if details:
-        message += f" | {details}"
-    level = "ERROR" if "fail" in action.lower() else "SUCCESS" if action.lower() in {"created", "claimed", "closed", "reopened", "deleted"} else "INFO"
-    emit(level, "TICKET", message, channel=channel if hasattr(channel, "guild") else None, user=user)
+    level = "ERROR" if "fail" in action.lower() else "INFO"
+    emit(level, "TICKET", f"{action} | {format_channel(channel)}{f' | {details}' if details else ''}", channel=channel if not isinstance(channel, str) else None, user=user)
 
 
 def log_interaction(user, custom_id, channel=None, details=None):
-    message = f"{format_user(user)} triggered {custom_id}"
-    if details:
-        message += f" | {details}"
-    emit("INFO", "INTERACTION", message, channel=channel, user=user)
+    emit("INFO", "INTERACTION", f"{format_user(user)} triggered {custom_id}{f' | {details}' if details else ''}", channel=channel, user=user)
 
 
 def log_db(operation, table, details=None):
-    message = f"{operation} | table={table}"
-    if details:
-        message += f" | {details}"
-    emit("INFO", "DATABASE", message)
+    emit("DEBUG", "DATABASE", f"{operation} | {table}{f' | {details}' if details else ''}")
 
 
 def log_filter(user, words, channel=None):
-    emit("WARNING", "FILTER", f"Content filter matched {words}", channel=channel, user=user)
+    emit("WARNING", "FILTER", f"Matched {', '.join(words)}", channel=channel, user=user)
 
 
 def log_transcript(action, channel=None, details=None):
-    message = action if not details else f"{action} | {details}"
-    emit("INFO", "TRANSCRIPT", message, channel=channel)
+    emit("INFO", "TRANSCRIPT", f"{action}{f' | {details}' if details else ''}", channel=channel)
 
 
 def log_inactivity(action, channel=None, user=None, details=None):
-    message = action if not details else f"{action} | {details}"
-    level = "ERROR" if "fail" in action.lower() else "INFO"
-    emit(level, "INACTIVITY", message, channel=channel, user=user)
+    emit("WARNING" if "fail" in action.lower() else "INFO", "INACTIVITY", f"{action}{f' | {details}' if details else ''}", channel=channel, user=user)
 
 
 def log_perm(channel, target, permissions_summary):
@@ -373,41 +310,36 @@ def log_perm(channel, target, permissions_summary):
 
 
 async def send_report_to_owner(bot, embed, file=None, is_error=False):
-    if not bot or not is_error:
-        return
-    owner_id = getattr(config, "SETUP_USER_ID", None)
-    if not owner_id:
-        emit("ERROR", "ERROR", "SETUP_USER_ID is not configured")
+    if not bot or not is_error or not getattr(config, "SETUP_USER_ID", None):
         return
     try:
-        owner = bot.get_user(owner_id) or await bot.fetch_user(owner_id)
+        owner = bot.get_user(config.SETUP_USER_ID) or await bot.fetch_user(config.SETUP_USER_ID)
         if file:
             await owner.send(embed=embed, file=file)
         else:
             await owner.send(embed=embed)
-        log_dm(owner, f"{config.BOT_NAME} error report", success=True)
     except Exception as error:
-        log_exception("DM", error, user=owner_id, context="Owner error report delivery failed")
+        log_exception("DM", error, user=config.SETUP_USER_ID, context="Owner report delivery failed")
 
 
 def ticket_report(user, application, channel, bot=None):
-    log_ticket("Created", channel, user, details=f"application={application}")
+    log_ticket("Created", channel, user, f"application={application}")
 
 
 def ticket_claim_report(channel, staff, owner_id, bot):
-    log_ticket("Claimed", channel, staff, details=f"applicant_id={owner_id or 'Unknown'}")
+    log_ticket("Claimed", channel, staff, f"applicant={owner_id or 'Unknown'}")
 
 
 def ticket_close_report(channel, moderator, owner_id, reason, transcript_path, bot):
-    log_ticket("Closed", channel, moderator, details=f"reason={reason} | applicant_id={owner_id or 'Unknown'} | transcript={transcript_path or 'Unavailable'}")
+    log_ticket("Closed", channel, moderator, f"reason={reason} | applicant={owner_id or 'Unknown'} | transcript={transcript_path or 'Unavailable'}")
 
 
 def ticket_reopen_report(channel, moderator, owner_id, bot):
-    log_ticket("Reopened", channel, moderator, details=f"applicant_id={owner_id or 'Unknown'}")
+    log_ticket("Reopened", channel, moderator, f"applicant={owner_id or 'Unknown'}")
 
 
 def ticket_delete_report(channel_name, moderator, owner_id, bot):
-    log_ticket("Deleted", channel_name, moderator, details=f"applicant_id={owner_id or 'Unknown'}")
+    log_ticket("Deleted", channel_name, moderator, f"applicant={owner_id or 'Unknown'}")
 
 
 def error_report(error):
