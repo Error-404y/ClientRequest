@@ -287,7 +287,15 @@ async def setup_database ():
         await db.execute(
             "CREATE TABLE IF NOT EXISTS escalation_events (guild_id INTEGER NOT NULL, channel_id INTEGER NOT NULL, event_key TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (guild_id, channel_id, event_key))"
         )
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS error_events (reference TEXT PRIMARY KEY, fingerprint TEXT UNIQUE NOT NULL, category TEXT NOT NULL, error_type TEXT NOT NULL, message TEXT NOT NULL, traceback TEXT NOT NULL, context TEXT, guild_id INTEGER, channel_id INTEGER, user_id INTEGER, occurrence_count INTEGER NOT NULL DEFAULT 1, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL)"
+        )
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS performance_events (id INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL, duration_ms REAL NOT NULL, threshold_ms REAL NOT NULL, guild_id INTEGER, created_at TEXT NOT NULL)"
+        )
         await db.execute("CREATE INDEX IF NOT EXISTS idx_staff_availability_status ON staff_availability(guild_id, status)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_error_events_last_seen ON error_events(last_seen DESC)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_performance_events_created_at ON performance_events(created_at DESC)")
         for guild_id in config.GUILDS:
             cursor = await db.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM tickets WHERE guild_id=?", (guild_id,))
             suggested = (await cursor.fetchone())[0]
