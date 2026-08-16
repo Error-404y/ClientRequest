@@ -1,494 +1,491 @@
-import discord
+import discord 
 
-from discord.ui import Select, View
+from discord .ui import Select ,View 
 
-from datetime import datetime
+from datetime import datetime 
 
-import pytz
+import pytz 
 
-import config
+import config 
 
-from utils.database import (
-    create_ticket_record,
-    get_next_ticket_number
+from utils .database import (
+create_ticket_record ,
+get_next_ticket_number 
 )
 
-from utils.embeds import (
-    ticket_created,
-    error
+from utils .embeds import (
+ticket_created ,
+error 
 )
 
-from utils.logger import (
-    ticket_report,
-    log_interaction,
-    log_ticket,
-    log_perm
+from utils .logger import (
+ticket_report ,
+log_interaction ,
+log_ticket ,
+log_perm 
 )
 
-from views.ticket_buttons import TicketButtons
+from views .ticket_buttons import TicketButtons 
 
 
-timezone = pytz.timezone(
-    "Europe/Berlin"
+timezone =pytz .timezone (
+"Europe/Berlin"
 )
 
 
-class ApplicationDropdown(Select):
+class ApplicationDropdown (Select ):
 
-    def __init__(
-        self,
-        options_list=None
+    def __init__ (
+    self ,
+    options_list =None 
     ):
 
-        if options_list is None:
+        if options_list is None :
 
-            options_list = [
-                "Partnership",
-                "Player Reports",
-                "Billing/Issues",
-                "Moderator Application",
-                "Uploader Application"
+            options_list =[
+            "Partnership",
+            "Player Reports",
+            "Billing/Issues",
+            "Moderator Application",
+            "Uploader Application"
             ]
 
-        options = [
-            discord.SelectOption(
-                label=opt,
-                value=opt
-            )
-            for opt in options_list
+        options =[
+        discord .SelectOption (
+        label =opt ,
+        value =opt 
+        )
+        for opt in options_list 
         ]
 
-        super().__init__(
-            placeholder="Select ticket type",
-            options=options,
-            custom_id="zer_application_dropdown"
+        super ().__init__ (
+        placeholder ="Select ticket type",
+        options =options ,
+        custom_id ="zer_application_dropdown"
         )
 
-    async def callback(
-        self,
-        interaction
+    async def callback (
+    self ,
+    interaction 
     ):
 
-        await interaction.response.defer(
-            ephemeral=True
+        await interaction .response .defer (
+        ephemeral =True 
         )
 
-        user = interaction.user
-        guild = interaction.guild
+        user =interaction .user 
+        guild =interaction .guild 
 
-        if guild is None:
+        if guild is None :
 
-            await interaction.followup.send(
-                embed=error(
-                    "Tickets can only be created inside a server."
-                ),
-                ephemeral=True
+            await interaction .followup .send (
+            embed =error (
+            "Tickets can only be created inside a server."
+            ),
+            ephemeral =True 
             )
 
+            return 
+
+        guild_id =guild .id 
+
+        application =self .values [0 ]
+
+        try:
+            guild_config = config.get_guild_config(guild_id)
+        except ValueError:
+            await interaction.followup.send(embed=error("This server is not configured."), ephemeral=True)
             return
+        ticket_category_id = guild_config["TICKET_CATEGORY_ID"]
 
-        guild_id = guild.id
-
-        application = self.values[0]
-
-        ticket_category_id = (
-            config.get_ticket_category_id(
-                guild_id
-            )
+        log_interaction (
+        user ,
+        "zer_application_dropdown",
+        interaction .channel ,
+        details =(
+        f"Selected Application: "
+        f"{application }"
+        )
         )
 
-        log_interaction(
-            user,
-            "zer_application_dropdown",
-            interaction.channel,
-            details=(
-                f"Selected Application: "
-                f"{application}"
-            )
-        )
+        
+        
+        
 
-        # ----------------------------------------------------
-        # DUPLICATE TICKET CHECK
-        # ----------------------------------------------------
+        for channel in guild .text_channels :
 
-        for channel in guild.text_channels:
+            if channel .category_id !=ticket_category_id :
+                continue 
 
-            if channel.category_id != ticket_category_id:
-                continue
+            if channel.topic and channel.topic.startswith(f"ticket_owner:{user.id}"):
 
-            if (
-                channel.topic
-                == f"ticket_owner:{user.id}"
-                or str(user.id) in channel.name
-            ):
-
-                log_ticket(
-                    "Creation Aborted (Duplicate Ticket)",
-                    channel,
-                    user
+                log_ticket (
+                "Creation Aborted (Duplicate Ticket)",
+                channel ,
+                user 
                 )
 
-                await interaction.followup.send(
-                    embed=error(
-                        "You already have an open application ticket."
-                    ),
-                    ephemeral=True
+                await interaction .followup .send (
+                embed =error (
+                "You already have an open application ticket."
+                ),
+                ephemeral =True 
                 )
 
-                return
+                return 
 
-        # ----------------------------------------------------
-        # TICKET TYPE
-        # ----------------------------------------------------
+                
+                
+                
 
-        form = None
+        form =None 
 
-        if application == "Moderator Application":
+        if application =="Moderator Application":
 
-            prefix = "mod"
-            form = config.MODERATOR_FORM
+            prefix ="mod"
+            form =config .MODERATOR_FORM 
 
-        elif application == "Uploader Application":
+        elif application =="Uploader Application":
 
-            prefix = "uploader"
-            form = config.UPLOADER_FORM
+            prefix ="uploader"
+            form =config .UPLOADER_FORM 
 
-        elif application == "Partnership":
+        elif application =="Partnership":
 
-            prefix = "partnership"
+            prefix ="partnership"
 
-        elif application == "Player Reports":
+        elif application =="Player Reports":
 
-            prefix = "report"
+            prefix ="report"
 
         elif (
-            application == "Billing/Issues"
-            or application == "Issues"
+        application =="Billing/Issues"
+        or application =="Issues"
         ):
 
-            prefix = "issues"
+            prefix ="issues"
 
-        elif application == "Questions":
+        elif application =="Questions":
 
-            prefix = "question"
+            prefix ="question"
 
-        else:
+        else :
 
-            prefix = "ticket"
+            prefix ="ticket"
 
-        # ----------------------------------------------------
-        # CATEGORY
-        # ----------------------------------------------------
+            
+            
+            
 
-        category = guild.get_channel(
-            ticket_category_id
+        category =guild .get_channel (
+        ticket_category_id 
         )
 
-        if category is None:
+        if category is None :
 
-            await interaction.followup.send(
-                embed=error(
-                    "The ticket category could not be resolved. "
-                    "Contact administration."
-                ),
-                ephemeral=True
+            await interaction .followup .send (
+            embed =error (
+            "The ticket category could not be resolved. "
+            "Contact administration."
+            ),
+            ephemeral =True 
             )
 
-            return
+            return 
 
-        # ----------------------------------------------------
-        # TICKET NUMBER
-        # ----------------------------------------------------
+            
+            
+            
 
-        number = await get_next_ticket_number()
+        number = await get_next_ticket_number(guild_id)
 
-        channel_name = (
-            f"{prefix}-{number:03d}"
+        channel_name =(
+        f"{prefix }-{number :03d}"
         )
 
-        # ----------------------------------------------------
-        # PERMISSIONS
-        # ----------------------------------------------------
+        
+        
+        
 
-        overwrites = {
+        overwrites ={
 
-            guild.default_role:
-                discord.PermissionOverwrite(
-                    view_channel=False
-                ),
+        guild .default_role :
+        discord .PermissionOverwrite (
+        view_channel =False 
+        ),
 
-            user:
-                discord.PermissionOverwrite(
-                    view_channel=True,
-                    send_messages=True,
-                    read_message_history=True
-                )
+        user :
+        discord .PermissionOverwrite (
+        view_channel =True ,
+        send_messages =True ,
+        read_message_history =True 
+        )
         }
 
-        # ----------------------------------------------------
-        # SETUP USER
-        # ----------------------------------------------------
+        
+        
+        
 
-        if config.SETUP_USER_ID:
+        if config .SETUP_USER_ID :
 
-            setup_member = guild.get_member(
-                config.SETUP_USER_ID
+            setup_member =guild .get_member (
+            config .SETUP_USER_ID 
             )
 
-            if setup_member:
+            if setup_member :
 
-                overwrites[setup_member] = (
-                    discord.PermissionOverwrite(
-                        view_channel=True,
-                        send_messages=True,
-                        manage_channels=True,
-                        read_message_history=True
-                    )
+                overwrites [setup_member ]=(
+                discord .PermissionOverwrite (
+                view_channel =True ,
+                send_messages =True ,
+                manage_channels =True ,
+                read_message_history =True 
+                )
                 )
 
-        # ----------------------------------------------------
-        # OWNER ROLES
-        # ----------------------------------------------------
+                
+                
+                
 
-        owner_roles = config.get_owner_roles(
-            guild_id
+        owner_roles =config .get_owner_roles (
+        guild_id 
         )
 
-        for role_id in owner_roles:
+        for role_id in owner_roles :
 
-            role = guild.get_role(
-                role_id
+            role =guild .get_role (
+            role_id 
             )
 
-            if role:
+            if role :
 
-                overwrites[role] = (
-                    discord.PermissionOverwrite(
-                        view_channel=True,
-                        send_messages=True,
-                        manage_channels=True,
-                        read_message_history=True
-                    )
+                overwrites [role ]=(
+                discord .PermissionOverwrite (
+                view_channel =True ,
+                send_messages =True ,
+                manage_channels =True ,
+                read_message_history =True 
+                )
                 )
 
-        # ----------------------------------------------------
-        # MODERATOR ROLE
-        # ----------------------------------------------------
+                
+                
+                
 
-        mod_role_id = config.get_mod_role(
-            guild_id
+        mod_role_id =config .get_mod_role (
+        guild_id 
         )
 
-        mod_role = guild.get_role(
-            mod_role_id
+        mod_role =guild .get_role (
+        mod_role_id 
         )
 
-        if mod_role:
+        if mod_role :
 
-            overwrites[mod_role] = (
-                discord.PermissionOverwrite(
-                    view_channel=True,
-                    send_messages=True,
-                    read_message_history=True
-                )
+            overwrites [mod_role ]=(
+            discord .PermissionOverwrite (
+            view_channel =True ,
+            send_messages =True ,
+            read_message_history =True 
+            )
             )
 
-        # ----------------------------------------------------
-        # TRIAL MODERATOR ROLE
-        # ----------------------------------------------------
+            
+            
+            
 
-        trial_mod_role_id = (
-            config.get_trial_mod_role(
-                guild_id
-            )
+        trial_mod_role_id =(
+        config .get_trial_mod_role (
+        guild_id 
+        )
         )
 
-        trial_mod_role = guild.get_role(
-            trial_mod_role_id
+        trial_mod_role =guild .get_role (
+        trial_mod_role_id 
         )
 
-        if trial_mod_role:
+        if trial_mod_role :
 
-            overwrites[trial_mod_role] = (
-                discord.PermissionOverwrite(
-                    view_channel=True,
-                    send_messages=True,
-                    read_message_history=True
-                )
+            overwrites [trial_mod_role ]=(
+            discord .PermissionOverwrite (
+            view_channel =True ,
+            send_messages =True ,
+            read_message_history =True 
+            )
             )
 
-        # ----------------------------------------------------
-        # CREATE CHANNEL
-        # ----------------------------------------------------
+            
+            
+            
 
-        try:
+        try :
 
-            channel = await guild.create_text_channel(
-                name=channel_name,
-                category=category,
-                overwrites=overwrites,
-                topic=f"ticket_owner:{user.id}"
+            channel =await guild .create_text_channel (
+            name =channel_name ,
+            category =category ,
+            overwrites =overwrites ,
+            topic =f"ticket_owner:{user .id }"
             )
 
-            log_ticket(
-                "Text Channel Created",
-                channel,
-                user,
-                details=(
-                    f"Category: {category.name}"
-                )
+            log_ticket (
+            "Text Channel Created",
+            channel ,
+            user ,
+            details =(
+            f"Category: {category .name }"
+            )
             )
 
-            log_perm(
-                channel,
-                user,
-                (
-                    "view_channel=True, "
-                    "send_messages=True, "
-                    "read_message_history=True"
-                )
+            log_perm (
+            channel ,
+            user ,
+            (
+            "view_channel=True, "
+            "send_messages=True, "
+            "read_message_history=True"
+            )
             )
 
-        except discord.Forbidden:
+        except discord .Forbidden :
 
-            await interaction.followup.send(
-                embed=error(
-                    "I do not have sufficient permissions "
-                    "to create text channels on this server."
-                ),
-                ephemeral=True
-            )
-
-            return
-
-        except Exception as exc:
-
-            await interaction.followup.send(
-                embed=error(
-                    "An unexpected error occurred during "
-                    f"ticket channel creation: {exc}"
-                ),
-                ephemeral=True
-            )
-
-            return
-
-        # ----------------------------------------------------
-        # CREATE DATABASE RECORD
-        # ----------------------------------------------------
-
-        try:
-
-            ticket_uuid = await create_ticket_record(
-                channel.id,
-                guild.id,
-                user.id,
-                application,
-                datetime.now(
-                    timezone
-                ).isoformat()
-            )
-
-        except Exception as exc:
-
-            # Delete Discord channel if DB creation failed.
-
-            try:
-
-                await channel.delete(
-                    reason=(
-                        "Ticket database record "
-                        "creation failed"
-                    )
-                )
-
-            except Exception:
-                pass
-
-            await interaction.followup.send(
-                embed=error(
-                    "The ticket could not be registered "
-                    "in the database. Please contact "
-                    "administration."
-                ),
-                ephemeral=True
-            )
-
-            log_ticket(
-                "Ticket Database Creation Failed",
-                channel,
-                user,
-                details=str(exc)
-            )
-
-            return
-
-        # ----------------------------------------------------
-        # TICKET BUTTONS
-        # ----------------------------------------------------
-
-        view = TicketButtons()
-
-        if form:
-
-            form_button = discord.ui.Button(
-                label="Application Form",
-                style=discord.ButtonStyle.link,
-                url=form
-            )
-
-            view.add_item(
-                form_button
-            )
-
-        # ----------------------------------------------------
-        # IMPORTANT:
-        #
-        # This UUID is the exact UUID stored in:
-        #
-        # tickets.uuid
-        #
-        # No second UUID is generated here.
-        # ----------------------------------------------------
-
-        await channel.send(
-            content=user.mention,
-            embed=ticket_created(
-                user,
-                application,
-                form,
-                ticket_uuid
+            await interaction .followup .send (
+            embed =error (
+            "I do not have sufficient permissions "
+            "to create text channels on this server."
             ),
-            view=view
+            ephemeral =True 
+            )
+
+            return 
+
+        except Exception as exc :
+
+            await interaction .followup .send (
+            embed =error (
+            "An unexpected error occurred during "
+            f"ticket channel creation: {exc }"
+            ),
+            ephemeral =True 
+            )
+
+            return 
+
+            
+            
+            
+
+        try :
+
+            ticket_uuid =await create_ticket_record (
+            channel .id ,
+            guild .id ,
+            user .id ,
+            application ,
+            datetime .now (
+            timezone 
+            ).isoformat ()
+            )
+
+        except Exception as exc :
+
+        
+
+            try :
+
+                await channel .delete (
+                reason =(
+                "Ticket database record "
+                "creation failed"
+                )
+                )
+
+            except Exception :
+                pass 
+
+            await interaction .followup .send (
+            embed =error (
+            "The ticket could not be registered "
+            "in the database. Please contact "
+            "administration."
+            ),
+            ephemeral =True 
+            )
+
+            log_ticket (
+            "Ticket Database Creation Failed",
+            channel ,
+            user ,
+            details =str (exc )
+            )
+
+            return 
+
+            
+            
+            
+
+        view =TicketButtons ()
+
+        if form :
+
+            form_button =discord .ui .Button (
+            label ="Application Form",
+            style =discord .ButtonStyle .link ,
+            url =form 
+            )
+
+            view .add_item (
+            form_button 
+            )
+
+            
+            
+            
+            
+            
+            
+            
+            
+            
+
+        await channel .send (
+        content =user .mention ,
+        embed =ticket_created (
+        user ,
+        application ,
+        form ,
+        ticket_uuid 
+        ),
+        view =view 
         )
 
-        ticket_report(
-            user,
-            application,
-            channel,
-            bot=interaction.client
+        ticket_report (
+        user ,
+        application ,
+        channel ,
+        bot =interaction .client 
         )
 
-        await interaction.followup.send(
-            f"Your ticket has been created: "
-            f"{channel.mention}",
-            ephemeral=True
+        await interaction .followup .send (
+        f"Your ticket has been created: "
+        f"{channel .mention }",
+        ephemeral =True 
         )
 
 
-class TicketPanel(View):
+class TicketPanel (View ):
 
-    def __init__(
-        self,
-        options_list=None
+    def __init__ (
+    self ,
+    options_list =None 
     ):
 
-        super().__init__(
-            timeout=None
+        super ().__init__ (
+        timeout =None 
         )
 
-        self.add_item(
-            ApplicationDropdown(
-                options_list=options_list
-            )
+        self .add_item (
+        ApplicationDropdown (
+        options_list =options_list 
+        )
         )
