@@ -2,29 +2,22 @@ import sys
 import asyncio
 import os 
 import traceback 
-from datetime import datetime 
 
 import discord 
-import pytz 
 from discord .ext import commands 
 
 import config 
 
 from utils .database import setup_database 
 from utils .logger import (
-format_user ,
 log ,
-log_command ,
 log_interaction ,
-send_report_to_owner ,
 log_exception,
 setup_logs,
 )
 
 sys .stdout .reconfigure (encoding ="utf-8")
 sys .stderr .reconfigure (encoding ="utf-8")
-
-timezone =pytz .timezone ("Europe/Berlin")
 
 intents =discord .Intents .default ()
 intents .message_content =True 
@@ -37,6 +30,52 @@ command_prefix ="!",
 intents =intents ,
 help_command =None ,
 )
+
+
+@bot.tree.error
+async def on_app_command_error(interaction, error):
+    original = getattr(error, "original", error)
+    reference = log_exception(
+        "APPLICATION",
+        original,
+        guild=interaction.guild,
+        channel=interaction.channel,
+        user=interaction.user,
+        context=f"Slash command: {getattr(interaction.command, 'qualified_name', 'Unknown')}",
+    )
+    message = f"The operation could not be completed. Error reference: `{reference}`"
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
+    except discord.HTTPException:
+        pass
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    original = getattr(error, "original", error)
+    reference = log_exception(
+        "COMMAND",
+        original,
+        guild=ctx.guild,
+        channel=ctx.channel,
+        user=ctx.author,
+        context=f"Prefix command: {getattr(ctx.command, 'qualified_name', 'Unknown')}",
+    )
+    try:
+        await ctx.send(f"The command could not be completed. Error reference: `{reference}`")
+    except discord.HTTPException:
+        pass
+
+
+@bot.event
+async def on_error(event_method, *args, **kwargs):
+    error = sys.exc_info()[1] or RuntimeError(f"Unknown event failure in {event_method}")
+    log_exception("EVENT", error, context=f"Discord event: {event_method}")
 
 extensions =[
 "cogs.tickets",
@@ -206,31 +245,37 @@ async def on_ready ():
             guild =gid ,
             )
 
-    log ("Bot Setup completed and successfully connected!")
-    log ("Bot Setup connected to DB")
+    diagnostics =bot .get_cog ("Diagnostics")
+    workers =diagnostics .workers ()if diagnostics else []
+    running_workers =sum (1 for worker in workers if worker ["status"]=="Running")
+    primary_server =guild .name if guild else "Unavailable"
+    gateway_latency =round (bot .latency *1000 )
 
+    console_width =66
+
+    def console_row (label ,value ):
+        safe_value =str (value )[:40 ]
+        content =f"  {label :<22}{safe_value }"
+        return f"║{content :<{console_width }}║"
+
+    title =f"{config.BOT_NAME}  OPERATIONS CONTROL CENTER"
     print ()
-    print ("======================================")
-    print ("! maja ! Ticket System v2")
-    print ("======================================")
-    print ("Status: ONLINE")
-    print (
-    f"Server: {guild .name if guild else 'Unknown'}"
-    )
-    print (f"Latency: {round (bot .latency *1000 )}ms")
-    print ("--------------------------------------")
-    print ("Listening for events:")
-    print ("Ticket Creation")
-    print ("Ticket Claiming")
-    print ("Ticket Closing")
-    print ("Ticket Reopening")
-    print ("Ticket Deletion")
-    print ("Transcript Generation")
-    print ("======================================")
+    print (f"╔{'═'*console_width }╗")
+    print (f"║{title :^{console_width }}║")
+    print (f"╠{'═'*console_width }╣")
+    print (console_row ("SYSTEM STATUS","ONLINE / READY"))
+    print (console_row ("PRIMARY SERVER",primary_server ))
+    print (console_row ("CONNECTED SERVERS",str (len (bot .guilds ))))
+    print (console_row ("LOADED MODULES",f"{len (bot .extensions )}/{len (extensions )}"))
+    print (console_row ("BACKGROUND WORKERS",f"{running_workers}/{len (workers )} RUNNING"))
+    print (console_row ("GATEWAY LATENCY",f"{gateway_latency } ms"))
+    print (f"╠{'─'*console_width }╣")
+    print (console_row ("CORE SERVICES","TICKETS | TRANSCRIPTS | MODERATION"))
+    print (console_row ("OPERATIONS","AVAILABILITY | ESCALATIONS | DIAGNOSTICS"))
+    print (f"╚{'═'*console_width }╝")
     print ()
 
-    log ("Bot is now listening for reports...")
-    log ("Debugging is starting to fire")
+    log ("Operations console ready")
 
 
 @bot .event 
@@ -267,158 +312,6 @@ interaction :discord .Interaction ,
     interaction .channel ,
     details =f"Type: {interaction_type }",
     )
-
-
-@bot .event 
-async def on_command_error (
-ctx :commands .Context ,
-error :commands .CommandError ,
-):
-    if isinstance (error ,commands .CommandNotFound ):
-        return 
-
-    original_error =getattr (
-    error ,
-    "original",
-    error ,
-    )
-
-    reference = log_exception(
-        "COMMAND",
-        original_error,
-        guild=ctx.guild,
-        channel=ctx.channel,
-        user=ctx.author,
-        context=f"Prefix command {ctx.command}",
-    )
-
-    embed =discord .Embed (
-    title ="Bot Command Error Alert",
-    description =(
-    "An error occurred while executing "
-    f"`{ctx .command }`."
-    ),
-    color =discord .Color .red (),
-    timestamp =datetime .now (timezone ),
-    )
-
-    embed .add_field (
-    name ="User",
-    value =(
-    f"{ctx .author .mention } "
-    f"(`{ctx .author .id }`)"
-    ),
-    inline =True ,
-    )
-
-    channel_value =(
-    ctx .channel .mention 
-    if hasattr (ctx .channel ,"mention")
-    else "DM"
-    )
-
-    embed .add_field (
-    name ="Channel",
-    value =channel_value ,
-    inline =True ,
-    )
-
-    embed .add_field (
-    name ="Error",
-    value =f"Reference: `{reference}`",
-    inline =False ,
-    )
-
-    await send_report_to_owner (
-    bot ,
-    embed ,
-    is_error =True ,
-    )
-
-
-@bot .tree .error 
-async def on_app_command_error (
-interaction :discord .Interaction ,
-error :discord .app_commands .AppCommandError ,
-):
-    cmd_name =(
-    interaction .command .name 
-    if interaction .command 
-    else "Unknown Slash Command"
-    )
-
-    original_error =getattr (
-    error ,
-    "original",
-    error ,
-    )
-
-    reference = log_exception(
-        "COMMAND",
-        original_error,
-        guild=interaction.guild,
-        channel=interaction.channel,
-        user=interaction.user,
-        context=f"Slash command /{cmd_name}",
-    )
-
-    embed =discord .Embed (
-    title ="Bot Slash Command Error Alert",
-    description =(
-    "An error occurred while executing "
-    f"`/{cmd_name }`."
-    ),
-    color =discord .Color .red (),
-    timestamp =datetime .now (timezone ),
-    )
-
-    embed .add_field (
-    name ="User",
-    value =(
-    f"{interaction .user .mention } "
-    f"(`{interaction .user .id }`)"
-    ),
-    inline =True ,
-    )
-
-    if interaction .channel :
-        channel_value =(
-        interaction .channel .mention 
-        if hasattr (interaction .channel ,"mention")
-        else str (interaction .channel )
-        )
-
-        embed .add_field (
-        name ="Channel",
-        value =channel_value ,
-        inline =True ,
-        )
-
-    embed .add_field (
-    name ="Error",
-    value =f"Reference: `{reference}`",
-    inline =False ,
-    )
-
-    await send_report_to_owner (
-    bot ,
-    embed ,
-    is_error =True ,
-    )
-
-    try :
-        if interaction .response .is_done ():
-            await interaction .followup .send (
-            f"An internal error occurred. Reference: `{reference}`",
-            ephemeral =True ,
-            )
-        else :
-            await interaction .response .send_message (
-            f"An internal error occurred. Reference: `{reference}`",
-            ephemeral =True ,
-            )
-    except Exception :
-        pass 
 
 
 if __name__ =="__main__":
