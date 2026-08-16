@@ -1,6 +1,10 @@
 import logging
+import hashlib
+import json
 import os
 import re
+import sqlite3
+import time
 import traceback
 import uuid
 from datetime import datetime
@@ -27,6 +31,7 @@ ANSI = {
 SENSITIVE_PATTERNS = [
     re.compile(r"(?i)(discord_token|token|authorization|password|secret)(\s*[=:]\s*)([^\s,;]+)"),
     re.compile(r"[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{20,}"),
+    re.compile(r"https://(?:discord|discordapp)\.com/api/webhooks/[^\s]+", re.IGNORECASE),
 ]
 _initialized = False
 _file_handlers = {}
@@ -61,6 +66,21 @@ class ColorFormatter(StructuredFormatter):
         if not os.isatty(1):
             return plain
         return f"{ANSI.get(level, '')}{plain}{ANSI['RESET']}"
+
+
+class JsonFormatter(logging.Formatter):
+    def format(self, record):
+        payload = {
+            "timestamp": datetime.fromtimestamp(record.created, timezone).isoformat(),
+            "level": getattr(record, "display_level", record.levelname),
+            "category": getattr(record, "category", "SYSTEM"),
+            "message": record.getMessage(),
+            "reference": getattr(record, "reference", None),
+            "guild_id": getattr(record, "guild_id", None),
+            "channel_id": getattr(record, "channel_id", None),
+            "user_id": getattr(record, "user_id", None),
+        }
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def get_time():
@@ -106,11 +126,61 @@ def setup_logs():
     console.setFormatter(ColorFormatter())
     logger.addHandler(console)
     logger.addHandler(_handler("bot.log"))
+    json_path = str(Path(config.LOG_FOLDER) / "structured.jsonl")
+    json_handler = RotatingFileHandler(json_path, maxBytes=MAX_LOG_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8")
+    json_handler.setFormatter(JsonFormatter())
+    logger.addHandler(json_handler)
     _initialized = True
 
 
 def create_error_reference():
     return f"ERR-{uuid.uuid4().hex[:8].upper()}"
+
+
+def create_error_fingerprint(category, error, context=None):
+    extracted = traceback.extract_tb(error.__traceback__)
+    location = "unknown"
+    if extracted:
+        frame = extracted[-1]
+        location = f"{Path(frame.filename).name}:{frame.name}:{frame.lineno}"
+    source = f"{category.upper()}|{type(error).__name__}|{context or ''}|{location}"
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()[:24]
+
+
+def persist_error_event(reference, fingerprint, category, error, details, context, guild_id, channel_id, user_id):
+    timestamp = datetime.now(timezone).isoformat()
+    try:
+        with sqlite3.connect(config.DATABASE, timeout=2) as database:
+            row = database.execute(
+                "SELECT reference FROM error_events WHERE fingerprint=?",
+                (fingerprint,),
+            ).fetchone()
+            if row:
+                database.execute(
+                    "UPDATE error_events SET occurrence_count=occurrence_count+1, last_seen=?, message=?, traceback=?, context=?, guild_id=COALESCE(?, guild_id), channel_id=COALESCE(?, channel_id), user_id=COALESCE(?, user_id) WHERE fingerprint=?",
+                    (timestamp, redact(error), redact(details), redact(context or ""), guild_id, channel_id, user_id, fingerprint),
+                )
+                return row[0]
+            database.execute(
+                "INSERT INTO error_events(reference, fingerprint, category, error_type, message, traceback, context, guild_id, channel_id, user_id, occurrence_count, first_seen, last_seen) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                (
+                    reference,
+                    fingerprint,
+                    category.upper(),
+                    type(error).__name__,
+                    redact(error),
+                    redact(details),
+                    redact(context or ""),
+                    guild_id,
+                    channel_id,
+                    user_id,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+    except (sqlite3.Error, OSError):
+        return reference
+    return reference
 
 
 def _guild_details(guild):
@@ -176,9 +246,39 @@ def log(message, guild=None):
 def log_exception(category, error, guild=None, channel=None, user=None, context=None):
     reference = create_error_reference()
     details = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+    guild_id, _ = _guild_details(guild or _extract_guild(channel) or _extract_guild(user))
+    fingerprint = create_error_fingerprint(category, error, context)
+    reference = persist_error_event(
+        reference,
+        fingerprint,
+        category,
+        error,
+        details,
+        context,
+        guild_id,
+        getattr(channel, "id", None),
+        getattr(user, "id", user if isinstance(user, int) else None),
+    )
     message = f"{context + ' | ' if context else ''}{type(error).__name__}: {error}\n{details}"
     emit("ERROR", category, message, guild=guild, channel=channel, user=user, reference=reference)
     return reference
+
+
+def log_performance(operation, started_at, threshold_ms=500, guild=None):
+    duration_ms = (time.perf_counter() - started_at) * 1000
+    guild_id, _ = _guild_details(guild)
+    timestamp = datetime.now(timezone).isoformat()
+    try:
+        with sqlite3.connect(config.DATABASE, timeout=2) as database:
+            database.execute(
+                "INSERT INTO performance_events(operation, duration_ms, threshold_ms, guild_id, created_at) VALUES(?, ?, ?, ?, ?)",
+                (operation, duration_ms, threshold_ms, guild_id, timestamp),
+            )
+    except (sqlite3.Error, OSError):
+        pass
+    if duration_ms >= threshold_ms:
+        emit("WARNING", "PERFORMANCE", f"Slow operation detected | operation={operation} duration={duration_ms:.1f}ms threshold={threshold_ms:.1f}ms", guild=guild)
+    return duration_ms
 
 
 def format_user(user):
