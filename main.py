@@ -49,8 +49,15 @@ async def on_app_command_error(interaction, error):
             await interaction.followup.send(message, ephemeral=True)
         else:
             await interaction.response.send_message(message, ephemeral=True)
-    except discord.HTTPException:
-        pass
+    except discord.HTTPException as response_error:
+        log_exception(
+            "APPLICATION",
+            response_error,
+            guild=interaction.guild,
+            channel=interaction.channel,
+            user=interaction.user,
+            context=f"Failed to deliver error reference {reference}",
+        )
 
 
 @bot.event
@@ -68,8 +75,15 @@ async def on_command_error(ctx, error):
     )
     try:
         await ctx.send(f"The command could not be completed. Error reference: `{reference}`")
-    except discord.HTTPException:
-        pass
+    except discord.HTTPException as response_error:
+        log_exception(
+            "COMMAND",
+            response_error,
+            guild=ctx.guild,
+            channel=ctx.channel,
+            user=ctx.author,
+            context=f"Failed to deliver error reference {reference}",
+        )
 
 
 @bot.event
@@ -153,6 +167,12 @@ async def setup_hook ():
             f"{error }\n{tb_str }"
             )
 
+    try:
+        global_synced =await bot.tree.sync()
+        log(f"Synced {len(global_synced)} global slash command(s) for connected servers")
+    except Exception as error:
+        log_exception("APPLICATION", error, context="Global slash command synchronization failed")
+
 
 @bot .event 
 async def on_ready ():
@@ -171,20 +191,6 @@ async def on_ready ():
         log ("Activity status set to: Ticket Operations | ! maja !")
     except Exception as error :
         log (f"Failed to set status: {error }")
-
-    for guild_connected in list (bot .guilds ):
-        if (
-        guild_connected .id ==1490348711182733495 
-        or guild_connected .id not in config .GUILDS 
-        ):
-            log (
-            "Ignoring events from unapproved server: "
-            f"{guild_connected .name } ({guild_connected .id })"
-            )
-            log (
-            "Developer Team has successfully closed the connection for: "
-            f"{guild_connected .name } ({guild_connected .id })"
-            )
 
     for gid ,gcfg in config .GUILDS .items ():
         if gid ==1490348711182733495 :
@@ -282,15 +288,6 @@ async def on_ready ():
 async def on_interaction (
 interaction :discord .Interaction ,
 ):
-    if (
-    interaction .guild_id ==1490348711182733495 
-    or (
-    interaction .guild_id 
-    and interaction .guild_id not in config .GUILDS 
-    )
-    ):
-        return 
-
     custom_id =None 
 
     if interaction .data :
