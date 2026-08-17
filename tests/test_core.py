@@ -34,7 +34,7 @@ class ConfigurationTests(unittest.TestCase):
             config.get_guild_config(1)
 
     def test_inactivity_age_uses_warning_timestamp(self):
-        zone = pytz.timezone("Europe/Berlin")
+        zone = pytz.timezone(config.TIMEZONE)
         now = datetime.now(zone)
         value = (now - timedelta(hours=25)).isoformat()
         self.assertGreaterEqual(hours_since(value, now), 25)
@@ -57,7 +57,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertTrue(any("Attached to this message" in field.value for field in closed.fields))
 
     def test_escalation_age(self):
-        zone = pytz.timezone("Europe/Berlin")
+        zone = pytz.timezone(config.TIMEZONE)
         now = datetime.now(zone)
         value = (now - timedelta(minutes=31)).isoformat()
         self.assertGreaterEqual(minutes_since(value, now), 31)
@@ -130,6 +130,44 @@ class ConfigurationTests(unittest.TestCase):
         self.assertNotIn("copy_global_to", source)
         self.assertIn("clear_commands", source)
         self.assertIn("global_synced =await bot.tree.sync()", source)
+
+    def test_ticket_workflows_avoid_channel_name_and_topic_rate_limits(self):
+        source = Path(__file__).resolve().parents[1].joinpath("views", "ticket_buttons.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        protected = {"claim", "update_priority"}
+        invalid = []
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or node.name not in protected:
+                continue
+            for call in ast.walk(node):
+                if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute) or call.func.attr != "edit":
+                    continue
+                keyword_names = {keyword.arg for keyword in call.keywords}
+                if keyword_names.intersection({"name", "topic"}):
+                    invalid.append(f"{node.name}:{call.lineno}")
+        self.assertEqual(invalid, [])
+
+    def test_component_interactions_are_not_logged_twice(self):
+        source = Path(__file__).resolve().parents[1].joinpath("main.py").read_text(encoding="utf-8")
+        self.assertIn("discord.InteractionType.component", source)
+        self.assertIn("discord.InteractionType.modal_submit", source)
+
+    def test_runtime_uses_one_configured_timezone(self):
+        root = Path(__file__).resolve().parents[1]
+        self.assertEqual(config.TIMEZONE, "Europe/Athens")
+        invalid = []
+        legacy_timezone = "/".join(("Europe", "Berlin"))
+        for path in root.rglob("*.py"):
+            if any(part in {".venv", "venv", "__pycache__"} for part in path.parts):
+                continue
+            if legacy_timezone in path.read_text(encoding="utf-8"):
+                invalid.append(str(path.relative_to(root)))
+        self.assertEqual(invalid, [])
+
+    def test_stale_roles_are_reported_as_configuration_warnings(self):
+        source = Path(__file__).resolve().parents[1].joinpath("cogs", "diagnostics.py").read_text(encoding="utf-8")
+        self.assertIn("Stale staff role IDs", source)
+        self.assertIn("No configured staff role could be resolved", source)
 
     def test_unban_infractions_include_guild_scope(self):
         source = Path(__file__).resolve().parents[1].joinpath("views", "unban_buttons.py").read_text(encoding="utf-8")
