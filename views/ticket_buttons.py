@@ -5,7 +5,7 @@ import config
 from discord .ui import View ,Button 
 from utils .permissions import is_staff 
 from utils .database import claim_ticket 
-from utils .embeds import error 
+from utils .embeds import error, ticket_claimed_dm 
 from views .closed_buttons import ClosedTicketButtons 
 from datetime import datetime 
 import pytz 
@@ -256,7 +256,12 @@ class TicketButtons (ReliableView ):
 
                 if owner :
                     await owner .send (
-                    f"Your application ticket in **{interaction .guild .name }** has been claimed by **{interaction .user .display_name }** and is now under review."
+                    embed=ticket_claimed_dm(
+                        interaction.guild,
+                        channel,
+                        interaction.user,
+                        interaction.client.user,
+                    )
                     )
                     log_dm (owner ,"Ticket Claimed Notice",success =True )
             except discord .Forbidden :
