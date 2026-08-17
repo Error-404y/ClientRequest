@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import sqlite3
+import sys
 import time
 import traceback
 import uuid
@@ -33,6 +34,15 @@ COLORS = {
     "RESET": "\033[0m",
 }
 _initialized = False
+
+
+def _fallback(message):
+    try:
+        sys.stderr.write(f"{datetime.now(timezone).isoformat()} | LOGGER | {redact(message)}\n")
+        sys.stderr.flush()
+    except Exception:
+        return False
+    return True
 
 
 def redact(value):
@@ -154,7 +164,8 @@ def _store_error(reference, fingerprint, category, error, trace, context, guild_
                 "INSERT INTO error_events(reference, fingerprint, category, error_type, message, traceback, context, guild_id, channel_id, user_id, occurrence_count, first_seen, last_seen) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
                 (reference, fingerprint, category.upper(), type(error).__name__, redact(error), redact(trace), redact(context or ""), guild_id, channel_id, user_id, timestamp, timestamp),
             )
-    except (sqlite3.Error, OSError):
+    except (sqlite3.Error, OSError) as storage_error:
+        _fallback(f"Failed to store error event: {type(storage_error).__name__}: {storage_error}")
         return reference
     return reference
 
@@ -182,9 +193,13 @@ def emit(level, category, message, guild=None, channel=None, user=None, referenc
     record = logger.makeRecord("maja", python_level, "", 0, redact(message).replace("\n", " "), (), None, extra=extra)
     logger.handle(record)
     if normalized in {"ERROR", "CRITICAL"}:
-        handler = _file_handler("errors.log", ReadableFormatter())
-        handler.handle(record)
-        handler.close()
+        filename = "test.log" if category.upper() == "TEST" else "errors.log"
+        try:
+            handler = _file_handler(filename, ReadableFormatter())
+            handler.handle(record)
+            handler.close()
+        except OSError as storage_error:
+            _fallback(f"Failed to write {filename}: {type(storage_error).__name__}: {storage_error}")
 
 
 def log_exception(category, error, guild=None, channel=None, user=None, context=None):
@@ -197,12 +212,13 @@ def log_exception(category, error, guild=None, channel=None, user=None, context=
     summary = f"{context + ' | ' if context else ''}{type(error).__name__}: {error}"
     emit("ERROR", category, summary, guild=guild, channel=channel, user=user, reference=reference)
     try:
-        handler = _file_handler("tracebacks.log", logging.Formatter("%(message)s"))
+        filename = "test-tracebacks.log" if category.upper() == "TEST" else "tracebacks.log"
+        handler = _file_handler(filename, logging.Formatter("%(message)s"))
         record = logging.LogRecord("maja.traceback", logging.ERROR, "", 0, f"{datetime.now(timezone).isoformat()} | {reference}\n{redact(trace)}", (), None)
         handler.handle(record)
         handler.close()
-    except OSError:
-        pass
+    except OSError as storage_error:
+        _fallback(f"Failed to write traceback log: {type(storage_error).__name__}: {storage_error}")
     return reference
 
 
@@ -216,8 +232,8 @@ def log_performance(operation, started_at, threshold_ms=500, guild=None):
                 "INSERT INTO performance_events(operation, duration_ms, threshold_ms, guild_id, created_at) VALUES(?, ?, ?, ?, ?)",
                 (operation, duration, threshold_ms, _guild(guild), datetime.now(timezone).isoformat()),
             )
-    except (sqlite3.Error, OSError):
-        pass
+    except (sqlite3.Error, OSError) as storage_error:
+        _fallback(f"Failed to store performance event: {type(storage_error).__name__}: {storage_error}")
     emit("WARNING", "PERFORMANCE", f"Slow operation | {operation} | {duration:.1f} ms | limit {threshold_ms:.1f} ms", guild=guild)
     return duration
 
