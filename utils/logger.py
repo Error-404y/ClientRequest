@@ -16,7 +16,7 @@ import pytz
 
 import config
 
-timezone = pytz.timezone("Europe/Berlin")
+timezone = pytz.timezone(config.TIMEZONE)
 MAX_LOG_BYTES = 5 * 1024 * 1024
 LOG_BACKUPS = 5
 SENSITIVE_PATTERNS = (

@@ -10,7 +10,7 @@ from views .closed_buttons import ClosedTicketButtons
 from cogs .transcript import create_transcript 
 from utils .logger import log_dm ,log_ticket ,log_perm, log_exception, log_transcript 
 
-timezone =pytz .timezone ("Europe/Berlin")
+timezone =pytz .timezone (config.TIMEZONE)
 
 async def close_ticket_channel (channel ,moderator ,reason ,bot ):
     from utils .embeds import error 
@@ -265,16 +265,13 @@ async def close_ticket_channel (channel ,moderator ,reason ,bot ):
             )
 
 
-        if not channel .name .startswith ("closed-"):
-            edit_kwargs ["name"]=f"closed-{channel .name }"
-
         if edit_kwargs :
             try :
                 await channel .edit (**edit_kwargs )
-                log_ticket ("Archived & Renamed Channel",channel ,moderator ,details =f"New category: Archive, Name: {edit_kwargs .get ('name',channel .name )}")
+                log_ticket ("Archived Channel",channel ,moderator ,details ="Moved to the configured archive category")
             except discord.HTTPException as channel_error:
                 await rollback_close()
-                raise RuntimeError("Failed to archive or rename ticket channel") from channel_error
+                raise RuntimeError("Failed to archive ticket channel") from channel_error
 
                 
         try :

@@ -350,9 +350,7 @@ guild_id :int =None ,
 custom_uuid :str =None 
 )->str :
 
-    tz =pytz .timezone (
-    "Europe/Berlin"
-    )
+    tz =pytz .timezone (config.TIMEZONE)
 
     now_str =datetime .now (
     tz 
@@ -977,9 +975,7 @@ guild_id :int =None ,
 has_bad_word :bool =False 
 ):
 
-    tz =pytz .timezone (
-    "Europe/Berlin"
-    )
+    tz =pytz .timezone (config.TIMEZONE)
 
     now_str =datetime .now (
     tz 
@@ -1269,7 +1265,7 @@ async def mark_ticket_deleted(channel_id):
     async with aiosqlite.connect(config.DATABASE) as db:
         await db.execute(
             "UPDATE tickets SET status='deleted', closed_at=COALESCE(closed_at, ?) WHERE channel_id=?",
-            (datetime.now(pytz.timezone("Europe/Berlin")).isoformat(), channel_id),
+            (datetime.now(pytz.timezone(config.TIMEZONE)).isoformat(), channel_id),
         )
         await db.commit()
 
