@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import aiosqlite
 import pytz
@@ -23,7 +24,7 @@ from utils.database import (
     set_staff_availability,
     setup_database,
 )
-from utils.embeds import estimate_response_time
+from utils.embeds import estimate_response_time, ticket_claimed_dm, ticket_closed_dm
 from utils.logger import log_exception
 
 
@@ -42,6 +43,18 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(estimate_response_time(0), "Currently unavailable")
         self.assertEqual(estimate_response_time(3), "10–20 minutes")
         self.assertEqual(estimate_response_time(5), "5–15 minutes")
+
+    def test_ticket_lifecycle_direct_messages_use_structured_embeds(self):
+        guild = SimpleNamespace(name="Moonlit Tokyo", icon=None)
+        channel = SimpleNamespace(name="high-partnership-002")
+        staff = SimpleNamespace(display_name="Error - 404 -")
+        claimed = ticket_claimed_dm(guild, channel, staff)
+        closed = ticket_closed_dm(guild, channel, staff, "Testing", True)
+        self.assertEqual(claimed.title, "Your Ticket Is Now Under Review")
+        self.assertEqual(closed.title, "Your Ticket Has Been Closed")
+        self.assertIn("Testing", [field.value for field in closed.fields])
+        self.assertIn("#high-partnership-002", [field.value for field in claimed.fields])
+        self.assertTrue(any("Attached to this message" in field.value for field in closed.fields))
 
     def test_escalation_age(self):
         zone = pytz.timezone("Europe/Berlin")
