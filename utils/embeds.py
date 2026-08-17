@@ -115,6 +115,86 @@ def ticket_created (user ,application ,form ,ticket_uuid =None ):
     return embed 
 
 
+def ticket_claimed_dm(guild, channel, staff, bot_user=None):
+    embed =discord.Embed(
+        title="Your Ticket Is Now Under Review",
+        description=(
+            "A member of the support team has accepted responsibility for your request. "
+            "Your ticket is now being reviewed and any further communication will continue in the private ticket channel."
+        ),
+        color=PRIMARY,
+        timestamp=discord.utils.utcnow(),
+    )
+    guild_icon =getattr(getattr(guild, "icon", None), "url", None)
+    bot_icon =getattr(getattr(bot_user, "display_avatar", None), "url", None)
+    branding_icon =guild_icon or bot_icon
+    if branding_icon:
+        embed.set_author(name=f"{guild.name} | Support Operations", icon_url=branding_icon)
+    else:
+        embed.set_author(name=f"{guild.name} | Support Operations")
+    embed.add_field(name="Current Status", value="Under Review", inline=True)
+    embed.add_field(name="Ticket Reference", value=f"#{channel.name}", inline=True)
+    embed.add_field(name="Assigned Staff", value=staff.display_name, inline=True)
+    embed.add_field(
+        name="What Happens Next",
+        value=(
+            "The assigned staff member will review the information already provided. "
+            "Please keep notifications enabled and respond in the ticket channel if additional details are requested."
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Important Information",
+        value="This is an automated status notification. Reply inside your ticket channel instead of responding to this direct message.",
+        inline=False,
+    )
+    if bot_icon:
+        embed.set_thumbnail(url=bot_icon)
+    embed.set_footer(text=f"{config.BOT_NAME} | Ticket Lifecycle Notification")
+    return embed
+
+
+def ticket_closed_dm(guild, channel, moderator, reason, transcript_attached, bot_user=None):
+    transcript_status =(
+        "Attached to this message as a downloadable archive."
+        if transcript_attached
+        else "A transcript could not be attached to this notification. Contact the support team if you require a copy."
+    )
+    embed =discord.Embed(
+        title="Your Ticket Has Been Closed",
+        description=(
+            "The support team has completed the active handling of your request and the private ticket channel has been archived. "
+            "The closure details are provided below for your records."
+        ),
+        color=SUCCESS,
+        timestamp=discord.utils.utcnow(),
+    )
+    guild_icon =getattr(getattr(guild, "icon", None), "url", None)
+    bot_icon =getattr(getattr(bot_user, "display_avatar", None), "url", None)
+    branding_icon =guild_icon or bot_icon
+    if branding_icon:
+        embed.set_author(name=f"{guild.name} | Support Operations", icon_url=branding_icon)
+    else:
+        embed.set_author(name=f"{guild.name} | Support Operations")
+    embed.add_field(name="Final Status", value="Closed and Archived", inline=True)
+    embed.add_field(name="Ticket Reference", value=f"#{channel.name}", inline=True)
+    embed.add_field(name="Closed By", value=moderator.display_name, inline=True)
+    embed.add_field(name="Closure Reason", value=reason or "No reason was provided.", inline=False)
+    embed.add_field(name="Transcript", value=transcript_status, inline=False)
+    embed.add_field(
+        name="Need Further Assistance",
+        value=(
+            "If the matter is unresolved or you need additional support, open a new ticket through the official ticket panel "
+            "and reference the ticket name shown above."
+        ),
+        inline=False,
+    )
+    if bot_icon:
+        embed.set_thumbnail(url=bot_icon)
+    embed.set_footer(text=f"{config.BOT_NAME} | Ticket Closure Record")
+    return embed
+
+
 def ticket_closed (moderator ,reason ="No reason provided",applicant =None ):
     embed =discord .Embed (
     title ="Ticket Closed & Archived",

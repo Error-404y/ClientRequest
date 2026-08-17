@@ -5,7 +5,7 @@ import config
 from datetime import datetime 
 import pytz 
 from utils .database import close_ticket, reopen_ticket 
-from utils .embeds import ticket_closed 
+from utils .embeds import ticket_closed, ticket_closed_dm 
 from views .closed_buttons import ClosedTicketButtons 
 from cogs .transcript import create_transcript 
 from utils .logger import log_dm ,log_ticket ,log_perm, log_exception, log_transcript 
@@ -141,15 +141,17 @@ async def close_ticket_channel (channel ,moderator ,reason ,bot ):
     dm_success =True 
     if member :
         try :
-            dm_content =(
-            f"Hello! Your application ticket (**#{channel .name }**) in **{channel .guild .name }** has been closed.\n\n"
-            f"**Closed By:** {moderator .display_name }\n"
-            f"**Reason:** {reason }\n\n"
-            f"Attached is a complete offline transcript of your ticket."
+            dm_embed =ticket_closed_dm(
+                channel.guild,
+                channel,
+                moderator,
+                reason,
+                transcript_file is not None,
+                getattr(bot, "user", None),
             )
             if transcript_file :
                 try :
-                    await member .send (content =dm_content ,file =transcript_file )
+                    await member .send (embed =dm_embed ,file =transcript_file )
                 except discord .HTTPException as he :
                     if he .status ==413 or he .code ==40005 :
                         log_transcript(
@@ -160,13 +162,29 @@ async def close_ticket_channel (channel ,moderator ,reason ,bot ):
                         zip_path =await create_transcript (channel ,lightweight =True )
                         if zip_path and os .path .exists (zip_path ):
                             fallback_file =discord .File (zip_path )
-                            await member .send (content =dm_content ,file =fallback_file )
+                            fallback_embed =ticket_closed_dm(
+                                channel.guild,
+                                channel,
+                                moderator,
+                                reason,
+                                True,
+                                getattr(bot, "user", None),
+                            )
+                            await member .send (embed =fallback_embed ,file =fallback_file )
                         else :
-                            await member .send (content =dm_content )
+                            unavailable_embed =ticket_closed_dm(
+                                channel.guild,
+                                channel,
+                                moderator,
+                                reason,
+                                False,
+                                getattr(bot, "user", None),
+                            )
+                            await member .send (embed =unavailable_embed )
                     else :
                         raise he 
             else :
-                await member .send (content =dm_content )
+                await member .send (embed =dm_embed )
             log_dm (member ,f"Ticket #{channel .name } Close Notice",success =True )
         except discord .Forbidden :
             dm_success =False 
