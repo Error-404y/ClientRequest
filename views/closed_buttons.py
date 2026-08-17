@@ -121,14 +121,10 @@ class ClosedTicketButtons (ReliableView ):
             if category :
                 edit_kwargs ["category"]=category 
 
-            new_name =channel .name .replace ("closed-","",1 )
-            if new_name !=channel .name :
-                edit_kwargs ["name"]=new_name 
-
             if edit_kwargs :
                 try :
                     await channel .edit (**edit_kwargs )
-                    log_ticket ("Restored Channel Properties",channel ,interaction .user ,details =f"Moved to category {category .name if category else 'Default'}, Name: {new_name }")
+                    log_ticket ("Restored Channel Properties",channel ,interaction .user ,details =f"Moved to category {category .name if category else 'Default'}")
                 except discord.HTTPException as error:
                     log_exception(
                         "TICKET",

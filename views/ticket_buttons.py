@@ -14,7 +14,7 @@ from utils .logger import ticket_claim_report ,log_interaction ,log_ticket ,log_
 from utils.logger import log_exception
 from views.base import ReliableModal, ReliableView
 
-timezone =pytz .timezone ("Europe/Berlin")
+timezone =pytz .timezone (config.TIMEZONE)
 
 class CloseTicketModal (ReliableModal ,title ="Close Ticket"):
     reason =discord .ui .TextInput (
@@ -113,44 +113,6 @@ class PrioritySelectionView (ReliableView ):
         from utils .database import set_ticket_priority 
         await set_ticket_priority (self .original_channel .id ,priority )
 
-        current_name =self .original_channel .name 
-        is_closed =current_name .startswith ("closed-")
-        if is_closed :
-            name_without_closed =current_name .replace ("closed-","",1 )
-        else :
-            name_without_closed =current_name 
-
-        for p in ["low-","medium-","high-"]:
-            if name_without_closed .startswith (p ):
-                name_without_closed =name_without_closed .replace (p ,"",1 )
-                break 
-
-        prefix_map ={
-        "Low":"low-",
-        "Medium":"medium-",
-        "High":"high-"
-        }
-        new_prefix =prefix_map .get (priority ,"")
-        new_name =f"{new_prefix }{name_without_closed }"
-        if is_closed :
-            new_name =f"closed-{new_name }"
-
-            
-        async def rename_bg ():
-            try :
-                await self .original_channel .edit (name =new_name )
-                log_ticket ("Priority Rename Completed",self .original_channel ,interaction .user ,details =f"New channel name: {new_name }")
-            except discord.HTTPException as error:
-                log_exception(
-                    "TICKET",
-                    error,
-                    guild=interaction.guild,
-                    channel=self.original_channel,
-                    user=interaction.user,
-                    context=f"Failed to apply priority channel name {new_name}",
-                )
-        await rename_bg()
-
         await interaction .response .edit_message (content =f"Priority successfully set to **{priority }**.",view =None )
 
         embed =discord .Embed (
@@ -199,28 +161,10 @@ class TicketButtons (ReliableView ):
         if channel .topic and "ticket_owner:"in channel .topic :
             parts =channel .topic .split ("|")
             owner_part =parts [0 ].strip ()
-            channel_topic =f"{owner_part } | claimed_by:{interaction .user .id }"
             try :
                 owner_id =int (owner_part .replace ("ticket_owner:","").strip ())
             except ValueError :
                 owner_id =None
-        else :
-            channel_topic =f"claimed_by:{interaction .user .id }"
-
-            
-        async def edit_topic_bg ():
-            try :
-                await channel .edit (topic =channel_topic )
-            except discord.HTTPException as error:
-                log_exception(
-                    "TICKET",
-                    error,
-                    guild=interaction.guild,
-                    channel=channel,
-                    user=interaction.user,
-                    context="Failed to store claimant in channel topic",
-                )
-        await edit_topic_bg()
 
         
         button .disabled =True 

@@ -31,9 +31,7 @@ from views .ticket_buttons import TicketButtons
 from views.base import ReliableView
 
 
-timezone =pytz .timezone (
-"Europe/Berlin"
-)
+timezone =pytz .timezone (config.TIMEZONE)
 
 
 class ApplicationDropdown (Select ):
