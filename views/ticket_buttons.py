@@ -11,10 +11,12 @@ from datetime import datetime
 import pytz 
 from utils .ticket_actions import close_ticket_channel 
 from utils .logger import ticket_claim_report ,log_interaction ,log_ticket ,log_dm 
+from utils.logger import log_exception
+from views.base import ReliableModal, ReliableView
 
 timezone =pytz .timezone ("Europe/Berlin")
 
-class CloseTicketModal (discord .ui .Modal ,title ="Close Ticket"):
+class CloseTicketModal (ReliableModal ,title ="Close Ticket"):
     reason =discord .ui .TextInput (
     label ="Reason for closing",
     placeholder ="Enter the reason for closing this ticket...",
@@ -36,19 +38,60 @@ class CloseTicketModal (discord .ui .Modal ,title ="Close Ticket"):
             item .disabled =True 
         try :
             await interaction .message .edit (view =self .original_view )
-        except Exception :
-            pass 
+        except discord.HTTPException as error:
+            log_exception(
+                "VIEW",
+                error,
+                guild=interaction.guild,
+                channel=interaction.channel,
+                user=interaction.user,
+                context="Failed to disable ticket controls before closing",
+            )
 
             
-        await close_ticket_channel (
-        channel =interaction .channel ,
-        moderator =interaction .user ,
-        reason =self .reason .value ,
-        bot =interaction .client 
-        )
+        try:
+            closed =await close_ticket_channel (
+            channel =interaction .channel ,
+            moderator =interaction .user ,
+            reason =self .reason .value ,
+            bot =interaction .client 
+            )
+        except Exception:
+            for item in self.original_view.children:
+                item.disabled =False
+            try:
+                await interaction.message.edit(view=self.original_view)
+            except discord.HTTPException as restore_error:
+                log_exception(
+                    "VIEW",
+                    restore_error,
+                    guild=interaction.guild,
+                    channel=interaction.channel,
+                    user=interaction.user,
+                    context="Failed to restore ticket controls after close failure",
+                )
+            raise
+        if not closed:
+            for item in self.original_view.children:
+                item.disabled =False
+            try:
+                await interaction.message.edit(view=self.original_view)
+            except discord.HTTPException as restore_error:
+                log_exception(
+                    "VIEW",
+                    restore_error,
+                    guild=interaction.guild,
+                    channel=interaction.channel,
+                    user=interaction.user,
+                    context="Failed to restore ticket controls after duplicate close",
+                )
+            await interaction.followup.send(
+                "This ticket is already closed or is no longer available.",
+                ephemeral=True,
+            )
 
 
-class PrioritySelectionView (discord .ui .View ):
+class PrioritySelectionView (ReliableView ):
     def __init__ (self ,original_channel ):
         super ().__init__ (timeout =60 )
         self .original_channel =original_channel 
@@ -97,8 +140,15 @@ class PrioritySelectionView (discord .ui .View ):
             try :
                 await self .original_channel .edit (name =new_name )
                 log_ticket ("Priority Rename Completed",self .original_channel ,interaction .user ,details =f"New channel name: {new_name }")
-            except Exception as e :
-                print (f"Failed to rename channel to {new_name }: {str (e )}")
+            except discord.HTTPException as error:
+                log_exception(
+                    "TICKET",
+                    error,
+                    guild=interaction.guild,
+                    channel=self.original_channel,
+                    user=interaction.user,
+                    context=f"Failed to apply priority channel name {new_name}",
+                )
         await rename_bg()
 
         await interaction .response .edit_message (content =f"Priority successfully set to **{priority }**.",view =None )
@@ -114,7 +164,7 @@ class PrioritySelectionView (discord .ui .View ):
         await self .original_channel .send (embed =embed )
 
 
-class TicketButtons (View ):
+class TicketButtons (ReliableView ):
     def __init__ (self ):
         super ().__init__ (timeout =None )
 
@@ -153,7 +203,7 @@ class TicketButtons (View ):
             try :
                 owner_id =int (owner_part .replace ("ticket_owner:","").strip ())
             except ValueError :
-                pass 
+                owner_id =None
         else :
             channel_topic =f"claimed_by:{interaction .user .id }"
 
@@ -161,8 +211,15 @@ class TicketButtons (View ):
         async def edit_topic_bg ():
             try :
                 await channel .edit (topic =channel_topic )
-            except Exception :
-                pass 
+            except discord.HTTPException as error:
+                log_exception(
+                    "TICKET",
+                    error,
+                    guild=interaction.guild,
+                    channel=channel,
+                    user=interaction.user,
+                    context="Failed to store claimant in channel topic",
+                )
         await edit_topic_bg()
 
         
@@ -172,8 +229,15 @@ class TicketButtons (View ):
 
         try :
             await interaction .message .edit (view =self )
-        except Exception :
-            pass 
+        except discord.HTTPException as error:
+            log_exception(
+                "VIEW",
+                error,
+                guild=interaction.guild,
+                channel=channel,
+                user=interaction.user,
+                context="Failed to update claimed ticket controls",
+            )
 
             
         await interaction .followup .send (
@@ -197,10 +261,16 @@ class TicketButtons (View ):
                     log_dm (owner ,"Ticket Claimed Notice",success =True )
             except discord .Forbidden :
                 log_dm (owner_id ,"Ticket Claimed Notice",success =False ,error_detail ="Direct Messages Disabled")
-                print (f"Could not send DM to applicant {owner_id } (DMs are disabled).")
-            except Exception as e :
-                log_dm (owner_id ,"Ticket Claimed Notice",success =False ,error_detail =str (e ))
-                print (f"Failed to DM applicant: {str (e )}")
+            except Exception as error:
+                log_dm (owner_id ,"Ticket Claimed Notice",success =False ,error_detail =str (error ))
+                log_exception(
+                    "DM",
+                    error,
+                    guild=interaction.guild,
+                    channel=channel,
+                    user=owner_id,
+                    context="Failed to notify applicant that ticket was claimed",
+                )
 
     @discord .ui .button (
     label ="Close Ticket",

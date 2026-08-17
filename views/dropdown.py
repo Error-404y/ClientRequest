@@ -23,9 +23,12 @@ ticket_report ,
 log_interaction ,
 log_ticket ,
 log_perm 
+,
+log_exception
 )
 
 from views .ticket_buttons import TicketButtons 
+from views.base import ReliableView
 
 
 timezone =pytz .timezone (
@@ -346,12 +349,21 @@ class ApplicationDropdown (Select ):
             )
             )
 
-        except discord .Forbidden :
+        except discord .Forbidden as exc:
+
+            reference =log_exception(
+            "PERMISSION",
+            exc,
+            guild=guild,
+            channel=interaction.channel,
+            user=user,
+            context="Ticket channel creation was forbidden",
+            )
 
             await interaction .followup .send (
             embed =error (
             "I do not have sufficient permissions "
-            "to create text channels on this server."
+            f"to create text channels on this server. Error reference: `{reference}`"
             ),
             ephemeral =True 
             )
@@ -360,10 +372,19 @@ class ApplicationDropdown (Select ):
 
         except Exception as exc :
 
+            reference =log_exception(
+            "TICKET",
+            exc,
+            guild=guild,
+            channel=interaction.channel,
+            user=user,
+            context="Ticket channel creation failed",
+            )
+
             await interaction .followup .send (
             embed =error (
-            "An unexpected error occurred during "
-            f"ticket channel creation: {exc }"
+            "An unexpected error occurred during ticket channel creation. "
+            f"Error reference: `{reference}`"
             ),
             ephemeral =True 
             )
@@ -399,8 +420,15 @@ class ApplicationDropdown (Select ):
                 )
                 )
 
-            except Exception :
-                pass 
+            except discord.HTTPException as delete_error:
+                log_exception(
+                    "TICKET",
+                    delete_error,
+                    guild=guild,
+                    channel=channel,
+                    user=user,
+                    context="Failed to remove orphaned ticket channel after database error",
+                )
 
             await interaction .followup .send (
             embed =error (
@@ -416,6 +444,15 @@ class ApplicationDropdown (Select ):
             channel ,
             user ,
             details =str (exc )
+            )
+
+            log_exception(
+            "DATABASE",
+            exc,
+            guild=guild,
+            channel=channel,
+            user=user,
+            context="Ticket database record creation failed",
             )
 
             return 
@@ -473,7 +510,7 @@ class ApplicationDropdown (Select ):
         )
 
 
-class TicketPanel (View ):
+class TicketPanel (ReliableView ):
 
     def __init__ (
     self ,

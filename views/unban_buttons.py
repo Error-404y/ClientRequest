@@ -1,10 +1,11 @@
 import discord 
+from views.base import ReliableView
 from utils .permissions import can_ban 
 from utils .database import add_infraction 
-from utils .logger import log_interaction ,log_mod 
+from utils .logger import log_exception, log_interaction ,log_mod 
 
 
-class UnbanConfirmView (discord .ui .View ):
+class UnbanConfirmView (ReliableView ):
     def __init__ (self ,author_id :int ,target_user ,target_name :str ,reason :str =None ):
         super ().__init__ (timeout =120 )
         self .author_id =author_id 
@@ -61,7 +62,8 @@ class UnbanConfirmView (discord .ui .View ):
             user_id =user_id ,
             moderator_id =interaction .user .id ,
             action_type ="UNBAN",
-            reason =self .reason or "Unbanned via /unbanZ"
+            reason =self .reason or "Unbanned via /unbanZ",
+            guild_id =interaction.guild.id if interaction.guild else None,
             )
 
             desc =f"**{self .target_name }** has successfully been unbanned!"
@@ -82,16 +84,32 @@ class UnbanConfirmView (discord .ui .View ):
             f"User not found in ban registry: **{self .target_name }** is not currently banned.",
             ephemeral =True 
             )
-        except discord .Forbidden :
+        except discord .Forbidden as error:
             log_mod ("Unban Failed (Bot Lacks Permission)",interaction .user ,self .target_name )
+            reference =log_exception(
+                "MODERATION",
+                error,
+                guild=interaction.guild,
+                channel=interaction.channel,
+                user=interaction.user,
+                context=f"Unban permission denied for {self.target_name}",
+            )
             await interaction .followup .send (
-            "Failed to unban user: Bot lacks required administrative permissions.",
+            f"Failed to unban user: Bot lacks required administrative permissions. Error reference: `{reference}`",
             ephemeral =True 
             )
         except Exception as error :
             log_mod (f"Unban Failed ({error })",interaction .user ,self .target_name )
+            reference =log_exception(
+                "MODERATION",
+                error,
+                guild=interaction.guild,
+                channel=interaction.channel,
+                user=interaction.user,
+                context=f"Unban failed for {self.target_name}",
+            )
             await interaction .followup .send (
-            f"Failed to unban user: {str (error )}",
+            f"Failed to unban user. Error reference: `{reference}`",
             ephemeral =True 
             )
 
@@ -115,4 +133,3 @@ class UnbanConfirmView (discord .ui .View ):
         color =discord .Color .from_rgb (255 ,255 ,255 )
         )
         await interaction .response .edit_message (embed =embed ,view =None )
-

@@ -1,10 +1,11 @@
 import discord 
+from views.base import ReliableView
 import config 
 from utils .permissions import can_ban 
-from utils .logger import log_interaction ,log_mod ,log_dm 
+from utils .logger import log_exception, log_interaction ,log_mod ,log_dm 
 
 
-class BanConfirmView (discord .ui .View ):
+class BanConfirmView (ReliableView ):
     def __init__ (self ,author_id :int ,target_user ,target_name :str ,reason :str =None ):
         super ().__init__ (timeout =120 )
         self .author_id =author_id 
@@ -39,7 +40,15 @@ class BanConfirmView (discord .ui .View ):
             if target_id :
                 try :
                     user_to_dm =await interaction .client .fetch_user (target_id )
-                except Exception :
+                except discord.HTTPException as error:
+                    log_exception(
+                        "DISCORD",
+                        error,
+                        guild=interaction.guild,
+                        channel=interaction.channel,
+                        user=target_id,
+                        context="Failed to resolve ban target for direct message",
+                    )
                     user_to_dm =None 
 
 
@@ -57,9 +66,20 @@ class BanConfirmView (discord .ui .View ):
                 await user_to_dm .send (embed =dm_embed )
                 dm_sent =True 
                 log_dm (user_to_dm ,"Ban Notice",success =True )
-            except Exception as e :
+            except discord.Forbidden as error:
                 dm_sent =False 
-                log_dm (user_to_dm ,"Ban Notice",success =False ,error_detail =str (e ))
+                log_dm (user_to_dm ,"Ban Notice",success =False ,error_detail =str (error ))
+            except discord.HTTPException as error:
+                dm_sent =False
+                log_dm(user_to_dm, "Ban Notice", success=False, error_detail=str(error))
+                log_exception(
+                    "DM",
+                    error,
+                    guild=interaction.guild,
+                    channel=interaction.channel,
+                    user=user_to_dm,
+                    context="Failed to deliver ban notice",
+                )
 
         ban_reason =f"Banned by {interaction .user } (ID: {interaction .user .id }) | Reason: {self .reason or 'No reason specified'}"
 
@@ -120,16 +140,32 @@ class BanConfirmView (discord .ui .View ):
 
             await interaction .message .edit (embed =embed ,view =None )
 
-        except discord .Forbidden :
+        except discord .Forbidden as error:
             log_mod ("Ban Failed (Bot Lacks Permission) -> DB has been Notified.",interaction .user ,self .target_name )
+            reference =log_exception(
+                "MODERATION",
+                error,
+                guild=interaction.guild,
+                channel=interaction.channel,
+                user=interaction.user,
+                context=f"Ban permission denied for {self.target_name}",
+            )
             await interaction .followup .send (
-            "Failed to ban user: Bot lacks required permissions or target role is superior.",
+            f"Failed to ban user: Bot lacks required permissions or target role is superior. Error reference: `{reference}`",
             ephemeral =True 
             )
         except Exception as error :
             log_mod (f"Ban Failed ({error })",interaction .user ,self .target_name )
+            reference =log_exception(
+                "MODERATION",
+                error,
+                guild=interaction.guild,
+                channel=interaction.channel,
+                user=interaction.user,
+                context=f"Ban failed for {self.target_name}",
+            )
             await interaction .followup .send (
-            f"Failed to ban user: {str (error )}",
+            f"Failed to ban user. Error reference: `{reference}`",
             ephemeral =True 
             )
 
@@ -153,4 +189,3 @@ class BanConfirmView (discord .ui .View ):
         color =discord .Color .from_rgb (255 ,255 ,255 )
         )
         await interaction .response .edit_message (embed =embed ,view =None )
-

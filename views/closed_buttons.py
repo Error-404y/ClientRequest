@@ -14,8 +14,10 @@ error
 )
 from cogs .transcript import create_transcript 
 from utils .logger import log_interaction ,log_ticket ,log_perm 
+from utils.logger import log_exception
+from views.base import ReliableView
 
-class ClosedTicketButtons (View ):
+class ClosedTicketButtons (ReliableView ):
     def __init__ (self ):
         super ().__init__ (timeout =None )
 
@@ -41,8 +43,15 @@ class ClosedTicketButtons (View ):
             item .disabled =True 
         try :
             await interaction .message .edit (view =self )
-        except Exception :
-            pass 
+        except discord.HTTPException as error:
+            log_exception(
+                "VIEW",
+                error,
+                guild=interaction.guild,
+                channel=interaction.channel,
+                user=interaction.user,
+                context="Failed to disable closed ticket controls before reopening",
+            )
 
         channel =interaction .channel 
 
@@ -54,22 +63,36 @@ class ClosedTicketButtons (View ):
                 topic_part =channel .topic .split ("|")[0 ].strip ()
                 user_id =int (topic_part .replace ("ticket_owner:","").strip ())
             except ValueError :
-                pass 
+                user_id =None
 
                 
         if user_id is None :
             try :
                 user_id =await get_ticket_owner (channel .id )
-            except Exception :
-                pass 
+            except Exception as error:
+                log_exception(
+                    "DATABASE",
+                    error,
+                    guild=interaction.guild,
+                    channel=channel,
+                    user=interaction.user,
+                    context="Failed to resolve ticket owner during reopen",
+                )
 
         if user_id :
             member =interaction .guild .get_member (user_id )
             if member is None :
                 try :
                     member =await interaction .guild .fetch_member (user_id )
-                except discord .HTTPException :
-                    pass 
+                except discord .HTTPException as error:
+                    log_exception(
+                        "DISCORD",
+                        error,
+                        guild=interaction.guild,
+                        channel=channel,
+                        user=user_id,
+                        context="Failed to fetch ticket owner during reopen",
+                    )
 
             if member :
                 try :
@@ -80,11 +103,16 @@ class ClosedTicketButtons (View ):
                     read_message_history =True 
                     )
                     log_perm (channel ,member ,"Restored view_channel=True, send_messages=True, read_message_history=True")
-                except Exception as e :
-                    print (f"Failed to restore permissions for ticket owner: {str (e )}")
-
-                    
-        await reopen_ticket (channel .id )
+                except discord.HTTPException as error:
+                    log_exception(
+                        "PERMISSION",
+                        error,
+                        guild=interaction.guild,
+                        channel=channel,
+                        user=member,
+                        context="Failed to restore ticket owner permissions",
+                    )
+                    raise
 
         
         async def perform_background_reopen ():
@@ -101,10 +129,19 @@ class ClosedTicketButtons (View ):
                 try :
                     await channel .edit (**edit_kwargs )
                     log_ticket ("Restored Channel Properties",channel ,interaction .user ,details =f"Moved to category {category .name if category else 'Default'}, Name: {new_name }")
-                except Exception as e :
-                    print (f"Failed to restore channel properties during reopen: {str (e )}")
+                except discord.HTTPException as error:
+                    log_exception(
+                        "TICKET",
+                        error,
+                        guild=interaction.guild,
+                        channel=channel,
+                        user=interaction.user,
+                        context="Failed to restore reopened ticket channel properties",
+                    )
+                    raise
 
         await perform_background_reopen()
+        await reopen_ticket (channel .id )
 
         
         await interaction .followup .send (
@@ -149,7 +186,15 @@ class ClosedTicketButtons (View ):
                             if claimant :
                                 item .label =f"Claimed by {claimant .display_name }"
                                 item .style =discord .ButtonStyle .secondary 
-                        except Exception :
+                        except discord.HTTPException as error:
+                            log_exception(
+                                "DISCORD",
+                                error,
+                                guild=interaction.guild,
+                                channel=channel,
+                                user=claimed_by,
+                                context="Failed to resolve claimant while reopening ticket",
+                            )
                             item .label ="Claimed"
                             item .style =discord .ButtonStyle .secondary 
 
@@ -160,8 +205,15 @@ class ClosedTicketButtons (View ):
         
         try :
             await interaction .message .delete ()
-        except Exception :
-            pass 
+        except discord.HTTPException as error:
+            log_exception(
+                "VIEW",
+                error,
+                guild=interaction.guild,
+                channel=channel,
+                user=interaction.user,
+                context="Failed to remove obsolete closed ticket controls",
+            )
 
     @discord .ui .button (
     label ="Generate Transcript",
@@ -185,8 +237,15 @@ class ClosedTicketButtons (View ):
             item .disabled =True 
         try :
             await interaction .message .edit (view =self )
-        except Exception :
-            pass 
+        except discord.HTTPException as error:
+            log_exception(
+                "VIEW",
+                error,
+                guild=interaction.guild,
+                channel=interaction.channel,
+                user=interaction.user,
+                context="Failed to disable transcript controls",
+            )
 
         try :
             file_path =await create_transcript (interaction .channel )
@@ -195,9 +254,17 @@ class ClosedTicketButtons (View ):
             file =discord .File (file_path ),
             ephemeral =True 
             )
-        except Exception as e :
+        except Exception as error:
+            reference = log_exception(
+                "TRANSCRIPT",
+                error,
+                guild=interaction.guild,
+                channel=interaction.channel,
+                user=interaction.user,
+                context="Manual transcript generation failed",
+            )
             await interaction .followup .send (
-            embed =error (f"Failed to generate transcript: {str (e )}"),
+            embed =error (f"Failed to generate transcript. Error reference: `{reference}`"),
             ephemeral =True 
             )
 
@@ -206,8 +273,15 @@ class ClosedTicketButtons (View ):
             item .disabled =False 
         try :
             await interaction .message .edit (view =self )
-        except Exception :
-            pass 
+        except discord.HTTPException as error:
+            log_exception(
+                "VIEW",
+                error,
+                guild=interaction.guild,
+                channel=interaction.channel,
+                user=interaction.user,
+                context="Failed to restore transcript controls",
+            )
 
     @discord .ui .button (
     label ="Delete Channel",
@@ -230,8 +304,15 @@ class ClosedTicketButtons (View ):
             item .disabled =True 
         try :
             await interaction .message .edit (view =self )
-        except Exception :
-            pass 
+        except discord.HTTPException as error:
+            log_exception(
+                "VIEW",
+                error,
+                guild=interaction.guild,
+                channel=interaction.channel,
+                user=interaction.user,
+                context="Failed to disable ticket controls before deletion",
+            )
 
         await interaction .followup .send (
         content ="Channel deletion initiated. Deleting channel in 5 seconds...",
@@ -247,14 +328,21 @@ class ClosedTicketButtons (View ):
                 topic_part =interaction .channel .topic .split ("|")[0 ].strip ()
                 user_id =int (topic_part .replace ("ticket_owner:","").strip ())
             except ValueError :
-                pass 
+                user_id =None
 
                 
         if user_id is None :
             try :
                 user_id =await get_ticket_owner (interaction .channel .id )
-            except Exception :
-                pass 
+            except Exception as error:
+                log_exception(
+                    "DATABASE",
+                    error,
+                    guild=interaction.guild,
+                    channel=interaction.channel,
+                    user=interaction.user,
+                    context="Failed to resolve ticket owner before deletion",
+                )
 
         log_ticket ("Deletion Scheduled (5s)",interaction .channel ,interaction .user )
 
@@ -265,5 +353,16 @@ class ClosedTicketButtons (View ):
             await mark_ticket_deleted(channel_id)
             from utils .logger import ticket_delete_report 
             ticket_delete_report (channel_name ,interaction .user ,user_id ,interaction .client )
-        except Exception as e :
-            print (f"Failed to delete channel: {str (e )}")
+        except Exception as error:
+            reference = log_exception(
+                "TICKET",
+                error,
+                guild=interaction.guild,
+                channel=interaction.channel,
+                user=interaction.user,
+                context="Ticket channel deletion failed",
+            )
+            await interaction.followup.send(
+                f"The channel could not be deleted. Error reference: `{reference}`",
+                ephemeral=True,
+            )
