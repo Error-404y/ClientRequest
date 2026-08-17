@@ -10,6 +10,7 @@ import config
 
 from utils .database import setup_database 
 from utils .logger import (
+emit,
 log ,
 log_interaction ,
 log_exception,
@@ -238,12 +239,25 @@ async def on_ready ():
             for rid in gcfg ["OWNER_ROLES"]
             if current_guild .get_role (rid )
             )
-
-            log (
-            f"Owner roles loaded: "
-            f"{loaded }/{len (gcfg ['OWNER_ROLES'])}",
-            guild =current_guild ,
-            )
+            missing_owner_roles =[
+            rid
+            for rid in gcfg ["OWNER_ROLES"]
+            if current_guild .get_role (rid )is None
+            ]
+            if missing_owner_roles:
+                emit(
+                    "WARNING",
+                    "CONFIGURATION",
+                    f"Resolved {loaded}/{len(gcfg['OWNER_ROLES'])} owner roles | stale IDs: {', '.join(str(rid) for rid in missing_owner_roles)}",
+                    guild=current_guild,
+                )
+            else:
+                emit(
+                    "SUCCESS",
+                    "CONFIGURATION",
+                    f"Resolved all {loaded} configured owner roles",
+                    guild=current_guild,
+                )
         else :
             log (
             f"Server {gid } "
@@ -288,6 +302,12 @@ async def on_ready ():
 async def on_interaction (
 interaction :discord .Interaction ,
 ):
+    if interaction.type in {
+        discord.InteractionType.component,
+        discord.InteractionType.modal_submit,
+    }:
+        return
+
     custom_id =None 
 
     if interaction .data :

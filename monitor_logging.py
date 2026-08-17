@@ -5,6 +5,7 @@ import discord
 import pytz 
 from discord .ext import commands 
 
+import config
 from utils .database import add_infraction 
 
 
@@ -22,9 +23,7 @@ class LoggingMonitor (commands .Cog ):
         exist_ok =True 
         )
 
-        self .timezone =pytz .timezone (
-        "Europe/Berlin"
-        )
+        self .timezone =pytz .timezone (config.TIMEZONE)
 
     async def log_action (
     self ,
@@ -69,7 +68,7 @@ class LoggingMonitor (commands .Cog ):
         f"[LoggingMonitor] "
         f"{action_type } | "
         f"UUID: {event_uuid } | "
-        f"Timestamp: {timestamp } Europe/Berlin | "
+        f"Timestamp: {timestamp } {config.TIMEZONE} | "
         f"User: {user_name } ({user_id }) | "
         f"Moderator: {moderator_name } "
         f"({moderator_id or 'Unknown'})"

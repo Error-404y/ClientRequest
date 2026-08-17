@@ -90,6 +90,7 @@ BOT_NAME = "! maja !"
 BOT_CREATOR = "! ZER"
 BOT_COLLABORATORS = "! Unbekannt"
 BOT_CREDITS = "Created by ! ZER and ! Unbekannt"
+TIMEZONE = "Europe/Athens"
 UPLOADER_FORM = "https://docs.google.com/forms/d/e/1FAIpQLScEXtR945KYxZovhw4mTNnJ3CLOIBs06kQUiKeYjzJP1A-T9Q/viewform?usp=dialog"
 MODERATOR_FORM = "https://docs.google.com/forms/d/e/1FAIpQLScmr7q3XpXUNbrXMdpIeev0OoZv-yAWZoOWMbP6EDSp3lGdHA/viewform?usp=sharing&ouid=117835685606289606539"
 BASE_DIR = Path(__file__).resolve().parent
