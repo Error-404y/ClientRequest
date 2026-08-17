@@ -143,16 +143,16 @@ async def setup_hook ():
         raise RuntimeError(f"Required extensions failed to load: {', '.join(failed_extensions)}")
 
     log (
-    "Syncing application slash commands to all configured servers..."
+    "Removing legacy server-specific slash command registrations..."
     )
 
     for gid in config .GUILDS .keys ():
         try :
             guild_obj =discord .Object (id =gid )
-            bot .tree .copy_global_to (guild =guild_obj )
+            bot .tree .clear_commands (guild =guild_obj )
             synced =await bot .tree .sync (guild =guild_obj )
             log (
-            f"Synced {len (synced )} slash command(s) to guild {gid }"
+            f"Cleared server-specific slash commands for guild {gid }; remaining overrides: {len (synced )}"
             )
         except Exception as error :
             tb_str ="".join (
@@ -163,7 +163,7 @@ async def setup_hook ():
             )
             )
             log (
-            f"Failed to sync slash commands to guild {gid }: "
+            f"Failed to clear server-specific slash commands for guild {gid }: "
             f"{error }\n{tb_str }"
             )
 
