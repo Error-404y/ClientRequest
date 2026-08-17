@@ -1,3 +1,4 @@
+import ast
 import tempfile
 import unittest
 from datetime import datetime, timedelta
@@ -47,6 +48,22 @@ class ConfigurationTests(unittest.TestCase):
         now = datetime.now(zone)
         value = (now - timedelta(minutes=31)).isoformat()
         self.assertGreaterEqual(minutes_since(value, now), 31)
+
+    def test_slash_commands_do_not_use_undefined_prefix_context(self):
+        source = Path(__file__).resolve().parents[1].joinpath("cogs", "ban.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        invalid = []
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            decorators = [ast.unparse(item) for item in node.decorator_list]
+            if not any("app_commands.command" in item for item in decorators):
+                continue
+            parameters = {argument.arg for argument in node.args.args}
+            names = {item.id for item in ast.walk(node) if isinstance(item, ast.Name)}
+            if "ctx" in names and "ctx" not in parameters:
+                invalid.append(node.name)
+        self.assertEqual(invalid, [])
 
 
 class DatabaseTests(unittest.IsolatedAsyncioTestCase):
