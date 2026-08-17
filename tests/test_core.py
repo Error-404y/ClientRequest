@@ -112,6 +112,12 @@ class ConfigurationTests(unittest.TestCase):
         self.assertTrue(active)
         self.assertTrue(all("==" in line for line in active))
 
+    def test_slash_commands_use_only_global_registration(self):
+        source = Path(__file__).resolve().parents[1].joinpath("main.py").read_text(encoding="utf-8")
+        self.assertNotIn("copy_global_to", source)
+        self.assertIn("clear_commands", source)
+        self.assertIn("global_synced =await bot.tree.sync()", source)
+
     def test_unban_infractions_include_guild_scope(self):
         source = Path(__file__).resolve().parents[1].joinpath("views", "unban_buttons.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
