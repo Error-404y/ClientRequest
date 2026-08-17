@@ -65,6 +65,66 @@ class ConfigurationTests(unittest.TestCase):
                 invalid.append(node.name)
         self.assertEqual(invalid, [])
 
+    def test_exception_handlers_never_hide_failures(self):
+        root = Path(__file__).resolve().parents[1]
+        invalid = []
+        paths = [
+            root.joinpath("main.py"),
+            *root.joinpath("cogs").glob("*.py"),
+            *root.joinpath("views").glob("*.py"),
+            *root.joinpath("utils").glob("*.py"),
+        ]
+        for path in paths:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ExceptHandler):
+                    continue
+                if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):
+                    invalid.append(f"{path.name}:{node.lineno}:pass")
+                has_print = any(
+                    isinstance(item, ast.Call)
+                    and isinstance(item.func, ast.Name)
+                    and item.func.id == "print"
+                    for item in ast.walk(node)
+                )
+                if has_print:
+                    invalid.append(f"{path.name}:{node.lineno}:print")
+        self.assertEqual(invalid, [])
+
+    def test_interactive_views_use_reliability_handler(self):
+        root = Path(__file__).resolve().parents[1]
+        invalid = []
+        for path in root.joinpath("views").glob("*.py"):
+            if path.name in {"__init__.py", "base.py"}:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in tree.body:
+                if not isinstance(node, ast.ClassDef):
+                    continue
+                bases = {ast.unparse(base).replace(" ", "") for base in node.bases}
+                if bases.intersection({"View", "discord.ui.View"}):
+                    invalid.append(f"{path.name}:{node.name}")
+        self.assertEqual(invalid, [])
+
+    def test_runtime_dependencies_are_pinned(self):
+        requirements = Path(__file__).resolve().parents[1].joinpath("requirements.txt").read_text(encoding="utf-8").splitlines()
+        active = [line.strip() for line in requirements if line.strip()]
+        self.assertTrue(active)
+        self.assertTrue(all("==" in line for line in active))
+
+    def test_unban_infractions_include_guild_scope(self):
+        source = Path(__file__).resolve().parents[1].joinpath("views", "unban_buttons.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        unban_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "add_infraction"
+        ]
+        self.assertTrue(unban_calls)
+        self.assertTrue(all(any(keyword.arg == "guild_id" for keyword in call.keywords) for call in unban_calls))
+
 
 class DatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -90,6 +150,18 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await claim_ticket(100, 301, datetime.now().isoformat()))
         self.assertTrue(await close_ticket(100, datetime.now().isoformat(), 300, "Done"))
         self.assertFalse(await close_ticket(100, datetime.now().isoformat(), 300, "Done"))
+
+    async def test_reopen_restores_database_ticket_state(self):
+        guild_id = next(iter(config.GUILDS))
+        await create_ticket_record(101, guild_id, 201, "Test", datetime.now().isoformat())
+        self.assertTrue(await close_ticket(101, datetime.now().isoformat(), 300, "Done"))
+        from utils.database import get_ticket_record, reopen_ticket
+        await reopen_ticket(101)
+        record = await get_ticket_record(101)
+        self.assertEqual(record["status"], "open")
+        self.assertIsNone(record["closed_at"])
+        self.assertIsNone(record["closed_by"])
+        self.assertIsNone(record["close_reason"])
 
     async def test_warning_timestamp_column_exists(self):
         async with aiosqlite.connect(config.DATABASE) as database:
