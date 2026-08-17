@@ -104,7 +104,15 @@ class Escalations(commands.Cog):
                     latest_staff_response = message
                 if latest_customer_message and latest_staff_response:
                     break
-        except discord.HTTPException:
+        except discord.HTTPException as error:
+            log_exception(
+                "ESCALATION",
+                error,
+                guild=channel.guild,
+                channel=channel,
+                user=user_id,
+                context="Failed to inspect ticket history for customer wait",
+            )
             return None, 0.0
 
         if latest_customer_message is None:

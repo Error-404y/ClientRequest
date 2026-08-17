@@ -6,7 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from utils.logger import log_interaction, log_ticket
+from utils.logger import log_exception, log_interaction, log_ticket
 from utils.permissions import is_staff
 
 timezone = pytz.timezone("Europe/Berlin")
@@ -79,20 +79,36 @@ class Updates(commands.Cog):
             if channel is None:
                 try:
                     channel = await guild.fetch_channel(channel_id)
-                except discord.HTTPException:
+                except discord.HTTPException as error:
+                    log_exception(
+                        "UPDATE",
+                        error,
+                        guild=guild,
+                        context=f"Failed to resolve configured panel channel {channel_id}",
+                    )
                     channel = None
             if channel is not None and hasattr(channel, "send"):
                 return channel
 
         for channel in guild.text_channels:
-            permissions = channel.permissions_for(guild.me)
+            bot_member =guild.me or (guild.get_member(self.bot.user.id) if self.bot.user else None)
+            if bot_member is None:
+                continue
+            permissions = channel.permissions_for(bot_member)
             if not permissions.view_channel or not permissions.read_message_history or not permissions.send_messages:
                 continue
             try:
                 async for message in channel.history(limit=100):
                     if self.bot.user and message.author.id == self.bot.user.id and self.message_contains_ticket_panel(message):
                         return channel
-            except discord.HTTPException:
+            except discord.HTTPException as error:
+                log_exception(
+                    "UPDATE",
+                    error,
+                    guild=guild,
+                    channel=channel,
+                    context="Ticket panel discovery failed during global update",
+                )
                 continue
         return None
 
@@ -125,9 +141,6 @@ class Updates(commands.Cog):
 
         if interaction.guild is None:
             await interaction.response.send_message("This command can only be used inside a configured server.", ephemeral=True)
-            return
-        if interaction.guild.id not in config.GUILDS:
-            await interaction.response.send_message("This server is not configured for global updates.", ephemeral=True)
             return
         if not is_staff(interaction.user):
             await interaction.response.send_message("You do not have permission to publish global updates.", ephemeral=True)

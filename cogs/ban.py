@@ -28,6 +28,7 @@ log_command ,
 log_mod ,
 log_dm ,
 log_filter ,
+log_exception,
 )
 from views .ban_buttons import BanConfirmView 
 from views .unban_buttons import UnbanConfirmView 
@@ -57,7 +58,14 @@ user_input :str ,
         try :
             fetched =await bot .fetch_user (user_id )
             return fetched ,fetched .name ,user_id 
-        except Exception :
+        except discord.HTTPException as error:
+            log_exception(
+                "DISCORD",
+                error,
+                guild=guild,
+                user=user_id,
+                context="Failed to resolve mentioned moderation target",
+            )
             return user_id ,str (user_id ),user_id 
 
     if clean_input .isdigit ():
@@ -70,7 +78,14 @@ user_input :str ,
         try :
             fetched =await bot .fetch_user (user_id )
             return fetched ,fetched .name ,user_id 
-        except Exception :
+        except discord.HTTPException as error:
+            log_exception(
+                "DISCORD",
+                error,
+                guild=guild,
+                user=user_id,
+                context="Failed to resolve numeric moderation target",
+            )
             return user_id ,clean_input ,user_id 
 
     if guild :
@@ -128,7 +143,13 @@ user_input :str ,
     if guild :
         try :
             ban_entries =[entry async for entry in guild .bans ()]
-        except Exception :
+        except discord.HTTPException as error:
+            log_exception(
+                "MODERATION",
+                error,
+                guild=guild,
+                context="Failed to retrieve server ban list",
+            )
             ban_entries =[]
 
     if user_id :
@@ -139,7 +160,14 @@ user_input :str ,
         try :
             fetched =await bot .fetch_user (user_id )
             return fetched ,fetched .name ,user_id 
-        except Exception :
+        except discord.HTTPException as error:
+            log_exception(
+                "DISCORD",
+                error,
+                guild=guild,
+                user=user_id,
+                context="Failed to resolve banned user",
+            )
             return user_id ,str (user_id ),user_id 
 
     search_term =clean_input .lstrip ("@").lower ()
@@ -740,13 +768,23 @@ class BanCog (commands .Cog ):
                 "Warning Notice",
                 success =True ,
                 )
-            except Exception as exc :
+            except discord.Forbidden as exc:
                 dm_sent =False 
                 log_dm (
                 target_obj ,
                 "Warning Notice",
                 success =False ,
                 error_detail =str (exc ),
+                )
+            except discord.HTTPException as exc:
+                dm_sent =False
+                log_dm(target_obj, "Warning Notice", success=False, error_detail=str(exc))
+                log_exception(
+                    "DM",
+                    exc,
+                    guild=guild,
+                    user=target_obj,
+                    context="Failed to deliver warning notice",
                 )
 
         infraction_uuid =await add_infraction (
@@ -1062,12 +1100,21 @@ class BanCog (commands .Cog ):
                 "Warning Removal Notice",
                 success =True ,
                 )
-            except Exception as exc :
+            except discord.Forbidden as exc:
                 log_dm (
                 target_obj ,
                 "Warning Removal Notice",
                 success =False ,
                 error_detail =str (exc ),
+                )
+            except discord.HTTPException as exc:
+                log_dm(target_obj, "Warning Removal Notice", success=False, error_detail=str(exc))
+                log_exception(
+                    "DM",
+                    exc,
+                    guild=guild,
+                    user=target_obj,
+                    context="Failed to deliver warning removal notice",
                 )
 
         embed =discord .Embed (
@@ -1793,7 +1840,14 @@ class BanCog (commands .Cog ):
         if user is None :
             try :
                 user =await self .bot .fetch_user (user_id_int )
-            except Exception :
+            except discord.HTTPException as error:
+                log_exception(
+                    "DISCORD",
+                    error,
+                    guild=guild,
+                    user=user_id_int,
+                    context="Failed to resolve ticket user for infraction display",
+                )
                 user =None 
 
         if user :

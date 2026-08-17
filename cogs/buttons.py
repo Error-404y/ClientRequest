@@ -1,163 +1,170 @@
-import discord
+import discord 
 
-from discord.ext import commands
+from discord .ext import commands 
 
-import config
+import config 
 
-import asyncio
-
-
-
-
-
-from utils.permissions import is_owner, is_staff, is_moderator
+import asyncio 
 
 
 
 
 
-
-class TicketButtons(discord.ui.View):
-
-
-    def __init__(self):
-
-        super().__init__(timeout=None)
+from utils .permissions import is_owner ,is_staff ,is_moderator 
+from utils.logger import log_exception
+from views.base import ReliableView
 
 
 
 
 
 
-    @discord.ui.button(
+class TicketButtons (ReliableView ):
 
-        label="Close",
 
-        style=discord.ButtonStyle.gray,
+    def __init__ (self ):
 
-        custom_id="zer_ticket_close"
+        super ().__init__ (timeout =None )
+
+
+
+
+
+
+    @discord .ui .button (
+
+    label ="Close",
+
+    style =discord .ButtonStyle .gray ,
+
+    custom_id ="zer_ticket_close"
 
     )
 
-    async def close(
+    async def close (
 
-        self,
+    self ,
 
-        interaction: discord.Interaction,
+    interaction :discord .Interaction ,
 
-        button: discord.ui.Button
+    button :discord .ui .Button 
 
     ):
 
 
-        if not is_staff(interaction.user):
+        if not is_staff (interaction .user ):
 
 
-            await interaction.response.send_message(
+            await interaction .response .send_message (
 
-                "You cannot close this ticket.",
+            "You cannot close this ticket.",
 
-                ephemeral=True
+            ephemeral =True 
 
             )
 
-            return
+            return 
 
 
 
 
 
-        if interaction.channel.name.startswith(
+        if interaction .channel .name .startswith (
 
-            "closed-"
+        "closed-"
 
         ):
 
 
-            await interaction.response.send_message(
+            await interaction .response .send_message (
 
-                "This ticket is already closed.",
+            "This ticket is already closed.",
 
-                ephemeral=True
+            ephemeral =True 
 
             )
 
-            return
+            return 
 
 
 
 
 
 
-        # Get owner from topic
+            
 
-        if interaction.channel.topic:
+        if interaction .channel .topic :
 
 
-            if interaction.channel.topic.startswith(
+            if interaction .channel .topic .startswith (
 
-                "ticket_owner:"
+            "ticket_owner:"
 
             ):
 
 
-                user_id = int(
+                user_id =int (
 
-                    interaction.channel.topic.replace(
+                interaction .channel .topic .replace (
 
-                        "ticket_owner:",
+                "ticket_owner:",
 
-                        ""
+                ""
 
-                    )
+                )
 
                 )
 
 
 
-                try:
+                try :
 
 
-                    user = interaction.guild.get_member(
+                    user =interaction .guild .get_member (
 
-                        user_id
+                    user_id 
 
                     )
 
 
 
-                    if user is None:
+                    if user is None :
 
 
-                        user = await interaction.guild.fetch_member(
+                        user =await interaction .guild .fetch_member (
 
-                            user_id
+                        user_id 
 
                         )
 
 
 
-                    await interaction.channel.set_permissions(
+                    await interaction .channel .set_permissions (
 
-                        user,
+                    user ,
 
-                        view_channel=False
+                    view_channel =False 
 
                     )
 
 
-                except:
+                except Exception as error:
+                    log_exception(
+                        "PERMISSION",
+                        error,
+                        guild=interaction.guild,
+                        channel=interaction.channel,
+                        user=interaction.user,
+                        context="Legacy close control failed to remove ticket owner permissions",
+                    )
 
 
-                    pass
 
 
 
+        await interaction .channel .edit (
 
-
-        await interaction.channel.edit(
-
-            name=f"closed-{interaction.channel.name}"
+        name =f"closed-{interaction .channel .name }"
 
         )
 
@@ -165,15 +172,15 @@ class TicketButtons(discord.ui.View):
 
 
 
-        embed = discord.Embed(
+        embed =discord .Embed (
 
-            title="Ticket Closed",
+        title ="Ticket Closed",
 
-            description=f"""
+        description =f"""
 
 Ticket closed by:
 
-{interaction.user.mention}
+{interaction .user .mention }
 
 
 
@@ -185,7 +192,7 @@ Owners can reopen this ticket.
 
 """,
 
-            color=discord.Color.orange()
+        color =discord .Color .orange ()
 
         )
 
@@ -193,11 +200,11 @@ Owners can reopen this ticket.
 
 
 
-        await interaction.response.send_message(
+        await interaction .response .send_message (
 
-            embed=embed,
+        embed =embed ,
 
-            view=ClosedTicketButtons()
+        view =ClosedTicketButtons ()
 
         )
 
@@ -209,166 +216,166 @@ Owners can reopen this ticket.
 
 
 
-    @discord.ui.button(
+    @discord .ui .button (
 
-        label="Transcript",
+    label ="Transcript",
 
-        style=discord.ButtonStyle.blurple,
+    style =discord .ButtonStyle .blurple ,
 
-        custom_id="zer_ticket_transcript"
+    custom_id ="zer_ticket_transcript"
 
     )
 
-    async def transcript(
+    async def transcript (
 
-        self,
+    self ,
 
-        interaction,
+    interaction ,
 
-        button
+    button 
 
     ):
 
 
-        if not is_owner(interaction.user):
+        if not is_owner (interaction .user ):
 
 
-            await interaction.response.send_message(
+            await interaction .response .send_message (
 
-                "Only owners can create transcripts.",
+            "Only owners can create transcripts.",
 
-                ephemeral=True
+            ephemeral =True 
 
             )
 
-            return
+            return 
 
 
 
 
 
-        await interaction.response.send_message(
+        await interaction .response .send_message (
 
-            "Creating transcript...",
+        "Creating transcript...",
 
-            ephemeral=True
-
-        )
-
-
-
-
-        from cogs.transcript import create_transcript
-
-
-
-        file = await create_transcript(
-
-            interaction.channel
-
-        )
-
-
-
-        await interaction.followup.send(
-
-            "Transcript created:",
-
-            file=discord.File(file),
-
-            ephemeral=True
+        ephemeral =True 
 
         )
 
 
 
 
+        from cogs .transcript import create_transcript 
+
+
+
+        file =await create_transcript (
+
+        interaction .channel 
+
+        )
+
+
+
+        await interaction .followup .send (
+
+        "Transcript created:",
+
+        file =discord .File (file ),
+
+        ephemeral =True 
+
+        )
 
 
 
 
 
 
-class ClosedTicketButtons(discord.ui.View):
-
-
-    def __init__(self):
-
-        super().__init__(timeout=None)
 
 
 
 
+class ClosedTicketButtons (ReliableView ):
+
+
+    def __init__ (self ):
+
+        super ().__init__ (timeout =None )
 
 
 
 
-    @discord.ui.button(
 
-        label="Reopen",
 
-        style=discord.ButtonStyle.green,
 
-        custom_id="zer_ticket_reopen"
+
+    @discord .ui .button (
+
+    label ="Reopen",
+
+    style =discord .ButtonStyle .green ,
+
+    custom_id ="zer_ticket_reopen"
 
     )
 
-    async def reopen(
+    async def reopen (
 
-        self,
+    self ,
 
-        interaction: discord.Interaction,
+    interaction :discord .Interaction ,
 
-        button: discord.ui.Button
+    button :discord .ui .Button 
 
     ):
 
 
 
-        if not is_owner(interaction.user):
+        if not is_owner (interaction .user ):
 
 
-            await interaction.response.send_message(
+            await interaction .response .send_message (
 
-                "Only owners can reopen tickets.",
+            "Only owners can reopen tickets.",
 
-                ephemeral=True
+            ephemeral =True 
 
             )
 
-            return
+            return 
 
 
 
 
 
-        await interaction.response.defer()
+        await interaction .response .defer ()
 
 
 
 
 
-        # Remove closed prefix
+        
 
 
-        if interaction.channel.name.startswith(
+        if interaction .channel .name .startswith (
 
-            "closed-"
+        "closed-"
 
         ):
 
 
-            await interaction.channel.edit(
+            await interaction .channel .edit (
 
-                name=interaction.channel.name.replace(
+            name =interaction .channel .name .replace (
 
-                    "closed-",
+            "closed-",
 
-                    "",
+            "",
 
-                    1
+            1 
 
-                )
+            )
 
             )
 
@@ -378,55 +385,55 @@ class ClosedTicketButtons(discord.ui.View):
 
 
 
-        # Restore user
+            
 
 
-        restored = False
+        restored =False 
 
 
 
-        if interaction.channel.topic:
+        if interaction .channel .topic :
 
 
-            if interaction.channel.topic.startswith(
+            if interaction .channel .topic .startswith (
 
-                "ticket_owner:"
+            "ticket_owner:"
 
             ):
 
 
 
-                user_id = int(
+                user_id =int (
 
-                    interaction.channel.topic.replace(
+                interaction .channel .topic .replace (
 
-                        "ticket_owner:",
+                "ticket_owner:",
 
-                        ""
+                ""
 
-                    )
+                )
 
                 )
 
 
 
-                try:
+                try :
 
 
-                    user = interaction.guild.get_member(
+                    user =interaction .guild .get_member (
 
-                        user_id
+                    user_id 
 
                     )
 
 
 
-                    if user is None:
+                    if user is None :
 
 
-                        user = await interaction.guild.fetch_member(
+                        user =await interaction .guild .fetch_member (
 
-                            user_id
+                        user_id 
 
                         )
 
@@ -434,31 +441,32 @@ class ClosedTicketButtons(discord.ui.View):
 
 
 
-                    await interaction.channel.set_permissions(
+                    await interaction .channel .set_permissions (
 
-                        user,
+                    user ,
 
-                        view_channel=True,
+                    view_channel =True ,
 
-                        send_messages=True,
+                    send_messages =True ,
 
-                        read_message_history=True
+                    read_message_history =True 
 
                     )
 
 
 
-                    restored = True
+                    restored =True 
 
 
 
                 except Exception as error:
-
-
-                    print(
-
-                        f"Reopen Error: {error}"
-
+                    log_exception(
+                        "TICKET",
+                        error,
+                        guild=interaction.guild,
+                        channel=interaction.channel,
+                        user=interaction.user,
+                        context="Legacy reopen control failed",
                     )
 
 
@@ -468,26 +476,24 @@ class ClosedTicketButtons(discord.ui.View):
 
 
 
-        if restored:
+        if restored :
 
 
-            await interaction.followup.send(
+            await interaction .followup .send (
 
-                "Ticket reopened.\n\nUser has been added back inside."
-
-            )
-
-
-        else:
-
-
-            await interaction.followup.send(
-
-                "Ticket reopened.\n\nUser could not be restored."
+            "Ticket reopened.\n\nUser has been added back inside."
 
             )
 
 
+        else :
+
+
+            await interaction .followup .send (
+
+            "Ticket reopened.\n\nUser could not be restored."
+
+            )
 
 
 
@@ -495,104 +501,106 @@ class ClosedTicketButtons(discord.ui.View):
 
 
 
-    @discord.ui.button(
 
-        label="Delete",
 
-        style=discord.ButtonStyle.red,
+    @discord .ui .button (
 
-        custom_id="zer_ticket_delete"
+    label ="Delete",
+
+    style =discord .ButtonStyle .red ,
+
+    custom_id ="zer_ticket_delete"
 
     )
 
-    async def delete(
+    async def delete (
 
-        self,
+    self ,
 
-        interaction,
+    interaction ,
 
-        button
+    button 
 
     ):
 
 
 
-        if not is_owner(interaction.user):
+        if not is_owner (interaction .user ):
 
 
-            await interaction.response.send_message(
+            await interaction .response .send_message (
 
-                "Only owners can delete tickets.",
+            "Only owners can delete tickets.",
 
-                ephemeral=True
+            ephemeral =True 
 
             )
 
-            return
+            return 
 
 
 
 
 
-        await interaction.response.send_message(
+        await interaction .response .send_message (
 
-            "Ticket deleting in 5 seconds...",
+        "Ticket deleting in 5 seconds...",
 
-            ephemeral=True
-
-        )
-
-
-
-        await asyncio.sleep(5)
-
-
-
-        await interaction.channel.delete()
-
-
-
-
-
-
-
-class Buttons(commands.Cog):
-
-
-    def __init__(self, bot):
-
-        self.bot = bot
-
-
-
-
-
-    async def cog_load(self):
-
-
-        self.bot.add_view(
-
-            TicketButtons()
-
-        )
-
-
-        self.bot.add_view(
-
-            ClosedTicketButtons()
+        ephemeral =True 
 
         )
 
 
 
+        await asyncio .sleep (5 )
+
+
+
+        await interaction .channel .delete ()
 
 
 
 
-async def setup(bot):
 
-    await bot.add_cog(
 
-        Buttons(bot)
+
+class Buttons (commands .Cog ):
+
+
+    def __init__ (self ,bot ):
+
+        self .bot =bot 
+
+
+
+
+
+    async def cog_load (self ):
+
+
+        self .bot .add_view (
+
+        TicketButtons ()
+
+        )
+
+
+        self .bot .add_view (
+
+        ClosedTicketButtons ()
+
+        )
+
+
+
+
+
+
+
+async def setup (bot ):
+
+    await bot .add_cog (
+
+    Buttons (bot )
 
     )
