@@ -9,7 +9,7 @@ import config
 from utils.logger import log_exception, log_inactivity
 from utils.ticket_actions import close_ticket_channel
 
-timezone = pytz.timezone("Europe/Berlin")
+timezone = pytz.timezone(config.TIMEZONE)
 
 
 def hours_since(value, now=None):

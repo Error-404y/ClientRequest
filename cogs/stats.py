@@ -8,7 +8,7 @@ from datetime import datetime
 import pytz 
 from utils .logger import log_command, log_exception 
 
-timezone =pytz .timezone ("Europe/Berlin")
+timezone =pytz .timezone (config.TIMEZONE)
 
 def format_duration (seconds ):
     if seconds is None or seconds <0 :

@@ -11,7 +11,7 @@ import shutil
 import re 
 from utils .logger import log_exception, log_transcript 
 
-timezone =pytz .timezone ("Europe/Berlin")
+timezone =pytz .timezone (config.TIMEZONE)
 
 async def download_file (url ,destination ):
     try :

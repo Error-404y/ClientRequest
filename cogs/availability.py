@@ -18,7 +18,7 @@ from utils.embeds import estimate_response_time, ticket_panel
 from utils.logger import log_exception, log_interaction
 from utils.permissions import is_staff
 
-timezone = pytz.timezone("Europe/Berlin")
+timezone = pytz.timezone(config.TIMEZONE)
 
 STATUS_COLORS = {
     "Available": 0x2ECC71,

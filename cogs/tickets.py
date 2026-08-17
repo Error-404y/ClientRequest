@@ -53,7 +53,7 @@ class Tickets(commands.Cog):
             ctx.guild.id,
             channel.id,
             panel_message.id,
-            datetime.now(pytz.timezone("Europe/Berlin")).isoformat(),
+            datetime.now(pytz.timezone(config.TIMEZONE)).isoformat(),
         )
         log_ticket("Ticket Panel Posted", channel, ctx.author)
         await ctx.send("Ticket panel created.")

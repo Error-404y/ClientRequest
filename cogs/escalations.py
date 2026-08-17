@@ -10,7 +10,7 @@ from utils.database import clear_escalation_event, register_escalation_event
 from utils.logger import log_exception, log_ticket
 from utils.permissions import is_staff
 
-timezone = pytz.timezone("Europe/Berlin")
+timezone = pytz.timezone(config.TIMEZONE)
 
 
 def minutes_since(value, now=None):

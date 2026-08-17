@@ -6,12 +6,15 @@ from datetime import datetime, timedelta
 
 import aiosqlite
 import discord
+import pytz
 from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
 from utils.logger import emit, log_exception, log_performance, redact
 from utils.permissions import is_owner
+
+timezone = pytz.timezone(config.TIMEZONE)
 
 
 def format_uptime(seconds):
@@ -54,7 +57,7 @@ class Diagnostics(commands.Cog):
                 integrity = (await integrity_cursor.fetchone())[0]
                 ticket_cursor = await database.execute("SELECT COUNT(*) FROM tickets WHERE status='open'")
                 open_tickets = (await ticket_cursor.fetchone())[0]
-                error_cursor = await database.execute("SELECT COALESCE(SUM(occurrence_count), 0) FROM error_events WHERE last_seen>=?", ((datetime.now() - timedelta(hours=24)).isoformat(),))
+                error_cursor = await database.execute("SELECT COALESCE(SUM(occurrence_count), 0) FROM error_events WHERE last_seen>=?", ((datetime.now(timezone) - timedelta(hours=24)).isoformat(),))
                 errors_24h = (await error_cursor.fetchone())[0]
             latency = log_performance("database.health", started, threshold_ms=250)
             return {
@@ -91,7 +94,7 @@ class Diagnostics(commands.Cog):
         return dict(zip(keys, row))
 
     async def slow_operations(self):
-        cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
+        cutoff = (datetime.now(timezone) - timedelta(hours=24)).isoformat()
         async with aiosqlite.connect(config.DATABASE) as database:
             count_cursor = await database.execute(
                 "SELECT COUNT(*) FROM performance_events WHERE created_at>=?",
@@ -129,27 +132,35 @@ class Diagnostics(commands.Cog):
     def server_checks(self):
         results = []
         channel_keys = ("TICKET_CATEGORY_ID", "TICKET_PANEL_CHANNEL_ID", "TICKET_ARCHIVE_CATEGORY_ID")
-        permission_names = ("view_channel", "send_messages", "embed_links", "attach_files", "read_message_history", "manage_channels", "manage_roles")
+        permission_names = ("view_channel", "send_messages", "embed_links", "attach_files", "read_message_history")
+        guild_permission_names = ("manage_channels", "ban_members", "kick_members")
         for guild_id, settings in config.GUILDS.items():
             guild = self.bot.get_guild(guild_id)
             issues = []
+            warnings = []
             if guild is None:
-                results.append({"server": settings.get("NAME", str(guild_id)), "issues": ["Bot is not connected"]})
+                results.append({"server": settings.get("NAME", str(guild_id)), "issues": ["Bot is not connected"], "warnings": []})
                 continue
             for key in channel_keys:
                 if guild.get_channel(settings[key]) is None:
                     issues.append(f"Missing {clean_label(key)}")
             role_ids = set(settings["OWNER_ROLES"]) | {settings["MOD_ROLE"], settings["TRIAL_MOD_ROLE"]}
-            for role_id in role_ids:
-                if guild.get_role(role_id) is None:
-                    issues.append(f"Missing staff role {role_id}")
+            available_roles = [role_id for role_id in role_ids if guild.get_role(role_id) is not None]
+            missing_roles = sorted(role_id for role_id in role_ids if guild.get_role(role_id) is None)
+            if not available_roles:
+                issues.append("No configured staff role could be resolved")
+            if missing_roles:
+                warnings.append(f"Stale staff role IDs: {', '.join(str(role_id) for role_id in missing_roles)}")
             if guild.me:
                 panel = guild.get_channel(settings["TICKET_PANEL_CHANNEL_ID"])
                 permissions = panel.permissions_for(guild.me) if panel else guild.me.guild_permissions
                 for permission in permission_names:
                     if not getattr(permissions, permission, False):
                         issues.append(f"Missing {clean_label(permission)} permission")
-            results.append({"server": guild.name, "issues": issues})
+                for permission in guild_permission_names:
+                    if not getattr(guild.me.guild_permissions, permission, False):
+                        issues.append(f"Missing {clean_label(permission)} permission")
+            results.append({"server": guild.name, "issues": issues, "warnings": warnings})
         return results
 
     async def snapshot(self):
@@ -159,6 +170,7 @@ class Diagnostics(commands.Cog):
         slow = await self.slow_operations()
         errors = await self.recent_errors()
         issues = []
+        warnings = []
         if not database["ok"]:
             issues.append(f"Database integrity: {database['integrity']}")
         for worker in workers:
@@ -166,12 +178,14 @@ class Diagnostics(commands.Cog):
                 issues.append(f"{worker['name']}: {worker['status']}")
         for server in servers:
             issues.extend(f"{server['server']}: {item}" for item in server["issues"])
+            warnings.extend(f"{server['server']}: {item}" for item in server["warnings"])
         discord_latency = self.bot.latency * 1000
         if discord_latency >= 750:
             issues.append(f"Discord latency is high: {discord_latency:.1f} ms")
         return {
             "status": "Healthy" if not issues else "Attention Required",
             "issues": issues,
+            "warnings": warnings,
             "database": database,
             "workers": workers,
             "servers": servers,
@@ -204,7 +218,9 @@ class Diagnostics(commands.Cog):
             return
         self.ready_reported = True
         report = await self.snapshot()
-        emit("SUCCESS" if report["status"] == "Healthy" else "WARNING", "HEALTH", f"Startup status: {report['status']} | issues={len(report['issues'])}")
+        emit("SUCCESS" if report["status"] == "Healthy" else "WARNING", "HEALTH", f"Startup status: {report['status']} | issues={len(report['issues'])} | warnings={len(report['warnings'])}")
+        for warning in report["warnings"]:
+            emit("WARNING", "CONFIGURATION", warning)
 
     async def require_owner(self, interaction, message):
         if is_owner(interaction.user):
@@ -224,7 +240,7 @@ class Diagnostics(commands.Cog):
             title=f"{config.BOT_NAME} Operations Status",
             description="All essential systems are being monitored in real time.",
             color=0x2ECC71 if healthy else 0xF0B232,
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone),
         )
         embed.add_field(name="System", value=f"**{report['status']}**", inline=True)
         embed.add_field(name="Discord", value=f"{report['discord_latency_ms']:.1f} ms", inline=True)
@@ -234,6 +250,7 @@ class Diagnostics(commands.Cog):
         embed.add_field(name="Workers", value=f"{running}/{len(report['workers'])} running", inline=True)
         embed.add_field(name="Errors in 24 Hours", value=str(report["database"]["errors_24h"]), inline=True)
         embed.add_field(name="Slow Operations", value=str(report["slow_operations"]["count"]), inline=True)
+        embed.add_field(name="Configuration Warnings", value=str(len(report["warnings"])), inline=True)
         latest = report["recent_errors"][0]["reference"] if report["recent_errors"] else "None"
         embed.add_field(name="Latest Error", value=latest, inline=True)
         embed.set_footer(text=f"{config.BOT_NAME} | Owner operations")
@@ -249,10 +266,12 @@ class Diagnostics(commands.Cog):
             title=f"{config.BOT_NAME} Diagnostic Center",
             description=f"Result: **{report['status']}**\nDetected issues: **{len(report['issues'])}**",
             color=0x2ECC71 if not report["issues"] else 0xF0B232,
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone),
         )
         issue_text = "\n".join(f"{index}. {issue}" for index, issue in enumerate(report["issues"], 1)) or "No operational issues were detected."
         embed.add_field(name="Action Required", value=issue_text[:1024], inline=False)
+        warning_text = "\n".join(f"{index}. {warning}" for index, warning in enumerate(report["warnings"], 1)) or "No configuration warnings were detected."
+        embed.add_field(name="Configuration Warnings", value=warning_text[:1024], inline=False)
         worker_text = "\n".join(f"{worker['name']}: **{worker['status']}**" for worker in report["workers"])
         embed.add_field(name="Background Services", value=worker_text[:1024], inline=False)
         server_text = "\n".join(f"{server['server']}: **{'Ready' if not server['issues'] else f'{len(server['issues'])} issue(s)'}**" for server in report["servers"])
@@ -278,7 +297,7 @@ class Diagnostics(commands.Cog):
             title=f"Error {record['reference']}",
             description=f"**{record['category']} / {record['error_type']}**",
             color=0xED4245,
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone),
         )
         embed.add_field(name="Message", value=redact(record["message"])[:1024] or "Unavailable", inline=False)
         embed.add_field(name="Context", value=redact(record["context"])[:1024] or "No context provided", inline=False)
@@ -297,19 +316,19 @@ class Diagnostics(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         started = time.perf_counter()
         report = await self.snapshot()
-        report["generated_at"] = datetime.now().isoformat()
+        report["generated_at"] = datetime.now(timezone).isoformat()
         report["runtime"] = {"python": platform.python_version(), "discord_py": discord.__version__}
         report["loaded_extensions"] = sorted(self.bot.extensions)
         report["error_details"] = await self.recent_errors(limit=25, full=True)
         payload = redact(json.dumps(report, indent=2, ensure_ascii=False)).encode("utf-8")
-        filename = f"maja-diagnostics-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+        filename = f"maja-diagnostics-{datetime.now(timezone).strftime('%Y%m%d-%H%M%S')}.json"
         file = discord.File(io.BytesIO(payload), filename=filename)
         duration = log_performance("diagnostics.export", started, threshold_ms=1000, guild=interaction.guild)
         embed = discord.Embed(
             title=f"{config.BOT_NAME} Diagnostic Package",
             description="A sanitized technical report is attached for owner review.",
             color=0x5865F2,
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone),
         )
         embed.add_field(name="Status", value=report["status"], inline=True)
         embed.add_field(name="Issues", value=str(len(report["issues"])), inline=True)
