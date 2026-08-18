@@ -169,6 +169,21 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn("Stale staff role IDs", source)
         self.assertIn("No configured staff role could be resolved", source)
 
+    def test_deleted_moonlit_roles_are_not_configured(self):
+        deleted = {
+            1536279648470704149,
+            1536279648470704150,
+            1536279648470704152,
+            1536279648470704153,
+        }
+        guild = config.GUILDS[1536279648428884058]
+        configured = set(guild["OWNER_ROLES"]) | {
+            guild["MOD_ROLE"],
+            guild["TRIAL_MOD_ROLE"],
+            guild["WARN_HISTORY_ROLE_ID"],
+        }
+        self.assertTrue(deleted.isdisjoint(configured))
+
     def test_unban_infractions_include_guild_scope(self):
         source = Path(__file__).resolve().parents[1].joinpath("views", "unban_buttons.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
