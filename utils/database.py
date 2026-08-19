@@ -1501,6 +1501,15 @@ async def register_escalation_event(guild_id, channel_id, event_key, created_at)
         return cursor.rowcount == 1
 
 
+async def escalation_event_exists(guild_id, channel_id, event_key):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT 1 FROM escalation_events WHERE guild_id=? AND channel_id=? AND event_key=? LIMIT 1",
+            (guild_id, channel_id, event_key),
+        )
+        return await cursor.fetchone() is not None
+
+
 async def clear_escalation_event(guild_id, channel_id, event_key):
     async with aiosqlite.connect(config.DATABASE) as db:
         await db.execute(
