@@ -71,6 +71,11 @@ class ConfigurationTests(unittest.TestCase):
         self.assertNotIn("Customer Response Overdue", source)
         self.assertIn('"six_hour_ticket_review"', source)
 
+    def test_update_embed_uses_server_label(self):
+        source = Path(__file__).resolve().parents[1].joinpath("cogs", "updates.py").read_text(encoding="utf-8")
+        self.assertIn('name="Server", value=guild.name', source)
+        self.assertNotIn('name="Environment", value=guild.name', source)
+
     def test_slash_commands_do_not_use_undefined_prefix_context(self):
         source = Path(__file__).resolve().parents[1].joinpath("cogs", "ban.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
