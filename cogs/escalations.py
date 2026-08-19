@@ -8,7 +8,6 @@ from discord.ext import commands, tasks
 import config
 from utils.database import escalation_event_exists, register_escalation_event
 from utils.logger import log_exception, log_ticket
-from utils.permissions import is_staff
 
 timezone = pytz.timezone(config.TIMEZONE)
 
@@ -123,45 +122,15 @@ class Escalations(commands.Cog):
                 return True
         return False
 
-    async def latest_customer_wait(self, channel, user_id, created_at):
-        latest_customer_message = None
-        latest_staff_response = None
-        try:
-            async for message in channel.history(limit=100):
-                if message.author.id == user_id and latest_customer_message is None:
-                    latest_customer_message = message
-                if is_staff(message.author) and latest_staff_response is None:
-                    latest_staff_response = message
-                if latest_customer_message and latest_staff_response:
-                    break
-        except discord.HTTPException as error:
-            log_exception(
-                "ESCALATION",
-                error,
-                guild=channel.guild,
-                channel=channel,
-                user=user_id,
-                context="Failed to inspect ticket history for customer wait",
-            )
-            return None, 0.0
-
-        if latest_customer_message is None:
-            if latest_staff_response:
-                return None, 0.0
-            return "created", minutes_since(created_at)
-        if latest_staff_response and latest_staff_response.created_at > latest_customer_message.created_at:
-            return None, 0.0
-        return str(latest_customer_message.id), minutes_since(latest_customer_message.created_at.isoformat())
-
     @tasks.loop(minutes=5)
     async def audit_escalations(self):
         async with aiosqlite.connect(config.DATABASE) as db:
             cursor = await db.execute(
-                "SELECT channel_id, guild_id, user_id, created_at, claimed_by, priority FROM tickets WHERE status='open'"
+                "SELECT channel_id, guild_id, user_id, created_at, priority FROM tickets WHERE status='open'"
             )
             tickets = await cursor.fetchall()
 
-        for channel_id, guild_id, user_id, created_at, claimed_by, priority in tickets:
+        for channel_id, guild_id, user_id, created_at, priority in tickets:
             guild = self.bot.get_guild(guild_id)
             channel = guild.get_channel(channel_id) if guild else None
             if guild is None or channel is None:
@@ -169,17 +138,14 @@ class Escalations(commands.Cog):
             try:
                 ticket_age_minutes = minutes_since(created_at)
 
-                if (
-                    ticket_age_minutes >= config.NO_STAFF_ESCALATION_HOURS * 60
-                    and not online_staff(guild)
-                ):
+                if ticket_age_minutes >= config.TICKET_REVIEW_ESCALATION_HOURS * 60:
                     await self.send_escalation(
                         guild,
                         channel,
-                        "no_staff_online",
-                        "Staff Coverage Required",
-                        f"This ticket has been open for {config.NO_STAFF_ESCALATION_HOURS} hours while no configured staff member is currently online. This is a one-time coverage notice.",
-                        "Critical",
+                        "six_hour_ticket_review",
+                        "Ticket Review Required",
+                        f"This ticket has remained open for {config.TICKET_REVIEW_ESCALATION_HOURS} hours and requires staff review. This is the only scheduled staff escalation before the 24-hour no-response check.",
+                        "High",
                     )
 
                 no_response_event = "no_response_24h"
@@ -208,16 +174,6 @@ class Escalations(commands.Cog):
                             always_mention_staff=True,
                         )
 
-                if claimed_by is None and ticket_age_minutes >= config.UNCLAIMED_ESCALATION_MINUTES:
-                    await self.send_escalation(
-                        guild,
-                        channel,
-                        "unclaimed",
-                        "Unclaimed Ticket Escalation",
-                        f"This ticket has remained unclaimed for at least {config.UNCLAIMED_ESCALATION_MINUTES} minutes.",
-                        "High",
-                    )
-
                 if str(priority).lower() == "high":
                     await self.send_escalation(
                         guild,
@@ -228,16 +184,6 @@ class Escalations(commands.Cog):
                         "Critical",
                     )
 
-                wait_key, wait_minutes = await self.latest_customer_wait(channel, user_id, created_at)
-                if wait_key and wait_minutes >= config.CUSTOMER_WAIT_ESCALATION_MINUTES:
-                    await self.send_escalation(
-                        guild,
-                        channel,
-                        f"customer_wait:{wait_key}",
-                        "Customer Response Overdue",
-                        f"The customer has been waiting for a staff response for at least {config.CUSTOMER_WAIT_ESCALATION_MINUTES} minutes.",
-                        "High",
-                    )
             except Exception as error:
                 log_exception("ESCALATION", error, guild=guild, channel=channel, context="Ticket escalation audit failed")
 
