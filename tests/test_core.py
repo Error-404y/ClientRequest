@@ -64,8 +64,12 @@ class ConfigurationTests(unittest.TestCase):
         self.assertGreaterEqual(minutes_since(value, now), 31)
 
     def test_ticket_coverage_timing(self):
-        self.assertEqual(config.NO_STAFF_ESCALATION_HOURS, 6)
+        self.assertEqual(config.TICKET_REVIEW_ESCALATION_HOURS, 6)
         self.assertEqual(config.NO_RESPONSE_ESCALATION_HOURS, 24)
+        source = Path(__file__).resolve().parents[1].joinpath("cogs", "escalations.py").read_text(encoding="utf-8")
+        self.assertNotIn("Unclaimed Ticket Escalation", source)
+        self.assertNotIn("Customer Response Overdue", source)
+        self.assertIn('"six_hour_ticket_review"', source)
 
     def test_slash_commands_do_not_use_undefined_prefix_context(self):
         source = Path(__file__).resolve().parents[1].joinpath("cogs", "ban.py").read_text(encoding="utf-8")
