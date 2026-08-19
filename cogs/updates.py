@@ -50,7 +50,7 @@ class Updates(commands.Cog):
         icon_url = self.bot.user.display_avatar.url if self.bot.user else None
         embed.set_author(name=f"{config.BOT_NAME} | System Operations", icon_url=icon_url)
         embed.add_field(name="Current Status", value=f"**{style['label']}**", inline=True)
-        embed.add_field(name="Environment", value=guild.name, inline=True)
+        embed.add_field(name="Server", value=guild.name, inline=True)
         embed.add_field(name="Published By", value=f"{interaction.user.display_name}\n`{interaction.user.id}`", inline=True)
         if expected_time:
             embed.add_field(name="Expected Timeline", value=expected_time, inline=False)
