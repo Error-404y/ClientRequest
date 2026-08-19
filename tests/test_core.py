@@ -15,6 +15,7 @@ from utils.database import (
     claim_ticket,
     close_ticket,
     create_ticket_record,
+    escalation_event_exists,
     get_available_staff_count,
     get_next_ticket_number,
     get_staff_availability,
@@ -61,6 +62,10 @@ class ConfigurationTests(unittest.TestCase):
         now = datetime.now(zone)
         value = (now - timedelta(minutes=31)).isoformat()
         self.assertGreaterEqual(minutes_since(value, now), 31)
+
+    def test_ticket_coverage_timing(self):
+        self.assertEqual(config.NO_STAFF_ESCALATION_HOURS, 6)
+        self.assertEqual(config.NO_RESPONSE_ESCALATION_HOURS, 24)
 
     def test_slash_commands_do_not_use_undefined_prefix_context(self):
         source = Path(__file__).resolve().parents[1].joinpath("cogs", "ban.py").read_text(encoding="utf-8")
@@ -257,6 +262,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         created_at = datetime.now().isoformat()
         self.assertTrue(await register_escalation_event(guild_id, 100, "unclaimed", created_at))
         self.assertFalse(await register_escalation_event(guild_id, 100, "unclaimed", created_at))
+        self.assertTrue(await escalation_event_exists(guild_id, 100, "unclaimed"))
 
     async def test_repeated_errors_share_reference(self):
         references = []
