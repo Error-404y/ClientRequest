@@ -80,9 +80,14 @@ class Inactivity(commands.Cog):
                 continue
 
             last_activity = None
+            human_activity = False
             try:
-                async for message in channel.history(limit=1):
-                    last_activity = message.created_at.astimezone(timezone)
+                async for message in channel.history(limit=None):
+                    if last_activity is None:
+                        last_activity = message.created_at.astimezone(timezone)
+                    if not message.author.bot:
+                        human_activity = True
+                        break
             except discord.HTTPException as error:
                 log_exception(
                     "INACTIVITY",
@@ -99,6 +104,9 @@ class Inactivity(commands.Cog):
                     inactive_hours = 0.0
             else:
                 inactive_hours = (datetime.now(timezone) - last_activity).total_seconds() / 3600.0
+
+            if not human_activity and hours_since(created_at) >= config.NO_RESPONSE_ESCALATION_HOURS:
+                continue
 
             if inactive_hours < config.INACTIVITY_WARN_HOURS:
                 continue

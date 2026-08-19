@@ -6,7 +6,7 @@ import pytz
 from discord.ext import commands, tasks
 
 import config
-from utils.database import clear_escalation_event, register_escalation_event
+from utils.database import escalation_event_exists, register_escalation_event
 from utils.logger import log_exception, log_ticket
 from utils.permissions import is_staff
 
@@ -58,14 +58,34 @@ class Escalations(commands.Cog):
     def cog_unload(self):
         self.audit_escalations.cancel()
 
-    async def send_escalation(self, guild, channel, event_key, title, description, severity):
+    async def send_escalation(
+        self,
+        guild,
+        channel,
+        event_key,
+        title,
+        description,
+        severity,
+        user_id=None,
+        always_mention_staff=False,
+    ):
         created_at = datetime.now(timezone).isoformat()
         registered = await register_escalation_event(guild.id, channel.id, event_key, created_at)
         if not registered:
             return False
 
         active_staff = online_staff(guild)
-        role_mentions = unavailable_staff_mentions(guild)
+        role_mentions = (
+            " ".join(
+                role.mention
+                for role_id in staff_role_ids(guild.id)
+                if (role := guild.get_role(role_id)) is not None
+            )
+            if always_mention_staff
+            else unavailable_staff_mentions(guild)
+        )
+        user_mention = f"<@{user_id}>" if user_id else ""
+        notification_content = " ".join(value for value in (user_mention, role_mentions) if value)
         color = 0xED4245 if severity == "Critical" else 0xF0B232
         embed = discord.Embed(title=title, description=description, color=color, timestamp=datetime.now(timezone))
         embed.add_field(name="Severity", value=severity, inline=True)
@@ -77,9 +97,13 @@ class Escalations(commands.Cog):
 
         try:
             await channel.send(
-                content=role_mentions or None,
+                content=notification_content or None,
                 embed=embed,
-                allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
+                allowed_mentions=discord.AllowedMentions(
+                    roles=bool(role_mentions),
+                    users=bool(user_mention),
+                    everyone=False,
+                ),
             )
         except discord.HTTPException:
             async with aiosqlite.connect(config.DATABASE) as db:
@@ -92,6 +116,12 @@ class Escalations(commands.Cog):
 
         log_ticket(title, channel, details=f"Event: {event_key}, Online staff: {len(active_staff)}")
         return True
+
+    async def has_human_response(self, channel):
+        async for message in channel.history(limit=None, oldest_first=True):
+            if not message.author.bot:
+                return True
+        return False
 
     async def latest_customer_wait(self, channel, user_id, created_at):
         latest_customer_message = None
@@ -137,19 +167,48 @@ class Escalations(commands.Cog):
             if guild is None or channel is None:
                 continue
             try:
-                if not online_staff(guild):
+                ticket_age_minutes = minutes_since(created_at)
+
+                if (
+                    ticket_age_minutes >= config.NO_STAFF_ESCALATION_HOURS * 60
+                    and not online_staff(guild)
+                ):
                     await self.send_escalation(
                         guild,
                         channel,
                         "no_staff_online",
                         "Staff Coverage Required",
-                        "This ticket is open while no configured staff member is currently online.",
+                        f"This ticket has been open for {config.NO_STAFF_ESCALATION_HOURS} hours while no configured staff member is currently online. This is a one-time coverage notice.",
                         "Critical",
                     )
-                else:
-                    await clear_escalation_event(guild.id, channel.id, "no_staff_online")
 
-                if claimed_by is None and minutes_since(created_at) >= config.UNCLAIMED_ESCALATION_MINUTES:
+                no_response_event = "no_response_24h"
+                response_checked_event = "response_present_24h"
+                if (
+                    ticket_age_minutes >= config.NO_RESPONSE_ESCALATION_HOURS * 60
+                    and not await escalation_event_exists(guild.id, channel.id, no_response_event)
+                    and not await escalation_event_exists(guild.id, channel.id, response_checked_event)
+                ):
+                    if await self.has_human_response(channel):
+                        await register_escalation_event(
+                            guild.id,
+                            channel.id,
+                            response_checked_event,
+                            datetime.now(timezone).isoformat(),
+                        )
+                    else:
+                        await self.send_escalation(
+                            guild,
+                            channel,
+                            no_response_event,
+                            "24-Hour Response Required",
+                            f"No participant has responded within {config.NO_RESPONSE_ESCALATION_HOURS} hours of this ticket being opened. The ticket owner and configured staff roles must review this ticket.",
+                            "Critical",
+                            user_id=user_id,
+                            always_mention_staff=True,
+                        )
+
+                if claimed_by is None and ticket_age_minutes >= config.UNCLAIMED_ESCALATION_MINUTES:
                     await self.send_escalation(
                         guild,
                         channel,
