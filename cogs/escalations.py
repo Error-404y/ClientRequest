@@ -52,6 +52,7 @@ class Escalations(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.audit_escalations.change_interval(minutes=config.ESCALATION_SCAN_MINUTES)
+        self.audit_escalations.add_exception_type(aiosqlite.Error)
         self.audit_escalations.start()
 
     def cog_unload(self):
@@ -69,7 +70,9 @@ class Escalations(commands.Cog):
         always_mention_staff=False,
     ):
         created_at = datetime.now(timezone).isoformat()
-        registered = await register_escalation_event(guild.id, channel.id, event_key, created_at)
+        registered = await register_escalation_event(
+            guild.id, channel.id, event_key, created_at
+        )
         if not registered:
             return False
 
@@ -84,14 +87,29 @@ class Escalations(commands.Cog):
             else unavailable_staff_mentions(guild)
         )
         user_mention = f"<@{user_id}>" if user_id else ""
-        notification_content = " ".join(value for value in (user_mention, role_mentions) if value)
+        notification_content = " ".join(
+            value for value in (user_mention, role_mentions) if value
+        )
         color = 0xED4245 if severity == "Critical" else 0xF0B232
-        embed = discord.Embed(title=title, description=description, color=color, timestamp=datetime.now(timezone))
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color,
+            timestamp=datetime.now(timezone),
+        )
         embed.add_field(name="Severity", value=severity, inline=True)
         embed.add_field(name="Online Staff", value=str(len(active_staff)), inline=True)
-        embed.add_field(name="Required Action", value="Review, claim, and respond to this ticket as soon as possible.", inline=False)
+        embed.add_field(
+            name="Required Action",
+            value="Review, claim, and respond to this ticket as soon as possible.",
+            inline=False,
+        )
         if not active_staff:
-            embed.add_field(name="Staff Coverage", value="No online staff member was detected. Configured staff roles have been notified.", inline=False)
+            embed.add_field(
+                name="Staff Coverage",
+                value="No online staff member was detected. Configured staff roles have been notified.",
+                inline=False,
+            )
         embed.set_footer(text=f"{config.BOT_NAME} | Automated Escalation")
 
         try:
@@ -113,7 +131,11 @@ class Escalations(commands.Cog):
                 await db.commit()
             raise
 
-        log_ticket(title, channel, details=f"Event: {event_key}, Online staff: {len(active_staff)}")
+        log_ticket(
+            title,
+            channel,
+            details=f"Event: {event_key}, Online staff: {len(active_staff)}",
+        )
         return True
 
     async def has_human_response(self, channel):
@@ -152,8 +174,12 @@ class Escalations(commands.Cog):
                 response_checked_event = "response_present_24h"
                 if (
                     ticket_age_minutes >= config.NO_RESPONSE_ESCALATION_HOURS * 60
-                    and not await escalation_event_exists(guild.id, channel.id, no_response_event)
-                    and not await escalation_event_exists(guild.id, channel.id, response_checked_event)
+                    and not await escalation_event_exists(
+                        guild.id, channel.id, no_response_event
+                    )
+                    and not await escalation_event_exists(
+                        guild.id, channel.id, response_checked_event
+                    )
                 ):
                     if await self.has_human_response(channel):
                         await register_escalation_event(
@@ -185,11 +211,23 @@ class Escalations(commands.Cog):
                     )
 
             except Exception as error:
-                log_exception("ESCALATION", error, guild=guild, channel=channel, context="Ticket escalation audit failed")
+                log_exception(
+                    "ESCALATION",
+                    error,
+                    guild=guild,
+                    channel=channel,
+                    context="Ticket escalation audit failed",
+                )
 
     @audit_escalations.before_loop
     async def before_audit_escalations(self):
         await self.bot.wait_until_ready()
+
+    @audit_escalations.error
+    async def audit_escalations_error(self, error):
+        log_exception(
+            "ESCALATION", error, context="Escalation background worker stopped"
+        )
 
 
 async def setup(bot):

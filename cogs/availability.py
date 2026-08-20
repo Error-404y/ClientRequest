@@ -10,8 +10,8 @@ from utils.database import (
     get_available_staff_count,
     get_staff_availability,
     get_ticket_panels,
-    remove_ticket_panel,
     register_ticket_panel,
+    remove_ticket_panel,
     set_staff_availability,
 )
 from utils.embeds import estimate_response_time, ticket_panel
@@ -48,7 +48,11 @@ class Availability(commands.Cog):
             return
         try:
             async for message in channel.history(limit=100):
-                if self.bot.user and message.author.id == self.bot.user.id and self.is_ticket_panel_message(message):
+                if (
+                    self.bot.user
+                    and message.author.id == self.bot.user.id
+                    and self.is_ticket_panel_message(message)
+                ):
                     await register_ticket_panel(
                         guild.id,
                         channel.id,
@@ -56,7 +60,13 @@ class Availability(commands.Cog):
                         message.created_at.astimezone(timezone).isoformat(),
                     )
         except discord.HTTPException as error:
-            log_exception("AVAILABILITY", error, guild=guild, channel=channel, context="Ticket panel discovery failed")
+            log_exception(
+                "AVAILABILITY",
+                error,
+                guild=guild,
+                channel=channel,
+                context="Ticket panel discovery failed",
+            )
 
     async def refresh_ticket_panels(self, guild):
         available_staff = await get_available_staff_count(guild.id)
@@ -86,11 +96,19 @@ class Availability(commands.Cog):
             except discord.NotFound:
                 await remove_ticket_panel(guild.id, panel["message_id"])
             except discord.HTTPException as error:
-                log_exception("AVAILABILITY", error, guild=guild, channel=channel, context="Ticket panel refresh failed")
+                log_exception(
+                    "AVAILABILITY",
+                    error,
+                    guild=guild,
+                    channel=channel,
+                    context="Ticket panel refresh failed",
+                )
 
         return refreshed, available_staff, response_time
 
-    @app_commands.command(name="availability", description="Set your current ticket-support availability")
+    @app_commands.command(
+        name="availability", description="Set your current ticket-support availability"
+    )
     @app_commands.describe(status="Your current availability for ticket assignments")
     @app_commands.choices(
         status=[
@@ -102,12 +120,21 @@ class Availability(commands.Cog):
             app_commands.Choice(name="Offline", value="Offline"),
         ]
     )
-    async def availability(self, interaction: discord.Interaction, status: app_commands.Choice[str]):
-        if interaction.guild is None or not config.is_guild_configured(interaction.guild.id):
-            await interaction.response.send_message("This command can only be used in a configured server.", ephemeral=True)
+    async def availability(
+        self, interaction: discord.Interaction, status: app_commands.Choice[str]
+    ):
+        if interaction.guild is None or not config.is_guild_configured(
+            interaction.guild.id
+        ):
+            await interaction.response.send_message(
+                "This command can only be used in a configured server.", ephemeral=True
+            )
             return
         if not is_staff(interaction.user):
-            await interaction.response.send_message("You do not have permission to update staff availability.", ephemeral=True)
+            await interaction.response.send_message(
+                "You do not have permission to update staff availability.",
+                ephemeral=True,
+            )
             return
 
         await interaction.response.defer(ephemeral=True)
@@ -117,7 +144,9 @@ class Availability(commands.Cog):
             status.value,
             datetime.now(timezone).isoformat(),
         )
-        refreshed, available_staff, response_time = await self.refresh_ticket_panels(interaction.guild)
+        refreshed, available_staff, response_time = await self.refresh_ticket_panels(
+            interaction.guild
+        )
         log_interaction(
             interaction.user,
             "availability",
@@ -131,23 +160,40 @@ class Availability(commands.Cog):
             color=STATUS_COLORS[status.value],
         )
         embed.add_field(name="Your Status", value=f"**{status.value}**", inline=True)
-        embed.add_field(name="Available Staff", value=f"**{available_staff}**", inline=True)
-        embed.add_field(name="Estimated Response", value=f"**{response_time}**", inline=True)
-        embed.add_field(name="Ticket Panels Refreshed", value=str(refreshed), inline=False)
+        embed.add_field(
+            name="Available Staff", value=f"**{available_staff}**", inline=True
+        )
+        embed.add_field(
+            name="Estimated Response", value=f"**{response_time}**", inline=True
+        )
+        embed.add_field(
+            name="Ticket Panels Refreshed", value=str(refreshed), inline=False
+        )
         embed.set_footer(text=f"{config.BOT_NAME} | Staff Operations")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="availabilitylist", description="Display the current ticket-support availability team")
+    @app_commands.command(
+        name="availabilitylist",
+        description="Display the current ticket-support availability team",
+    )
     async def availabilitylist(self, interaction: discord.Interaction):
-        if interaction.guild is None or not config.is_guild_configured(interaction.guild.id):
-            await interaction.response.send_message("This command can only be used in a configured server.", ephemeral=True)
+        if interaction.guild is None or not config.is_guild_configured(
+            interaction.guild.id
+        ):
+            await interaction.response.send_message(
+                "This command can only be used in a configured server.", ephemeral=True
+            )
             return
         if not is_staff(interaction.user):
-            await interaction.response.send_message("You do not have permission to view staff availability.", ephemeral=True)
+            await interaction.response.send_message(
+                "You do not have permission to view staff availability.", ephemeral=True
+            )
             return
 
         records = await get_staff_availability(interaction.guild.id)
-        available_staff = sum(1 for record in records if record["status"] == "Available")
+        available_staff = sum(
+            1 for record in records if record["status"] == "Available"
+        )
         embed = discord.Embed(
             title=f"{config.BOT_NAME} Staff Availability",
             description=f"Available staff: **{available_staff}**\nEstimated response time: **{estimate_response_time(available_staff)}**",
@@ -155,14 +201,20 @@ class Availability(commands.Cog):
         )
 
         if not records:
-            embed.add_field(name="Current Team", value="No staff availability has been submitted yet.", inline=False)
+            embed.add_field(
+                name="Current Team",
+                value="No staff availability has been submitted yet.",
+                inline=False,
+            )
         else:
             lines = []
             for record in records:
                 member = interaction.guild.get_member(record["user_id"])
                 name = member.mention if member else f"User `{record['user_id']}`"
                 lines.append(f"{name} — **{record['status']}**")
-            embed.add_field(name="Current Team", value="\n".join(lines)[:1024], inline=False)
+            embed.add_field(
+                name="Current Team", value="\n".join(lines)[:1024], inline=False
+            )
 
         embed.set_footer(text=f"{config.BOT_NAME} | Staff Operations")
         await interaction.response.send_message(embed=embed, ephemeral=True)

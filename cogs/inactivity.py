@@ -25,6 +25,7 @@ def hours_since(value, now=None):
 class Inactivity(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.check_inactivity.add_exception_type(aiosqlite.Error)
         self.check_inactivity.start()
 
     def cog_unload(self):
@@ -42,7 +43,9 @@ class Inactivity(commands.Cog):
         for channel_id, guild_id, user_id, warned, created_at, warned_at in rows:
             guild = self.bot.get_guild(guild_id)
             if guild is None:
-                log_inactivity("Configured guild is unavailable", details=f"Guild ID: {guild_id}")
+                log_inactivity(
+                    "Configured guild is unavailable", details=f"Guild ID: {guild_id}"
+                )
                 continue
 
             channel = guild.get_channel(channel_id)
@@ -53,7 +56,10 @@ class Inactivity(commands.Cog):
                         (datetime.now(timezone).isoformat(), channel_id, guild_id),
                     )
                     await db.commit()
-                log_inactivity("Missing channel marked deleted", details=f"Guild ID: {guild_id}, Channel ID: {channel_id}")
+                log_inactivity(
+                    "Missing channel marked deleted",
+                    details=f"Guild ID: {guild_id}, Channel ID: {channel_id}",
+                )
                 continue
 
             if warned:
@@ -103,9 +109,14 @@ class Inactivity(commands.Cog):
                 except (TypeError, ValueError):
                     inactive_hours = 0.0
             else:
-                inactive_hours = (datetime.now(timezone) - last_activity).total_seconds() / 3600.0
+                inactive_hours = (
+                    datetime.now(timezone) - last_activity
+                ).total_seconds() / 3600.0
 
-            if not human_activity and hours_since(created_at) >= config.NO_RESPONSE_ESCALATION_HOURS:
+            if (
+                not human_activity
+                and hours_since(created_at) >= config.NO_RESPONSE_ESCALATION_HOURS
+            ):
                 continue
 
             if inactive_hours < config.INACTIVITY_WARN_HOURS:
@@ -156,11 +167,22 @@ class Inactivity(commands.Cog):
                     (warned_at_value, channel_id, guild_id),
                 )
                 await db.commit()
-            log_inactivity("Issued inactivity warning", channel, applicant, details=f"Inactive hours: {inactive_hours:.1f}")
+            log_inactivity(
+                "Issued inactivity warning",
+                channel,
+                applicant,
+                details=f"Inactive hours: {inactive_hours:.1f}",
+            )
 
     @check_inactivity.before_loop
     async def before_check_inactivity(self):
         await self.bot.wait_until_ready()
+
+    @check_inactivity.error
+    async def check_inactivity_error(self, error):
+        log_exception(
+            "INACTIVITY", error, context="Inactivity background worker stopped"
+        )
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -178,7 +200,9 @@ class Inactivity(commands.Cog):
                     (message.channel.id, message.guild.id),
                 )
                 await db.commit()
-                log_inactivity("Reset inactivity state", message.channel, message.author)
+                log_inactivity(
+                    "Reset inactivity state", message.channel, message.author
+                )
 
 
 async def setup(bot):

@@ -39,7 +39,9 @@ class Updates(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    def build_embed(self, guild, interaction, status, headline, details, expected_time, next_step):
+    def build_embed(
+        self, guild, interaction, status, headline, details, expected_time, next_step
+    ):
         style = STATUS_STYLES[status]
         embed = discord.Embed(
             title=headline,
@@ -48,10 +50,18 @@ class Updates(commands.Cog):
             timestamp=datetime.now(timezone),
         )
         icon_url = self.bot.user.display_avatar.url if self.bot.user else None
-        embed.set_author(name=f"{config.BOT_NAME} | System Operations", icon_url=icon_url)
-        embed.add_field(name="Current Status", value=f"**{style['label']}**", inline=True)
+        embed.set_author(
+            name=f"{config.BOT_NAME} | System Operations", icon_url=icon_url
+        )
+        embed.add_field(
+            name="Current Status", value=f"**{style['label']}**", inline=True
+        )
         embed.add_field(name="Server", value=guild.name, inline=True)
-        embed.add_field(name="Published By", value=f"{interaction.user.display_name}\n`{interaction.user.id}`", inline=True)
+        embed.add_field(
+            name="Published By",
+            value=f"{interaction.user.display_name}\n`{interaction.user.id}`",
+            inline=True,
+        )
         if expected_time:
             embed.add_field(name="Expected Timeline", value=expected_time, inline=False)
         if next_step:
@@ -91,15 +101,25 @@ class Updates(commands.Cog):
                 return channel
 
         for channel in guild.text_channels:
-            bot_member =guild.me or (guild.get_member(self.bot.user.id) if self.bot.user else None)
+            bot_member = guild.me or (
+                guild.get_member(self.bot.user.id) if self.bot.user else None
+            )
             if bot_member is None:
                 continue
             permissions = channel.permissions_for(bot_member)
-            if not permissions.view_channel or not permissions.read_message_history or not permissions.send_messages:
+            if (
+                not permissions.view_channel
+                or not permissions.read_message_history
+                or not permissions.send_messages
+            ):
                 continue
             try:
                 async for message in channel.history(limit=100):
-                    if self.bot.user and message.author.id == self.bot.user.id and self.message_contains_ticket_panel(message):
+                    if (
+                        self.bot.user
+                        and message.author.id == self.bot.user.id
+                        and self.message_contains_ticket_panel(message)
+                    ):
                         return channel
             except discord.HTTPException as error:
                 log_exception(
@@ -112,7 +132,10 @@ class Updates(commands.Cog):
                 continue
         return None
 
-    @app_commands.command(name="updatez", description="Publish a professional update to this server's ticket panel")
+    @app_commands.command(
+        name="updatez",
+        description="Publish a professional update to this server's ticket panel",
+    )
     @app_commands.describe(
         status="Current stage of the update",
         headline="Short title describing the update",
@@ -137,22 +160,38 @@ class Updates(commands.Cog):
         expected_time: app_commands.Range[str, 2, 100] | None = None,
         next_step: app_commands.Range[str, 3, 300] | None = None,
     ):
-        log_interaction(interaction.user, "updatez", interaction.channel, details=f"Global status: {status.value}")
+        log_interaction(
+            interaction.user,
+            "updatez",
+            interaction.channel,
+            details=f"Global status: {status.value}",
+        )
 
         if interaction.guild is None:
-            await interaction.response.send_message("This command can only be used inside a configured server.", ephemeral=True)
+            await interaction.response.send_message(
+                "This command can only be used inside a configured server.",
+                ephemeral=True,
+            )
             return
         if not config.is_guild_configured(interaction.guild.id):
-            await interaction.response.send_message("This server is not configured. Run `/setup start` first.", ephemeral=True)
+            await interaction.response.send_message(
+                "This server is not configured. Run `/setup start` first.",
+                ephemeral=True,
+            )
             return
         if not is_staff(interaction.user):
-            await interaction.response.send_message("You do not have permission to publish server updates.", ephemeral=True)
+            await interaction.response.send_message(
+                "You do not have permission to publish server updates.", ephemeral=True
+            )
             return
 
         await interaction.response.defer(ephemeral=True)
         panel_channel = await self.resolve_panel_channel(interaction.guild)
         if panel_channel is None:
-            await interaction.followup.send("No accessible ticket panel was found. Run `/setup repair`.", ephemeral=True)
+            await interaction.followup.send(
+                "No accessible ticket panel was found. Run `/setup repair`.",
+                ephemeral=True,
+            )
             return
 
         embed = self.build_embed(
@@ -167,8 +206,18 @@ class Updates(commands.Cog):
         try:
             message = await panel_channel.send(embed=embed)
         except discord.HTTPException as error:
-            reference = log_exception("UPDATE", error, guild=interaction.guild, channel=panel_channel, user=interaction.user, context="Server update publish failed")
-            await interaction.followup.send(f"The update could not be published. Error reference: `{reference}`", ephemeral=True)
+            reference = log_exception(
+                "UPDATE",
+                error,
+                guild=interaction.guild,
+                channel=panel_channel,
+                user=interaction.user,
+                context="Server update publish failed",
+            )
+            await interaction.followup.send(
+                f"The update could not be published. Error reference: `{reference}`",
+                ephemeral=True,
+            )
             return
 
         log_ticket(
@@ -177,7 +226,9 @@ class Updates(commands.Cog):
             interaction.user,
             details=f"Status: {status.value}, Message ID: {message.id}, Guild ID: {interaction.guild.id}",
         )
-        await interaction.followup.send(f"Update published successfully in {panel_channel.mention}.", ephemeral=True)
+        await interaction.followup.send(
+            f"Update published successfully in {panel_channel.mention}.", ephemeral=True
+        )
 
 
 async def setup(bot):

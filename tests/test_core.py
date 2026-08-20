@@ -9,9 +9,15 @@ import aiosqlite
 import pytz
 
 import config
-from cogs.inactivity import hours_since
+from cogs.diagnostics import Diagnostics
 from cogs.escalations import minutes_since
-from cogs.onboarding import parse_ticket_options, public_install_permissions, resource_report, setup_permission_report
+from cogs.inactivity import hours_since
+from cogs.onboarding import (
+    parse_ticket_options,
+    public_install_permissions,
+    resource_report,
+    setup_permission_report,
+)
 from utils.database import (
     add_setup_admin,
     claim_ticket,
@@ -25,10 +31,11 @@ from utils.database import (
     get_staff_availability,
     get_ticket_by_uuid,
     get_ticket_panels,
-    register_ticket_panel,
     register_escalation_event,
-    remove_setup_admin,
+    register_ticket_panel,
     remove_infraction_by_uuid,
+    remove_setup_admin,
+    remove_user_warning,
     reset_guild_settings,
     save_guild_settings,
     set_staff_availability,
@@ -40,6 +47,36 @@ from utils.permissions import can_manage_setup_admins, can_setup
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_public_config_contains_no_embedded_discord_ids(self):
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("config.py")
+            .read_text(encoding="utf-8")
+        )
+        tree = ast.parse(source)
+        embedded_ids = [
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, int)
+            and node.value >= 10**16
+        ]
+        self.assertEqual(embedded_ids, [])
+
+    def test_obsolete_duplicate_modules_are_removed(self):
+        root = Path(__file__).resolve().parents[1]
+        obsolete = [
+            root.joinpath("monitor_logging.py"),
+            root.joinpath("cogs", "buttons.py"),
+            root.joinpath("cogs", "logging.py"),
+            root.joinpath("cogs", "owner.py"),
+            root.joinpath("cogs", "panel.py"),
+            root.joinpath("cogs", "setup.py"),
+        ]
+        self.assertTrue(all(not path.exists() for path in obsolete))
+
     def test_unknown_guild_is_rejected(self):
         with self.assertRaises(ValueError):
             config.get_guild_config(1)
@@ -64,8 +101,12 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(claimed.title, "Your Ticket Is Now Under Review")
         self.assertEqual(closed.title, "Your Ticket Has Been Closed")
         self.assertIn("Testing", [field.value for field in closed.fields])
-        self.assertIn("#high-partnership-002", [field.value for field in claimed.fields])
-        self.assertTrue(any("Attached to this message" in field.value for field in closed.fields))
+        self.assertIn(
+            "#high-partnership-002", [field.value for field in claimed.fields]
+        )
+        self.assertTrue(
+            any("Attached to this message" in field.value for field in closed.fields)
+        )
 
     def test_escalation_age(self):
         zone = pytz.timezone(config.TIMEZONE)
@@ -76,18 +117,32 @@ class ConfigurationTests(unittest.TestCase):
     def test_ticket_coverage_timing(self):
         self.assertEqual(config.TICKET_REVIEW_ESCALATION_HOURS, 6)
         self.assertEqual(config.NO_RESPONSE_ESCALATION_HOURS, 24)
-        source = Path(__file__).resolve().parents[1].joinpath("cogs", "escalations.py").read_text(encoding="utf-8")
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("cogs", "escalations.py")
+            .read_text(encoding="utf-8")
+        )
         self.assertNotIn("Unclaimed Ticket Escalation", source)
         self.assertNotIn("Customer Response Overdue", source)
         self.assertIn('"six_hour_ticket_review"', source)
 
     def test_update_embed_uses_server_label(self):
-        source = Path(__file__).resolve().parents[1].joinpath("cogs", "updates.py").read_text(encoding="utf-8")
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("cogs", "updates.py")
+            .read_text(encoding="utf-8")
+        )
         self.assertIn('name="Server", value=guild.name', source)
         self.assertNotIn('name="Environment", value=guild.name', source)
 
     def test_public_setup_ticket_option_parser(self):
-        self.assertEqual(parse_ticket_options("Support, Reports, support"), ["Support", "Reports"])
+        self.assertEqual(
+            parse_ticket_options("Support, Reports, support"), ["Support", "Reports"]
+        )
         self.assertEqual(parse_ticket_options(None), config.DEFAULT_TICKET_OPTIONS)
 
     def test_setup_permission_report(self):
@@ -102,17 +157,40 @@ class ConfigurationTests(unittest.TestCase):
         )
         guild = SimpleNamespace(me=SimpleNamespace(guild_permissions=permissions))
         self.assertEqual(setup_permission_report(guild), ["Attach Files"])
-        self.assertEqual(setup_permission_report(guild, needs_role_creation=True), ["Attach Files", "Manage Roles"])
+        self.assertEqual(
+            setup_permission_report(guild, needs_role_creation=True),
+            ["Attach Files", "Manage Roles"],
+        )
 
     def test_setup_access_owner_discord_admin_and_delegate(self):
         guild_id = 888888888888888888
         config.register_guild_config(guild_id, {"SETUP_ADMIN_USERS": [30]})
         guild = SimpleNamespace(id=guild_id, owner_id=10)
-        owner = SimpleNamespace(id=10, guild=guild, guild_permissions=SimpleNamespace(administrator=False, manage_guild=False))
-        administrator = SimpleNamespace(id=20, guild=guild, guild_permissions=SimpleNamespace(administrator=True, manage_guild=False))
-        delegate = SimpleNamespace(id=30, guild=guild, guild_permissions=SimpleNamespace(administrator=False, manage_guild=False))
-        manager = SimpleNamespace(id=35, guild=guild, guild_permissions=SimpleNamespace(administrator=False, manage_guild=True))
-        denied = SimpleNamespace(id=40, guild=guild, guild_permissions=SimpleNamespace(administrator=False, manage_guild=False))
+        owner = SimpleNamespace(
+            id=10,
+            guild=guild,
+            guild_permissions=SimpleNamespace(administrator=False, manage_guild=False),
+        )
+        administrator = SimpleNamespace(
+            id=20,
+            guild=guild,
+            guild_permissions=SimpleNamespace(administrator=True, manage_guild=False),
+        )
+        delegate = SimpleNamespace(
+            id=30,
+            guild=guild,
+            guild_permissions=SimpleNamespace(administrator=False, manage_guild=False),
+        )
+        manager = SimpleNamespace(
+            id=35,
+            guild=guild,
+            guild_permissions=SimpleNamespace(administrator=False, manage_guild=True),
+        )
+        denied = SimpleNamespace(
+            id=40,
+            guild=guild,
+            guild_permissions=SimpleNamespace(administrator=False, manage_guild=False),
+        )
         self.assertTrue(can_setup(owner))
         self.assertTrue(can_setup(administrator))
         self.assertTrue(can_setup(delegate))
@@ -121,7 +199,23 @@ class ConfigurationTests(unittest.TestCase):
         self.assertTrue(can_manage_setup_admins(owner))
         self.assertFalse(can_manage_setup_admins(administrator))
         self.assertFalse(can_manage_setup_admins(delegate))
+        from utils.permissions import is_staff
+
+        self.assertTrue(is_staff(owner))
+        self.assertTrue(is_staff(administrator))
+        self.assertTrue(is_staff(delegate))
         config.remove_guild_config(guild_id)
+
+    def test_runtime_prevents_duplicate_bot_instances(self):
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("main.py")
+            .read_text(encoding="utf-8")
+        )
+        self.assertIn("acquire_instance_lock()", source)
+        self.assertIn("fcntl.LOCK_EX | fcntl.LOCK_NB", source)
 
     def test_public_install_never_requests_administrator(self):
         permissions = public_install_permissions()
@@ -130,7 +224,9 @@ class ConfigurationTests(unittest.TestCase):
         self.assertTrue(permissions.embed_links)
 
     def test_setup_resource_report_detects_missing_resources(self):
-        guild = SimpleNamespace(get_channel=lambda resource_id: None, get_role=lambda role_id: None)
+        guild = SimpleNamespace(
+            get_channel=lambda resource_id: None, get_role=lambda role_id: None
+        )
         issues = resource_report(
             guild,
             {
@@ -145,22 +241,58 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(len(issues), 5)
 
     def test_setup_creates_dedicated_ticket_system_location(self):
-        source = Path(__file__).resolve().parents[1].joinpath("cogs", "onboarding.py").read_text(encoding="utf-8")
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("cogs", "onboarding.py")
+            .read_text(encoding="utf-8")
+        )
         self.assertIn('"ticket-system"', source)
         self.assertIn('name="ticket"', source)
         self.assertIn("category=panel_category", source)
 
     def test_help_is_a_public_embed(self):
-        source = Path(__file__).resolve().parents[1].joinpath("cogs", "onboarding.py").read_text(encoding="utf-8")
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("cogs", "onboarding.py")
+            .read_text(encoding="utf-8")
+        )
         help_block = source.split('name="help"', 1)[1].split('name="invite"', 1)[0]
         self.assertIn("send_message(embed=embed)", help_block)
         self.assertNotIn("ephemeral=True", help_block)
 
     def test_public_server_isolation_guards(self):
-        updates_source = Path(__file__).resolve().parents[1].joinpath("cogs", "updates.py").read_text(encoding="utf-8")
-        find_source = Path(__file__).resolve().parents[1].joinpath("cogs", "findz.py").read_text(encoding="utf-8")
-        dropdown_source = Path(__file__).resolve().parents[1].joinpath("views", "dropdown.py").read_text(encoding="utf-8")
-        transcript_source = Path(__file__).resolve().parents[1].joinpath("cogs", "transcript.py").read_text(encoding="utf-8")
+        updates_source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("cogs", "updates.py")
+            .read_text(encoding="utf-8")
+        )
+        find_source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("cogs", "findz.py")
+            .read_text(encoding="utf-8")
+        )
+        dropdown_source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("views", "dropdown.py")
+            .read_text(encoding="utf-8")
+        )
+        transcript_source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("cogs", "transcript.py")
+            .read_text(encoding="utf-8")
+        )
         self.assertNotIn("for guild in self.bot.guilds", updates_source)
         self.assertIn("guild_id = ?", find_source)
         self.assertNotIn("config .SETUP_USER_ID", dropdown_source)
@@ -176,7 +308,13 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn("Acceptable Use", terms)
 
     def test_slash_commands_do_not_use_undefined_prefix_context(self):
-        source = Path(__file__).resolve().parents[1].joinpath("cogs", "ban.py").read_text(encoding="utf-8")
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("cogs", "ban.py")
+            .read_text(encoding="utf-8")
+        )
         tree = ast.parse(source)
         invalid = []
         for node in ast.walk(tree):
@@ -233,27 +371,53 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(invalid, [])
 
     def test_runtime_dependencies_are_pinned(self):
-        requirements = Path(__file__).resolve().parents[1].joinpath("requirements.txt").read_text(encoding="utf-8").splitlines()
+        requirements = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("requirements.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
         active = [line.strip() for line in requirements if line.strip()]
         self.assertTrue(active)
         self.assertTrue(all("==" in line for line in active))
 
     def test_slash_commands_use_only_global_registration(self):
-        source = Path(__file__).resolve().parents[1].joinpath("main.py").read_text(encoding="utf-8")
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("main.py")
+            .read_text(encoding="utf-8")
+        )
         self.assertNotIn("copy_global_to", source)
-        self.assertIn("clear_commands", source)
-        self.assertIn("global_synced =await bot.tree.sync()", source)
+        self.assertNotIn("clear_commands", source)
+        self.assertIn("global_synced = await bot.tree.sync()", source)
 
     def test_ticket_workflows_avoid_channel_name_and_topic_rate_limits(self):
-        source = Path(__file__).resolve().parents[1].joinpath("views", "ticket_buttons.py").read_text(encoding="utf-8")
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("views", "ticket_buttons.py")
+            .read_text(encoding="utf-8")
+        )
         tree = ast.parse(source)
         protected = {"claim", "update_priority"}
         invalid = []
         for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or node.name not in protected:
+            if (
+                not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                or node.name not in protected
+            ):
                 continue
             for call in ast.walk(node):
-                if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute) or call.func.attr != "edit":
+                if (
+                    not isinstance(call, ast.Call)
+                    or not isinstance(call.func, ast.Attribute)
+                    or call.func.attr != "edit"
+                ):
                     continue
                 keyword_names = {keyword.arg for keyword in call.keywords}
                 if keyword_names.intersection({"name", "topic"}):
@@ -261,7 +425,13 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(invalid, [])
 
     def test_component_interactions_are_not_logged_twice(self):
-        source = Path(__file__).resolve().parents[1].joinpath("main.py").read_text(encoding="utf-8")
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("main.py")
+            .read_text(encoding="utf-8")
+        )
         self.assertIn("discord.InteractionType.component", source)
         self.assertIn("discord.InteractionType.modal_submit", source)
 
@@ -278,27 +448,24 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(invalid, [])
 
     def test_stale_roles_are_reported_as_configuration_warnings(self):
-        source = Path(__file__).resolve().parents[1].joinpath("cogs", "diagnostics.py").read_text(encoding="utf-8")
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("cogs", "diagnostics.py")
+            .read_text(encoding="utf-8")
+        )
         self.assertIn("Stale staff role IDs", source)
         self.assertIn("No configured staff role could be resolved", source)
 
-    def test_deleted_moonlit_roles_are_not_configured(self):
-        deleted = {
-            1536279648470704149,
-            1536279648470704150,
-            1536279648470704152,
-            1536279648470704153,
-        }
-        guild = config.GUILDS[1536279648428884058]
-        configured = set(guild["OWNER_ROLES"]) | {
-            guild["MOD_ROLE"],
-            guild["TRIAL_MOD_ROLE"],
-            guild["WARN_HISTORY_ROLE_ID"],
-        }
-        self.assertTrue(deleted.isdisjoint(configured))
-
     def test_unban_infractions_include_guild_scope(self):
-        source = Path(__file__).resolve().parents[1].joinpath("views", "unban_buttons.py").read_text(encoding="utf-8")
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("views", "unban_buttons.py")
+            .read_text(encoding="utf-8")
+        )
         tree = ast.parse(source)
         unban_calls = [
             node
@@ -308,39 +475,61 @@ class ConfigurationTests(unittest.TestCase):
             and node.func.id == "add_infraction"
         ]
         self.assertTrue(unban_calls)
-        self.assertTrue(all(any(keyword.arg == "guild_id" for keyword in call.keywords) for call in unban_calls))
+        self.assertTrue(
+            all(
+                any(keyword.arg == "guild_id" for keyword in call.keywords)
+                for call in unban_calls
+            )
+        )
 
 
 class DatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp_directory = tempfile.TemporaryDirectory()
         self.original_database = config.DATABASE
+        self.original_guilds = {
+            guild_id: dict(settings) for guild_id, settings in config.GUILDS.items()
+        }
         config.DATABASE = str(Path(self.temp_directory.name) / "test.db")
         await setup_database()
+        self.guild_id = 600000000000000001
+        await save_guild_settings(self.guild_id, {"NAME": "Database Test Server"})
 
     async def asyncTearDown(self):
         config.DATABASE = self.original_database
+        config.replace_guild_configs(self.original_guilds)
         self.temp_directory.cleanup()
 
     async def test_ticket_numbers_are_sequential_per_guild(self):
-        guild_id = next(iter(config.GUILDS))
+        guild_id = self.guild_id
         first = await get_next_ticket_number(guild_id)
         second = await get_next_ticket_number(guild_id)
         self.assertEqual(second, first + 1)
 
     async def test_claim_and_close_are_single_transition_operations(self):
-        guild_id = next(iter(config.GUILDS))
-        await create_ticket_record(100, guild_id, 200, "Test", datetime.now().isoformat())
+        guild_id = self.guild_id
+        await create_ticket_record(
+            100, guild_id, 200, "Test", datetime.now().isoformat()
+        )
         self.assertTrue(await claim_ticket(100, 300, datetime.now().isoformat()))
         self.assertFalse(await claim_ticket(100, 301, datetime.now().isoformat()))
-        self.assertTrue(await close_ticket(100, datetime.now().isoformat(), 300, "Done"))
-        self.assertFalse(await close_ticket(100, datetime.now().isoformat(), 300, "Done"))
+        self.assertTrue(
+            await close_ticket(100, datetime.now().isoformat(), 300, "Done")
+        )
+        self.assertFalse(
+            await close_ticket(100, datetime.now().isoformat(), 300, "Done")
+        )
 
     async def test_reopen_restores_database_ticket_state(self):
-        guild_id = next(iter(config.GUILDS))
-        await create_ticket_record(101, guild_id, 201, "Test", datetime.now().isoformat())
-        self.assertTrue(await close_ticket(101, datetime.now().isoformat(), 300, "Done"))
+        guild_id = self.guild_id
+        await create_ticket_record(
+            101, guild_id, 201, "Test", datetime.now().isoformat()
+        )
+        self.assertTrue(
+            await close_ticket(101, datetime.now().isoformat(), 300, "Done")
+        )
         from utils.database import get_ticket_record, reopen_ticket
+
         await reopen_ticket(101)
         record = await get_ticket_record(101)
         self.assertEqual(record["status"], "open")
@@ -354,9 +543,34 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             names = {row[1] for row in await cursor.fetchall()}
         self.assertIn("warned_at", names)
 
+    async def test_legacy_infraction_uuid_is_repaired(self):
+        async with aiosqlite.connect(config.DATABASE) as database:
+            cursor = await database.execute(
+                "INSERT INTO infractions(uuid, guild_id, user_id, moderator_id, action_type, reason, timestamp) VALUES(NULL, ?, ?, ?, ?, ?, ?)",
+                (
+                    self.guild_id,
+                    200,
+                    300,
+                    "WARN",
+                    "Legacy record",
+                    datetime.now().isoformat(),
+                ),
+            )
+            row_id = cursor.lastrowid
+            await database.commit()
+        await setup_database()
+        async with aiosqlite.connect(config.DATABASE) as database:
+            cursor = await database.execute(
+                "SELECT uuid FROM infractions WHERE id=?", (row_id,)
+            )
+            repaired_uuid = (await cursor.fetchone())[0]
+        self.assertTrue(repaired_uuid.startswith(f"G{self.guild_id}-"))
+
     async def test_staff_availability_and_panel_registration(self):
-        guild_id = next(iter(config.GUILDS))
-        await set_staff_availability(guild_id, 200, "Available", datetime.now().isoformat())
+        guild_id = self.guild_id
+        await set_staff_availability(
+            guild_id, 200, "Available", datetime.now().isoformat()
+        )
         await set_staff_availability(guild_id, 201, "Busy", datetime.now().isoformat())
         self.assertEqual(await get_available_staff_count(guild_id), 1)
         records = await get_staff_availability(guild_id)
@@ -366,10 +580,14 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(panels, [{"channel_id": 300, "message_id": 400}])
 
     async def test_escalations_are_deduplicated(self):
-        guild_id = next(iter(config.GUILDS))
+        guild_id = self.guild_id
         created_at = datetime.now().isoformat()
-        self.assertTrue(await register_escalation_event(guild_id, 100, "unclaimed", created_at))
-        self.assertFalse(await register_escalation_event(guild_id, 100, "unclaimed", created_at))
+        self.assertTrue(
+            await register_escalation_event(guild_id, 100, "unclaimed", created_at)
+        )
+        self.assertFalse(
+            await register_escalation_event(guild_id, 100, "unclaimed", created_at)
+        )
         self.assertTrue(await escalation_event_exists(guild_id, 100, "unclaimed"))
 
     async def test_public_guild_settings_are_persistent(self):
@@ -392,9 +610,15 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertTrue(saved["SETUP_COMPLETE"])
-        self.assertEqual((await get_guild_settings(guild_id))["TICKET_OPTIONS"], ["Support", "Reports"])
+        self.assertEqual(
+            (await get_guild_settings(guild_id))["TICKET_OPTIONS"],
+            ["Support", "Reports"],
+        )
         async with aiosqlite.connect(config.DATABASE) as database:
-            cursor = await database.execute("SELECT name, setup_complete FROM guild_settings WHERE guild_id=?", (guild_id,))
+            cursor = await database.execute(
+                "SELECT name, setup_complete FROM guild_settings WHERE guild_id=?",
+                (guild_id,),
+            )
             self.assertEqual(await cursor.fetchone(), ("Public Test Server", 1))
         reset = await reset_guild_settings(guild_id)
         self.assertFalse(reset["SETUP_COMPLETE"])
@@ -408,14 +632,18 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         duplicate, settings = await add_setup_admin(guild_id, 123456789012345678)
         self.assertFalse(duplicate)
         async with aiosqlite.connect(config.DATABASE) as database:
-            cursor = await database.execute("SELECT user_id FROM guild_setup_admins WHERE guild_id=?", (guild_id,))
+            cursor = await database.execute(
+                "SELECT user_id FROM guild_setup_admins WHERE guild_id=?", (guild_id,)
+            )
             self.assertEqual(await cursor.fetchall(), [(123456789012345678,)])
         removed, settings = await remove_setup_admin(guild_id, 123456789012345678)
         self.assertTrue(removed)
         self.assertEqual(settings["SETUP_ADMIN_USERS"], [])
 
     async def test_uuid_records_are_isolated_by_guild(self):
-        ticket_uuid = await create_ticket_record(901, 1001, 2001, "Support", datetime.now().isoformat())
+        ticket_uuid = await create_ticket_record(
+            901, 1001, 2001, "Support", datetime.now().isoformat()
+        )
         self.assertIsNotNone(await get_ticket_by_uuid(ticket_uuid, 1001))
         self.assertIsNone(await get_ticket_by_uuid(ticket_uuid, 1002))
 
@@ -423,7 +651,15 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with aiosqlite.connect(config.DATABASE) as database:
             await database.execute(
                 "INSERT INTO infractions(uuid, guild_id, user_id, moderator_id, action_type, reason, timestamp) VALUES(?, ?, ?, ?, ?, ?, ?)",
-                (infraction_uuid, 1001, 2001, 3001, "Warning", "Isolation test", datetime.now().isoformat()),
+                (
+                    infraction_uuid,
+                    1001,
+                    2001,
+                    3001,
+                    "Warning",
+                    "Isolation test",
+                    datetime.now().isoformat(),
+                ),
             )
             await database.commit()
         self.assertIsNotNone(await get_infraction_by_uuid(infraction_uuid, 1001))
@@ -431,13 +667,36 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await remove_infraction_by_uuid(infraction_uuid, 1002))
         self.assertIsNotNone(await get_infraction_by_uuid(infraction_uuid, 1001))
 
+    async def test_warning_removal_never_falls_back_to_another_guild(self):
+        async with aiosqlite.connect(config.DATABASE) as database:
+            await database.execute(
+                "INSERT INTO infractions(uuid, guild_id, user_id, moderator_id, action_type, reason, timestamp) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "G2002-warning",
+                    2002,
+                    501,
+                    601,
+                    "WARN",
+                    "Isolation test",
+                    datetime.now().isoformat(),
+                ),
+            )
+            await database.commit()
+        count, records = await remove_user_warning(
+            501, guild_id=2001, warn_id="G2002-warning"
+        )
+        self.assertEqual((count, records), (0, []))
+        self.assertIsNotNone(await get_infraction_by_uuid("G2002-warning", 2002))
+
     async def test_repeated_errors_share_reference(self):
         references = []
         for _ in range(2):
             try:
                 raise RuntimeError("Database test failure")
             except RuntimeError as error:
-                references.append(log_exception("TEST", error, context="Grouped failure"))
+                references.append(
+                    log_exception("TEST", error, context="Grouped failure")
+                )
         self.assertEqual(references[0], references[1])
         async with aiosqlite.connect(config.DATABASE) as database:
             cursor = await database.execute(
@@ -446,6 +705,38 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             )
             row = await cursor.fetchone()
         self.assertEqual(row[0], 2)
+
+    async def test_diagnostics_are_isolated_by_guild(self):
+        references = []
+        for guild_id in (self.guild_id, self.guild_id + 1):
+            try:
+                raise RuntimeError("Scoped diagnostic failure")
+            except RuntimeError as error:
+                references.append(
+                    log_exception(
+                        "TEST", error, guild=guild_id, context="Scoped diagnostic"
+                    )
+                )
+        self.assertNotEqual(references[0], references[1])
+        diagnostics = Diagnostics.__new__(Diagnostics)
+        records = await diagnostics.recent_errors(self.guild_id, limit=10)
+        self.assertEqual([record["reference"] for record in records], [references[0]])
+        self.assertIsNone(await diagnostics.find_error(references[1], self.guild_id))
+
+    async def test_numeric_user_id_is_not_recorded_as_guild_id(self):
+        try:
+            raise RuntimeError("User-only diagnostic failure")
+        except RuntimeError as error:
+            reference = log_exception(
+                "TEST", error, user=123456789, context="Numeric user context"
+            )
+        async with aiosqlite.connect(config.DATABASE) as database:
+            cursor = await database.execute(
+                "SELECT guild_id, user_id FROM error_events WHERE reference=?",
+                (reference,),
+            )
+            location = await cursor.fetchone()
+        self.assertEqual(location, (None, 123456789))
 
 
 if __name__ == "__main__":

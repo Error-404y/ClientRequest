@@ -5,7 +5,7 @@ Professional multi-server ticket operations and staff-support system.
 ## Server Setup
 
 1. Add the bot with the `bot` and `applications.commands` scopes.
-2. Grant Manage Channels, View Channels, Send Messages, Embed Links, Attach Files, and Read Message History.
+2. Grant Manage Channels, Manage Roles, View Channels, Send Messages, Embed Links, Attach Files, Read Message History, Kick Members, and Ban Members.
 3. Run `/setup start` in the server.
 4. Select an existing staff role or allow the bot to create one.
 5. Optionally provide comma-separated ticket types.
@@ -19,7 +19,7 @@ The setup command creates a public `ticket-system` category containing the `tick
 - `/setup admins` lists delegated setup administrators.
 - `/add admin` grants a member access to every setup command.
 - `/remove admin` revokes delegated setup access.
-- `/setup repair` restores missing resources and publishes a fresh panel.
+- `/setup repair` restores missing resources and updates the existing panel when one is available.
 - `/setup reset` clears stored setup information without deleting Discord channels.
 - `/help` explains member and staff workflows.
 - `/privacy` displays the operational data summary.
@@ -37,6 +37,7 @@ The bot stores each server's settings and operational records under its Discord 
 
 ## Production Requirements
 
+- Run Python 3.10 or newer.
 - Store `DISCORD_TOKEN` only in the deployment environment.
 - Use persistent storage with regular backups.
 - Run the bot through a process supervisor or container platform.

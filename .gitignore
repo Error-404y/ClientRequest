@@ -4,7 +4,13 @@
 *.db-wal
 __pycache__/
 *.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 logs/
 transcripts/
 MonitorUUID/
 .DS_Store
+.maja.lock

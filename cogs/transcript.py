@@ -1,102 +1,134 @@
-import discord 
-from discord .ext import commands 
-import os 
-import html 
-import pytz 
-from datetime import datetime 
-import config 
-import aiohttp 
-import zipfile 
-import shutil 
-import re 
-from utils .logger import log_exception, log_transcript 
+import asyncio
+import html
+import os
+import re
+import shutil
+import zipfile
+from datetime import datetime
+from pathlib import Path
 
-timezone =pytz .timezone (config.TIMEZONE)
+import aiohttp
+import pytz
+from discord.ext import commands
 
-async def download_file (url ,destination ):
-    try :
-        async with aiohttp .ClientSession ()as session :
-            async with session .get (url )as response :
-                if response .status ==200 :
-                    with open (destination ,'wb')as f :
-                        f .write (await response .read ())
-                    return True 
-    except Exception as error:
+import config
+from utils.logger import log_exception, log_transcript
+
+timezone = pytz.timezone(config.TIMEZONE)
+MAX_TRANSCRIPT_ASSET_BYTES = 8_000_000
+
+
+def build_archive(source, destination):
+    with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for root, _, files in os.walk(source):
+            for filename in files:
+                file_path = os.path.join(root, filename)
+                arcname = os.path.relpath(file_path, start=source)
+                zip_file.write(file_path, arcname)
+
+
+async def download_file(url, destination):
+    try:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with (
+            aiohttp.ClientSession(timeout=timeout) as session,
+            session.get(url) as response,
+        ):
+            if response.status != 200:
+                return False
+            if (
+                response.content_length is not None
+                and response.content_length > MAX_TRANSCRIPT_ASSET_BYTES
+            ):
+                return False
+            payload = await response.content.read(MAX_TRANSCRIPT_ASSET_BYTES + 1)
+            if len(payload) > MAX_TRANSCRIPT_ASSET_BYTES:
+                return False
+            await asyncio.to_thread(Path(destination).write_bytes, payload)
+            return True
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as error:
         log_exception(
             "TRANSCRIPT",
             error,
             context=f"Failed to download transcript asset to {destination}",
         )
-    return False 
+    return False
 
-def parse_markdown (text ):
-    if not text :
+
+def parse_markdown(text):
+    if not text:
         return ""
-        
-    text =html .escape (text )
 
-    
-    text =re .sub (r'```(?:[a-zA-Z0-9]+)?\n?(.*?)\n?```',r'<pre class="code-block"><code>\1</code></pre>',text ,flags =re .DOTALL )
+    text = html.escape(text)
 
-    
-    text =re .sub (r'`([^`\n]+)`',r'<code class="inline-code">\1</code>',text )
+    text = re.sub(
+        r"```(?:[a-zA-Z0-9]+)?\n?(.*?)\n?```",
+        r'<pre class="code-block"><code>\1</code></pre>',
+        text,
+        flags=re.DOTALL,
+    )
 
-    
-    text =re .sub (r'\*\*([^*]+)\*\*',r'<strong>\1</strong>',text )
+    text = re.sub(r"`([^`\n]+)`", r'<code class="inline-code">\1</code>', text)
 
-    
-    text =re .sub (r'\*([^*]+)\*',r'<em>\1</em>',text )
-    text =re .sub (r'\b_([^_]+)_\b',r'<em>\1</em>',text )
+    text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
 
-    
-    text =re .sub (r'__([^_]+)__',r'<u>\1</u>',text )
+    text = re.sub(r"\*([^*]+)\*", r"<em>\1</em>", text)
+    text = re.sub(r"\b_([^_]+)_\b", r"<em>\1</em>", text)
 
-    
-    text =re .sub (r'~~([^~]+)~~',r'<del>\1</del>',text )
+    text = re.sub(r"__([^_]+)__", r"<u>\1</u>", text)
 
-    
-    text =re .sub (r'&lt;@!?(\d+)&gt;',r'<span class="mention">@User(\1)</span>',text )
-    text =re .sub (r'&lt;@&amp;(\d+)&gt;',r'<span class="mention">@Role(\1)</span>',text )
-    text =re .sub (r'&lt;#(\d+)&gt;',r'<span class="mention">#Channel(\1)</span>',text )
+    text = re.sub(r"~~([^~]+)~~", r"<del>\1</del>", text)
 
-    
-    text =re .sub (r'\[([^\]]+)\]\((https?://[^\s]+)\)',r'<a href="\2" target="_blank" class="content-link">\1</a>',text )
+    text = re.sub(r"&lt;@!?(\d+)&gt;", r'<span class="mention">@User(\1)</span>', text)
+    text = re.sub(
+        r"&lt;@&amp;(\d+)&gt;", r'<span class="mention">@Role(\1)</span>', text
+    )
+    text = re.sub(r"&lt;#(\d+)&gt;", r'<span class="mention">#Channel(\1)</span>', text)
 
-    
-    url_pattern =re .compile (r'(?<!href=")(?<!src=")(https?://[^\s<]+)')
-    text =url_pattern .sub (r'<a href="\1" target="_blank" class="content-link">\1</a>',text )
+    text = re.sub(
+        r"\[([^\]]+)\]\((https?://[^\s]+)\)",
+        r'<a href="\2" target="_blank" class="content-link">\1</a>',
+        text,
+    )
 
-    
-    text =text .replace ('\n','<br>')
-    return text 
+    url_pattern = re.compile(r'(?<!href=")(?<!src=")(https?://[^\s<]+)')
+    text = url_pattern.sub(
+        r'<a href="\1" target="_blank" class="content-link">\1</a>', text
+    )
 
-async def create_transcript (channel ,lightweight =False ):
-    log_transcript ("Initiated creation",channel ,details =f"Lightweight: {lightweight }")
+    text = text.replace("\n", "<br>")
+    return text
 
-    guild_transcript_dir =os .path .join (config .TRANSCRIPT_FOLDER ,str (channel .guild .id ))
-    os .makedirs (guild_transcript_dir ,exist_ok =True )
-    transcript_dir =os .path .join (guild_transcript_dir ,f"transcript-{channel .name }-{channel .id }")
-    avatars_dir =f"{transcript_dir }/avatars"
-    attachments_dir =f"{transcript_dir }/attachments"
 
-    if not lightweight :
-        os .makedirs (avatars_dir ,exist_ok =True )
-        os .makedirs (attachments_dir ,exist_ok =True )
-    else :
-        os .makedirs (transcript_dir ,exist_ok =True )
+async def create_transcript(channel, lightweight=False):
+    log_transcript("Initiated creation", channel, details=f"Lightweight: {lightweight}")
 
-        
-    user_id =None 
-    if channel .topic and "ticket_owner:"in channel .topic :
-        try :
-            topic_part =channel .topic .split ("|")[0 ].strip ()
-            user_id =int (topic_part .replace ("ticket_owner:","").strip ())
-        except ValueError :
-            user_id =None
-    if user_id is None :
-        try :
-            from utils .database import get_ticket_owner 
-            user_id =await get_ticket_owner (channel .id )
+    guild_transcript_dir = os.path.join(config.TRANSCRIPT_FOLDER, str(channel.guild.id))
+    os.makedirs(guild_transcript_dir, exist_ok=True)
+    transcript_dir = os.path.join(
+        guild_transcript_dir, f"transcript-{channel.name}-{channel.id}"
+    )
+    avatars_dir = f"{transcript_dir}/avatars"
+    attachments_dir = f"{transcript_dir}/attachments"
+
+    if not lightweight:
+        os.makedirs(avatars_dir, exist_ok=True)
+        os.makedirs(attachments_dir, exist_ok=True)
+    else:
+        os.makedirs(transcript_dir, exist_ok=True)
+
+    user_id = None
+    if channel.topic and "ticket_owner:" in channel.topic:
+        try:
+            topic_part = channel.topic.split("|")[0].strip()
+            user_id = int(topic_part.replace("ticket_owner:", "").strip())
+        except ValueError:
+            user_id = None
+    if user_id is None:
+        try:
+            from utils.database import get_ticket_owner
+
+            user_id = await get_ticket_owner(channel.id)
         except Exception as error:
             log_exception(
                 "DATABASE",
@@ -106,155 +138,153 @@ async def create_transcript (channel ,lightweight =False ):
                 context="Failed to resolve transcript ticket owner",
             )
 
-    messages =[]
-    guild =channel .guild 
-    downloaded_avatars ={}
+    messages = []
+    guild = channel.guild
+    downloaded_avatars = {}
 
-    async for message in channel .history (limit =None ,oldest_first =True ):
-        content =message .clean_content 
-        content_html =parse_markdown (content )if content else ""
+    async for message in channel.history(limit=None, oldest_first=True):
+        content = message.clean_content
+        content_html = parse_markdown(content) if content else ""
 
-        
-        member =guild .get_member (message .author .id )
+        member = guild.get_member(message.author.id)
 
-        
-        msg_class ="msg-user"
-        if message .author .bot :
-            msg_class ="msg-bot"
-        elif message .author .id ==user_id :
-            msg_class ="msg-applicant"
+        msg_class = "msg-user"
+        if message.author.bot:
+            msg_class = "msg-bot"
+        elif message.author.id == user_id:
+            msg_class = "msg-applicant"
 
-            
-        badge_html =""
+        badge_html = ""
         from utils.permissions import is_owner
+
         if member and is_owner(member):
-            badge_html ='<span class="user-badge badge-owner">Owner</span>'
-            msg_class ="msg-owner"
-        elif member :
-            from utils .permissions import is_moderator ,is_trial_moderator 
-            if is_moderator (member ):
-                badge_html ='<span class="user-badge badge-staff">Staff</span>'
-                msg_class ="msg-staff"
-            elif is_trial_moderator (member ):
-                badge_html ='<span class="user-badge badge-staff" style="background-color: #9b59b6;">Trial Mod</span>'
-                msg_class ="msg-staff"
+            badge_html = '<span class="user-badge badge-owner">Owner</span>'
+            msg_class = "msg-owner"
+        elif member:
+            from utils.permissions import is_moderator, is_trial_moderator
 
-                
-        if not lightweight :
-            author_id =message .author .id 
-            if author_id not in downloaded_avatars :
-                avatar_url =message .author .display_avatar .url 
-                avatar_filename =f"avatars/{author_id }.png"
-                local_avatar_path =f"{transcript_dir }/{avatar_filename }"
+            if is_moderator(member):
+                badge_html = '<span class="user-badge badge-staff">Staff</span>'
+                msg_class = "msg-staff"
+            elif is_trial_moderator(member):
+                badge_html = '<span class="user-badge badge-staff" style="background-color: #9b59b6;">Trial Mod</span>'
+                msg_class = "msg-staff"
 
-                success =await download_file (avatar_url ,local_avatar_path )
-                if success :
-                    downloaded_avatars [author_id ]=avatar_filename 
-                else :
-                    downloaded_avatars [author_id ]=avatar_url 
+        if not lightweight:
+            author_id = message.author.id
+            if author_id not in downloaded_avatars:
+                avatar_url = message.author.display_avatar.url
+                avatar_filename = f"avatars/{author_id}.png"
+                local_avatar_path = f"{transcript_dir}/{avatar_filename}"
 
-            avatar_src =downloaded_avatars [author_id ]
-        else :
-            avatar_src =message .author .display_avatar .url 
+                success = await download_file(avatar_url, local_avatar_path)
+                if success:
+                    downloaded_avatars[author_id] = avatar_filename
+                else:
+                    downloaded_avatars[author_id] = avatar_url
 
-        timestamp =message .created_at .astimezone (timezone ).strftime ("%d.%m.%Y %H:%M:%S")
+            avatar_src = downloaded_avatars[author_id]
+        else:
+            avatar_src = message.author.display_avatar.url
 
-        
-        attachments_html =""
-        for attachment in message .attachments :
-            if not lightweight :
-            
-                safe_filename ="".join (c for c in attachment .filename if c .isalnum ()or c in "._-").strip ()
-                if not safe_filename :
-                    safe_filename =str (attachment .id )
+        timestamp = message.created_at.astimezone(timezone).strftime(
+            "%d.%m.%Y %H:%M:%S"
+        )
 
-                local_filename =f"{attachment .id }_{safe_filename }"
-                attachment_path =f"attachments/{local_filename }"
-                local_attachment_path =f"{transcript_dir }/{attachment_path }"
+        attachments_html = ""
+        for attachment in message.attachments:
+            if not lightweight:
+                safe_filename = "".join(
+                    c for c in attachment.filename if c.isalnum() or c in "._-"
+                ).strip()
+                if not safe_filename:
+                    safe_filename = str(attachment.id)
 
-                
-                success =await download_file (attachment .url ,local_attachment_path )
-                link_target =attachment_path if success else attachment .url 
-            else :
-                link_target =attachment .url 
+                local_filename = f"{attachment.id}_{safe_filename}"
+                attachment_path = f"attachments/{local_filename}"
+                local_attachment_path = f"{transcript_dir}/{attachment_path}"
 
-                
-            is_image =any (attachment .filename .lower ().endswith (ext )for ext in [".png",".jpg",".jpeg",".gif",".webp"])
+                success = await download_file(attachment.url, local_attachment_path)
+                link_target = attachment_path if success else attachment.url
+            else:
+                link_target = attachment.url
 
-            if is_image :
-                attachments_html +=f"""
+            is_image = any(
+                attachment.filename.lower().endswith(ext)
+                for ext in [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+            )
+
+            if is_image:
+                attachments_html += f"""
                 <div class="attachment attachment-image" style="margin-top: 6px;">
-                    <span class="attachment-label" style="font-size: 13px; font-weight: 600; color: #b5bac1; display: block; margin-bottom: 4px;">Image Preview ({html .escape (attachment .filename )}):</span>
-                    <a href="{link_target }" target="_blank">
-                        <img src="{link_target }" class="image-preview" style="max-width: 100%; max-height: 350px; border-radius: 8px; border: 1px solid #232428;">
+                    <span class="attachment-label" style="font-size: 13px; font-weight: 600; color: #b5bac1; display: block; margin-bottom: 4px;">Image Preview ({html.escape(attachment.filename)}):</span>
+                    <a href="{link_target}" target="_blank">
+                        <img src="{link_target}" class="image-preview" style="max-width: 100%; max-height: 350px; border-radius: 8px; border: 1px solid #232428;">
                     </a>
                 </div>
                 """
-            else :
-                attachments_html +=f"""
+            else:
+                attachments_html += f"""
                 <div class="attachment">
                     <span class="attachment-label">File attachment:</span>
-                    <a href="{link_target }" target="_blank" class="attachment-link">
-                        {html .escape (attachment .filename )}
+                    <a href="{link_target}" target="_blank" class="attachment-link">
+                        {html.escape(attachment.filename)}
                     </a>
                 </div>
                 """
 
-                
-        embeds_html =""
-        for embed in message .embeds :
-            embed_title =html .escape (embed .title or "")
-            embed_desc =html .escape (embed .description or "")
+        embeds_html = ""
+        for embed in message.embeds:
+            embed_title = html.escape(embed.title or "")
 
-            
-            embed_desc_html =parse_markdown (embed .description )if embed .description else ""
+            embed_desc_html = (
+                parse_markdown(embed.description) if embed.description else ""
+            )
 
-            embed_fields_html =""
-            for field in embed .fields :
-                field_val_html =parse_markdown (field .value )if field .value else ""
-                embed_fields_html +=f"""
-                <div class="embed-field {"embed-field-inline"if field .inline else ""}">
-                    <div class="embed-field-name">{html .escape (field .name or "")}</div>
-                    <div class="embed-field-value">{field_val_html }</div>
+            embed_fields_html = ""
+            for field in embed.fields:
+                field_val_html = parse_markdown(field.value) if field.value else ""
+                embed_fields_html += f"""
+                <div class="embed-field {"embed-field-inline" if field.inline else ""}">
+                    <div class="embed-field-name">{html.escape(field.name or "")}</div>
+                    <div class="embed-field-value">{field_val_html}</div>
                 </div>
                 """
 
-            color_hex ="#5865f2"
-            if embed .color :
-                color_hex =f"#{embed .color .value :06x}"
+            color_hex = "#5865f2"
+            if embed.color:
+                color_hex = f"#{embed.color.value:06x}"
 
-            embeds_html +=f"""
-            <div class="embed-card" style="border-left: 4px solid {color_hex };">
-                {f'<div class="embed-title">{embed_title }</div>'if embed_title else ''}
-                {f'<div class="embed-description">{embed_desc_html }</div>'if embed_desc_html else ''}
-                {f'<div class="embed-fields">{embed_fields_html }</div>'if embed_fields_html else ''}
+            embeds_html += f"""
+            <div class="embed-card" style="border-left: 4px solid {color_hex};">
+                {f'<div class="embed-title">{embed_title}</div>' if embed_title else ""}
+                {f'<div class="embed-description">{embed_desc_html}</div>' if embed_desc_html else ""}
+                {f'<div class="embed-fields">{embed_fields_html}</div>' if embed_fields_html else ""}
             </div>
             """
 
-            
-        if not content_html and not attachments_html and not embeds_html :
-            content_html ="[No message content]"
+        if not content_html and not attachments_html and not embeds_html:
+            content_html = "[No message content]"
 
-        messages .append (f"""
-        <div class="message {msg_class }">
-            <img src="{avatar_src }" class="avatar">
+        messages.append(f"""
+        <div class="message {msg_class}">
+            <img src="{avatar_src}" class="avatar">
             <div class="message-body">
                 <div class="message-header">
-                    <span class="username">{html .escape (message .author .display_name )}</span>
-                    {badge_html }
-                    <span class="time">{timestamp }</span>
+                    <span class="username">{html.escape(message.author.display_name)}</span>
+                    {badge_html}
+                    <span class="time">{timestamp}</span>
                 </div>
                 <div class="message-content">
-                    {f'<div class="content">{content_html }</div>'if content_html else ''}
-                    {attachments_html }
-                    {embeds_html }
+                    {f'<div class="content">{content_html}</div>' if content_html else ""}
+                    {attachments_html}
+                    {embeds_html}
                 </div>
             </div>
         </div>
         """)
 
-        
-    page =f"""<!DOCTYPE html>
+    page = f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -551,15 +581,15 @@ async def create_transcript (channel ,lightweight =False ):
             <div class="header-meta">
                 <div class="meta-item">
                     <span class="meta-label">Server:</span>
-                    <span>{html .escape (guild .name )}</span>
+                    <span>{html.escape(guild.name)}</span>
                 </div>
                 <div class="meta-item">
                     <span class="meta-label">Channel:</span>
-                    <span>{html .escape (channel .name )}</span>
+                    <span>{html.escape(channel.name)}</span>
                 </div>
                 <div class="meta-item">
                     <span class="meta-label">Generated At:</span>
-                    <span>{datetime .now (timezone ).strftime ("%d.%m.%Y %H:%M:%S")}</span>
+                    <span>{datetime.now(timezone).strftime("%d.%m.%Y %H:%M:%S")}</span>
                 </div>
             </div>
         </div>
@@ -575,7 +605,7 @@ async def create_transcript (channel ,lightweight =False ):
             </div>
         </div>
         <div class="chat-area">
-            {"".join (messages )}
+            {"".join(messages)}
         </div>
         <div class="footer">
             Generated by ! maja !
@@ -624,23 +654,14 @@ async def create_transcript (channel ,lightweight =False ):
 </html>
 """
 
-    html_file =f"{transcript_dir }/index.html"
-    with open (html_file ,"w",encoding ="utf-8")as file :
-        file .write (page )
+    html_file = f"{transcript_dir}/index.html"
+    await asyncio.to_thread(Path(html_file).write_text, page, encoding="utf-8")
 
-        
-    zip_filename =os .path .join (guild_transcript_dir ,f"{channel .name }.zip")
+    zip_filename = os.path.join(guild_transcript_dir, f"{channel.name}.zip")
+    await asyncio.to_thread(build_archive, transcript_dir, zip_filename)
 
-    with zipfile .ZipFile (zip_filename ,'w',zipfile .ZIP_DEFLATED )as zip_file :
-        for root ,dirs ,files in os .walk (transcript_dir ):
-            for file in files :
-                file_path =os .path .join (root ,file )
-                arcname =os .path .relpath (file_path ,start =transcript_dir )
-                zip_file .write (file_path ,arcname )
-
-                
-    try :
-        shutil .rmtree (transcript_dir )
+    try:
+        await asyncio.to_thread(shutil.rmtree, transcript_dir)
     except OSError as error:
         log_exception(
             "TRANSCRIPT",
@@ -650,14 +671,20 @@ async def create_transcript (channel ,lightweight =False ):
             context="Failed to remove temporary transcript directory",
         )
 
-    size_bytes =os .path .getsize (zip_filename )if os .path .exists (zip_filename )else 0 
-    log_transcript ("Zip Archive Created",channel ,details =f"Path: {zip_filename }, Size: {size_bytes } bytes, Messages: {len (messages )}")
+    size_bytes = os.path.getsize(zip_filename) if os.path.exists(zip_filename) else 0
+    log_transcript(
+        "Zip Archive Created",
+        channel,
+        details=f"Path: {zip_filename}, Size: {size_bytes} bytes, Messages: {len(messages)}",
+    )
 
-    return zip_filename 
+    return zip_filename
 
-class Transcript (commands .Cog ):
-    def __init__ (self ,bot ):
-        self .bot =bot 
 
-async def setup (bot ):
-    await bot .add_cog (Transcript (bot ))
+class Transcript(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+
+async def setup(bot):
+    await bot.add_cog(Transcript(bot))

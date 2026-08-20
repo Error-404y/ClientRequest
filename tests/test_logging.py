@@ -11,7 +11,9 @@ def generated_failure():
 
 class LoggingTests(unittest.TestCase):
     def test_sensitive_values_are_redacted(self):
-        result = redact("token=example-secret password: another-secret https://discord.com/api/webhooks/123/secret")
+        result = redact(
+            "token=example-secret password: another-secret https://discord.com/api/webhooks/123/secret"
+        )
         self.assertNotIn("example-secret", result)
         self.assertNotIn("another-secret", result)
         self.assertNotIn("webhooks/123/secret", result)
@@ -32,8 +34,18 @@ class LoggingTests(unittest.TestCase):
             try:
                 generated_failure()
             except RuntimeError as error:
-                fingerprints.append(create_error_fingerprint("TEST", error, "same context"))
+                fingerprints.append(
+                    create_error_fingerprint("TEST", error, "same context")
+                )
         self.assertEqual(fingerprints[0], fingerprints[1])
+
+    def test_error_fingerprints_are_scoped_by_guild(self):
+        try:
+            generated_failure()
+        except RuntimeError as error:
+            first = create_error_fingerprint("TEST", error, "same context", 1001)
+            second = create_error_fingerprint("TEST", error, "same context", 1002)
+        self.assertNotEqual(first, second)
 
 
 if __name__ == "__main__":
