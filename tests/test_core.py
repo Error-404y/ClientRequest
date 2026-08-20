@@ -11,22 +11,32 @@ import pytz
 import config
 from cogs.inactivity import hours_since
 from cogs.escalations import minutes_since
+from cogs.onboarding import parse_ticket_options, public_install_permissions, resource_report, setup_permission_report
 from utils.database import (
+    add_setup_admin,
     claim_ticket,
     close_ticket,
     create_ticket_record,
     escalation_event_exists,
     get_available_staff_count,
+    get_guild_settings,
+    get_infraction_by_uuid,
     get_next_ticket_number,
     get_staff_availability,
+    get_ticket_by_uuid,
     get_ticket_panels,
     register_ticket_panel,
     register_escalation_event,
+    remove_setup_admin,
+    remove_infraction_by_uuid,
+    reset_guild_settings,
+    save_guild_settings,
     set_staff_availability,
     setup_database,
 )
 from utils.embeds import estimate_response_time, ticket_claimed_dm, ticket_closed_dm
 from utils.logger import log_exception
+from utils.permissions import can_manage_setup_admins, can_setup
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -75,6 +85,83 @@ class ConfigurationTests(unittest.TestCase):
         source = Path(__file__).resolve().parents[1].joinpath("cogs", "updates.py").read_text(encoding="utf-8")
         self.assertIn('name="Server", value=guild.name', source)
         self.assertNotIn('name="Environment", value=guild.name', source)
+
+    def test_public_setup_ticket_option_parser(self):
+        self.assertEqual(parse_ticket_options("Support, Reports, support"), ["Support", "Reports"])
+        self.assertEqual(parse_ticket_options(None), config.DEFAULT_TICKET_OPTIONS)
+
+    def test_setup_permission_report(self):
+        permissions = SimpleNamespace(
+            manage_channels=True,
+            view_channel=True,
+            send_messages=True,
+            embed_links=True,
+            attach_files=False,
+            read_message_history=True,
+            manage_roles=False,
+        )
+        guild = SimpleNamespace(me=SimpleNamespace(guild_permissions=permissions))
+        self.assertEqual(setup_permission_report(guild), ["Attach Files"])
+        self.assertEqual(setup_permission_report(guild, needs_role_creation=True), ["Attach Files", "Manage Roles"])
+
+    def test_setup_access_owner_discord_admin_and_delegate(self):
+        guild_id = 888888888888888888
+        config.register_guild_config(guild_id, {"SETUP_ADMIN_USERS": [30]})
+        guild = SimpleNamespace(id=guild_id, owner_id=10)
+        owner = SimpleNamespace(id=10, guild=guild, guild_permissions=SimpleNamespace(administrator=False, manage_guild=False))
+        administrator = SimpleNamespace(id=20, guild=guild, guild_permissions=SimpleNamespace(administrator=True, manage_guild=False))
+        delegate = SimpleNamespace(id=30, guild=guild, guild_permissions=SimpleNamespace(administrator=False, manage_guild=False))
+        manager = SimpleNamespace(id=35, guild=guild, guild_permissions=SimpleNamespace(administrator=False, manage_guild=True))
+        denied = SimpleNamespace(id=40, guild=guild, guild_permissions=SimpleNamespace(administrator=False, manage_guild=False))
+        self.assertTrue(can_setup(owner))
+        self.assertTrue(can_setup(administrator))
+        self.assertTrue(can_setup(delegate))
+        self.assertFalse(can_setup(manager))
+        self.assertFalse(can_setup(denied))
+        self.assertTrue(can_manage_setup_admins(owner))
+        self.assertFalse(can_manage_setup_admins(administrator))
+        self.assertFalse(can_manage_setup_admins(delegate))
+        config.remove_guild_config(guild_id)
+
+    def test_public_install_never_requests_administrator(self):
+        permissions = public_install_permissions()
+        self.assertFalse(permissions.administrator)
+        self.assertTrue(permissions.manage_channels)
+        self.assertTrue(permissions.embed_links)
+
+    def test_setup_resource_report_detects_missing_resources(self):
+        guild = SimpleNamespace(get_channel=lambda resource_id: None, get_role=lambda role_id: None)
+        issues = resource_report(
+            guild,
+            {
+                "SETUP_COMPLETE": True,
+                "TICKET_CATEGORY_ID": 1,
+                "TICKET_ARCHIVE_CATEGORY_ID": 2,
+                "TICKET_PANEL_CHANNEL_ID": 3,
+                "LOG_CHANNEL_ID": 4,
+                "MOD_ROLE": 5,
+            },
+        )
+        self.assertEqual(len(issues), 5)
+
+    def test_public_server_isolation_guards(self):
+        updates_source = Path(__file__).resolve().parents[1].joinpath("cogs", "updates.py").read_text(encoding="utf-8")
+        find_source = Path(__file__).resolve().parents[1].joinpath("cogs", "findz.py").read_text(encoding="utf-8")
+        dropdown_source = Path(__file__).resolve().parents[1].joinpath("views", "dropdown.py").read_text(encoding="utf-8")
+        transcript_source = Path(__file__).resolve().parents[1].joinpath("cogs", "transcript.py").read_text(encoding="utf-8")
+        self.assertNotIn("for guild in self.bot.guilds", updates_source)
+        self.assertIn("guild_id = ?", find_source)
+        self.assertNotIn("config .SETUP_USER_ID", dropdown_source)
+        self.assertNotIn("config.SETUP_USER_ID", transcript_source)
+
+    def test_public_release_documents_exist(self):
+        root = Path(__file__).resolve().parents[1]
+        privacy = root.joinpath("PRIVACY_POLICY.md").read_text(encoding="utf-8")
+        terms = root.joinpath("TERMS_OF_SERVICE.md").read_text(encoding="utf-8")
+        self.assertIn("# Privacy Policy", privacy)
+        self.assertIn("Storage and Retention", privacy)
+        self.assertIn("# Terms of Service", terms)
+        self.assertIn("Acceptable Use", terms)
 
     def test_slash_commands_do_not_use_undefined_prefix_context(self):
         source = Path(__file__).resolve().parents[1].joinpath("cogs", "ban.py").read_text(encoding="utf-8")
@@ -272,6 +359,65 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await register_escalation_event(guild_id, 100, "unclaimed", created_at))
         self.assertFalse(await register_escalation_event(guild_id, 100, "unclaimed", created_at))
         self.assertTrue(await escalation_event_exists(guild_id, 100, "unclaimed"))
+
+    async def test_public_guild_settings_are_persistent(self):
+        guild_id = 999999999999999999
+        saved = await save_guild_settings(
+            guild_id,
+            {
+                "NAME": "Public Test Server",
+                "TICKET_CATEGORY_ID": 11,
+                "TICKET_PANEL_CHANNEL_ID": 12,
+                "TICKET_ARCHIVE_CATEGORY_ID": 13,
+                "LOG_CHANNEL_ID": 14,
+                "OWNER_ROLES": [15],
+                "MOD_ROLE": 15,
+                "TRIAL_MOD_ROLE": 15,
+                "WARN_HISTORY_ROLE_ID": 15,
+                "TICKET_OPTIONS": ["Support", "Reports"],
+                "SETUP_COMPLETE": True,
+                "WELCOME_SENT": True,
+            },
+        )
+        self.assertTrue(saved["SETUP_COMPLETE"])
+        self.assertEqual((await get_guild_settings(guild_id))["TICKET_OPTIONS"], ["Support", "Reports"])
+        async with aiosqlite.connect(config.DATABASE) as database:
+            cursor = await database.execute("SELECT name, setup_complete FROM guild_settings WHERE guild_id=?", (guild_id,))
+            self.assertEqual(await cursor.fetchone(), ("Public Test Server", 1))
+        reset = await reset_guild_settings(guild_id)
+        self.assertFalse(reset["SETUP_COMPLETE"])
+        self.assertEqual(reset["TICKET_PANEL_CHANNEL_ID"], 0)
+
+    async def test_delegated_setup_admins_are_persistent(self):
+        guild_id = 777777777777777777
+        added, settings = await add_setup_admin(guild_id, 123456789012345678)
+        self.assertTrue(added)
+        self.assertEqual(settings["SETUP_ADMIN_USERS"], [123456789012345678])
+        duplicate, settings = await add_setup_admin(guild_id, 123456789012345678)
+        self.assertFalse(duplicate)
+        async with aiosqlite.connect(config.DATABASE) as database:
+            cursor = await database.execute("SELECT user_id FROM guild_setup_admins WHERE guild_id=?", (guild_id,))
+            self.assertEqual(await cursor.fetchall(), [(123456789012345678,)])
+        removed, settings = await remove_setup_admin(guild_id, 123456789012345678)
+        self.assertTrue(removed)
+        self.assertEqual(settings["SETUP_ADMIN_USERS"], [])
+
+    async def test_uuid_records_are_isolated_by_guild(self):
+        ticket_uuid = await create_ticket_record(901, 1001, 2001, "Support", datetime.now().isoformat())
+        self.assertIsNotNone(await get_ticket_by_uuid(ticket_uuid, 1001))
+        self.assertIsNone(await get_ticket_by_uuid(ticket_uuid, 1002))
+
+        infraction_uuid = "G1001-isolation-test"
+        async with aiosqlite.connect(config.DATABASE) as database:
+            await database.execute(
+                "INSERT INTO infractions(uuid, guild_id, user_id, moderator_id, action_type, reason, timestamp) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                (infraction_uuid, 1001, 2001, 3001, "Warning", "Isolation test", datetime.now().isoformat()),
+            )
+            await database.commit()
+        self.assertIsNotNone(await get_infraction_by_uuid(infraction_uuid, 1001))
+        self.assertIsNone(await get_infraction_by_uuid(infraction_uuid, 1002))
+        self.assertIsNone(await remove_infraction_by_uuid(infraction_uuid, 1002))
+        self.assertIsNotNone(await get_infraction_by_uuid(infraction_uuid, 1001))
 
     async def test_repeated_errors_share_reference(self):
         references = []

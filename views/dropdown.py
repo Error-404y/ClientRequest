@@ -227,27 +227,6 @@ class ApplicationDropdown (Select ):
         
         
 
-        if config .SETUP_USER_ID :
-
-            setup_member =guild .get_member (
-            config .SETUP_USER_ID 
-            )
-
-            if setup_member :
-
-                overwrites [setup_member ]=(
-                discord .PermissionOverwrite (
-                view_channel =True ,
-                send_messages =True ,
-                manage_channels =True ,
-                read_message_history =True 
-                )
-                )
-
-                
-                
-                
-
         owner_roles =config .get_owner_roles (
         guild_id 
         )

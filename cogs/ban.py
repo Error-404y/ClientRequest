@@ -1211,7 +1211,7 @@ class BanCog (commands .Cog ):
         "-"in user 
         or (user .isdigit ()and len (user )<15 )
         ):
-            found_inf =await get_infraction_by_uuid (user .strip ())
+            found_inf =await get_infraction_by_uuid (user .strip (), interaction.guild.id)
 
             if found_inf :
                 warn_id =user .strip ()
@@ -1336,7 +1336,8 @@ class BanCog (commands .Cog ):
         )
         ):
             found_inf =await get_infraction_by_uuid (
-            user_input .strip ()
+            user_input .strip (),
+            ctx.guild.id,
             )
 
             if found_inf :
@@ -2099,7 +2100,7 @@ class BanCog (commands .Cog ):
 
 
 
-        infraction =await get_infraction_by_uuid (uuid_value )
+        infraction =await get_infraction_by_uuid (uuid_value, interaction.guild.id)
 
         if infraction :
             try :
@@ -2115,7 +2116,7 @@ class BanCog (commands .Cog ):
 
         if infraction :
             if action_value =="remove":
-                removed =await remove_infraction_by_uuid (uuid_value )
+                removed =await remove_infraction_by_uuid (uuid_value, interaction.guild.id)
 
                 if not removed :
                     await interaction .response .send_message (
@@ -2153,7 +2154,7 @@ class BanCog (commands .Cog ):
 
 
 
-        ticket =await get_ticket_by_uuid (uuid_value )
+        ticket =await get_ticket_by_uuid (uuid_value, interaction.guild.id)
 
         if ticket :
             try :
@@ -2240,11 +2241,11 @@ class BanCog (commands .Cog ):
 
 
 
-        infraction =await get_infraction_by_uuid (uuid_value )
+        infraction =await get_infraction_by_uuid (uuid_value, ctx.guild.id)
 
         if infraction :
             if action_value =="remove":
-                removed =await remove_infraction_by_uuid (uuid_value )
+                removed =await remove_infraction_by_uuid (uuid_value, ctx.guild.id)
 
                 if not removed :
                     await ctx .send (
@@ -2281,7 +2282,7 @@ class BanCog (commands .Cog ):
 
 
 
-        ticket =await get_ticket_by_uuid (uuid_value )
+        ticket =await get_ticket_by_uuid (uuid_value, ctx.guild.id)
 
         if ticket :
             if action_value =="remove":

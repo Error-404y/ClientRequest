@@ -13,8 +13,6 @@ def _role_ids(member):
 def is_owner(member):
     if member is None:
         return False
-    if getattr(member, "id", None) == config.SETUP_USER_ID:
-        return True
     guild_id = _guild_id(member)
     if guild_id not in config.GUILDS:
         return False
@@ -40,7 +38,24 @@ def is_staff(member):
 
 
 def can_setup(member):
-    return is_owner(member)
+    if member is None:
+        return False
+    guild = getattr(member, "guild", None)
+    permissions = getattr(member, "guild_permissions", None)
+    guild_id = getattr(guild, "id", None)
+    settings = config.GUILDS.get(guild_id, {})
+    return bool(
+        getattr(guild, "owner_id", None) == getattr(member, "id", None)
+        or getattr(permissions, "administrator", False)
+        or getattr(member, "id", None) in settings.get("SETUP_ADMIN_USERS", [])
+    )
+
+
+def can_manage_setup_admins(member):
+    if member is None:
+        return False
+    guild = getattr(member, "guild", None)
+    return getattr(guild, "owner_id", None) == getattr(member, "id", None)
 
 
 def _allowed_moderation_user(member):
@@ -65,8 +80,6 @@ def can_kick(member):
 def can_warn_or_view_history(member):
     if member is None:
         return False
-    if getattr(member, "id", None) == config.SETUP_USER_ID:
-        return True
     guild_id = _guild_id(member)
     if guild_id not in config.GUILDS:
         return False

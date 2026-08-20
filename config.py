@@ -16,8 +16,11 @@ def _load_local_env():
 
 _load_local_env()
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
+SUPPORT_SERVER_URL = os.getenv("SUPPORT_SERVER_URL", "").strip()
+PRIVACY_POLICY_URL = os.getenv("PRIVACY_POLICY_URL", "").strip()
+TERMS_OF_SERVICE_URL = os.getenv("TERMS_OF_SERVICE_URL", "").strip()
 
-GUILDS = {
+BOOTSTRAP_GUILDS = {
     1536279648428884058: {
         "NAME": "Server 1",
         "TICKET_CATEGORY_ID": 1536487365256814673,
@@ -43,6 +46,62 @@ GUILDS = {
         "TICKET_OPTIONS": ["Partnership", "Player Reports", "Apply Higher Role", "Question", "Issues"],
     },
 }
+
+DEFAULT_TICKET_OPTIONS = ["General Support", "Partnership", "Player Reports", "Questions", "Issues"]
+
+
+def normalize_guild_config(guild_id, settings=None):
+    values = dict(settings or {})
+    staff_roles = [int(role_id) for role_id in values.get("OWNER_ROLES", []) if role_id]
+    primary_staff_role = int(values.get("MOD_ROLE") or (staff_roles[0] if staff_roles else 0))
+    if primary_staff_role and primary_staff_role not in staff_roles:
+        staff_roles.append(primary_staff_role)
+    return {
+        "NAME": str(values.get("NAME") or f"Server {guild_id}"),
+        "TICKET_CATEGORY_ID": int(values.get("TICKET_CATEGORY_ID") or 0),
+        "TICKET_PANEL_CHANNEL_ID": int(values.get("TICKET_PANEL_CHANNEL_ID") or 0),
+        "TICKET_ARCHIVE_CATEGORY_ID": int(values.get("TICKET_ARCHIVE_CATEGORY_ID") or 0),
+        "LOG_CHANNEL_ID": int(values.get("LOG_CHANNEL_ID") or 0),
+        "OWNER_ROLES": staff_roles,
+        "MOD_ROLE": primary_staff_role,
+        "TRIAL_MOD_ROLE": int(values.get("TRIAL_MOD_ROLE") or primary_staff_role),
+        "WARN_HISTORY_ROLE_ID": int(values.get("WARN_HISTORY_ROLE_ID") or primary_staff_role),
+        "ALLOWED_BAN_USERS": [int(user_id) for user_id in values.get("ALLOWED_BAN_USERS", []) if user_id],
+        "SETUP_ADMIN_USERS": [int(user_id) for user_id in values.get("SETUP_ADMIN_USERS", []) if user_id],
+        "TICKET_OPTIONS": list(values.get("TICKET_OPTIONS") or DEFAULT_TICKET_OPTIONS),
+        "TIMEZONE": str(values.get("TIMEZONE") or "Europe/Athens"),
+        "SETUP_COMPLETE": bool(values.get("SETUP_COMPLETE", False)),
+        "WELCOME_SENT": bool(values.get("WELCOME_SENT", False)),
+    }
+
+
+GUILDS = {
+    guild_id: normalize_guild_config(
+        guild_id,
+        {**settings, "SETUP_COMPLETE": True, "WELCOME_SENT": True},
+    )
+    for guild_id, settings in BOOTSTRAP_GUILDS.items()
+}
+
+
+def register_guild_config(guild_id, settings):
+    GUILDS[int(guild_id)] = normalize_guild_config(guild_id, settings)
+    return GUILDS[int(guild_id)]
+
+
+def remove_guild_config(guild_id):
+    return GUILDS.pop(int(guild_id), None)
+
+
+def is_guild_configured(guild_id):
+    settings = GUILDS.get(int(guild_id))
+    return bool(settings and settings.get("SETUP_COMPLETE"))
+
+
+def replace_guild_configs(settings_by_guild):
+    GUILDS.clear()
+    for guild_id, settings in settings_by_guild.items():
+        register_guild_config(guild_id, settings)
 
 
 def get_guild_config(guild_id):

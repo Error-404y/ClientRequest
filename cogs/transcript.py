@@ -72,8 +72,10 @@ def parse_markdown (text ):
 
 async def create_transcript (channel ,lightweight =False ):
     log_transcript ("Initiated creation",channel ,details =f"Lightweight: {lightweight }")
-    
-    transcript_dir =f"{config .TRANSCRIPT_FOLDER }/transcript-{channel .name }-{channel .id }"
+
+    guild_transcript_dir =os .path .join (config .TRANSCRIPT_FOLDER ,str (channel .guild .id ))
+    os .makedirs (guild_transcript_dir ,exist_ok =True )
+    transcript_dir =os .path .join (guild_transcript_dir ,f"transcript-{channel .name }-{channel .id }")
     avatars_dir =f"{transcript_dir }/avatars"
     attachments_dir =f"{transcript_dir }/attachments"
 
@@ -125,7 +127,7 @@ async def create_transcript (channel ,lightweight =False ):
             
         badge_html =""
         from utils.permissions import is_owner
-        if (member and is_owner(member)) or message.author.id == config.SETUP_USER_ID:
+        if member and is_owner(member):
             badge_html ='<span class="user-badge badge-owner">Owner</span>'
             msg_class ="msg-owner"
         elif member :
@@ -627,7 +629,7 @@ async def create_transcript (channel ,lightweight =False ):
         file .write (page )
 
         
-    zip_filename =f"{config .TRANSCRIPT_FOLDER }/{channel .name }.zip"
+    zip_filename =os .path .join (guild_transcript_dir ,f"{channel .name }.zip")
 
     with zipfile .ZipFile (zip_filename ,'w',zipfile .ZIP_DEFLATED )as zip_file :
         for root ,dirs ,files in os .walk (transcript_dir ):

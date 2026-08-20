@@ -103,7 +103,7 @@ class Availability(commands.Cog):
         ]
     )
     async def availability(self, interaction: discord.Interaction, status: app_commands.Choice[str]):
-        if interaction.guild is None or interaction.guild.id not in config.GUILDS:
+        if interaction.guild is None or not config.is_guild_configured(interaction.guild.id):
             await interaction.response.send_message("This command can only be used in a configured server.", ephemeral=True)
             return
         if not is_staff(interaction.user):
@@ -139,7 +139,7 @@ class Availability(commands.Cog):
 
     @app_commands.command(name="availabilitylist", description="Display the current ticket-support availability team")
     async def availabilitylist(self, interaction: discord.Interaction):
-        if interaction.guild is None or interaction.guild.id not in config.GUILDS:
+        if interaction.guild is None or not config.is_guild_configured(interaction.guild.id):
             await interaction.response.send_message("This command can only be used in a configured server.", ephemeral=True)
             return
         if not is_staff(interaction.user):

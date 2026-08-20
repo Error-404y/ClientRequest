@@ -1,31 +1,29 @@
-import discord
+import discord 
 
-from discord.ext import commands
+from discord .ext import commands 
 
-import config
+import config 
 
-from utils.logger import log
-
-
-
-
-
-class Setup(commands.Cog):
-
-
-    def __init__(self, bot):
-
-        self.bot = bot
+from utils .logger import log 
 
 
 
 
 
-    @commands.Cog.listener()
-    async def on_ready(self):
-        pass
+class Setup (commands .Cog ):
 
 
+    def __init__ (self ,bot ):
+
+        self .bot =bot 
+
+
+
+
+
+    @commands .Cog .listener ()
+    async def on_ready (self ):
+        pass 
 
 
 
@@ -33,10 +31,12 @@ class Setup(commands.Cog):
 
 
 
-async def setup(bot):
 
-    await bot.add_cog(
 
-        Setup(bot)
+async def setup (bot ):
+
+    await bot .add_cog (
+
+    Setup (bot )
 
     )

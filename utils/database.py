@@ -1,4 +1,6 @@
+import json
 import os 
+import shutil
 import uuid as uuid_lib 
 from datetime import datetime 
 
@@ -288,6 +290,12 @@ async def setup_database ():
             "CREATE TABLE IF NOT EXISTS escalation_events (guild_id INTEGER NOT NULL, channel_id INTEGER NOT NULL, event_key TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (guild_id, channel_id, event_key))"
         )
         await db.execute(
+            "CREATE TABLE IF NOT EXISTS guild_settings (guild_id INTEGER PRIMARY KEY, name TEXT NOT NULL, ticket_category_id INTEGER NOT NULL DEFAULT 0, ticket_panel_channel_id INTEGER NOT NULL DEFAULT 0, ticket_archive_category_id INTEGER NOT NULL DEFAULT 0, log_channel_id INTEGER NOT NULL DEFAULT 0, owner_role_ids TEXT NOT NULL DEFAULT '[]', mod_role_id INTEGER NOT NULL DEFAULT 0, trial_mod_role_id INTEGER NOT NULL DEFAULT 0, warn_history_role_id INTEGER NOT NULL DEFAULT 0, allowed_ban_user_ids TEXT NOT NULL DEFAULT '[]', ticket_options TEXT NOT NULL DEFAULT '[]', timezone TEXT NOT NULL DEFAULT 'Europe/Athens', setup_complete INTEGER NOT NULL DEFAULT 0, welcome_sent INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS guild_setup_admins (guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, added_at TEXT NOT NULL, PRIMARY KEY (guild_id, user_id))"
+        )
+        await db.execute(
             "CREATE TABLE IF NOT EXISTS error_events (reference TEXT PRIMARY KEY, fingerprint TEXT UNIQUE NOT NULL, category TEXT NOT NULL, error_type TEXT NOT NULL, message TEXT NOT NULL, traceback TEXT NOT NULL, context TEXT, guild_id INTEGER, channel_id INTEGER, user_id INTEGER, occurrence_count INTEGER NOT NULL DEFAULT 1, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL)"
         )
         await db.execute(
@@ -296,6 +304,61 @@ async def setup_database ():
         await db.execute("CREATE INDEX IF NOT EXISTS idx_staff_availability_status ON staff_availability(guild_id, status)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_error_events_last_seen ON error_events(last_seen DESC)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_performance_events_created_at ON performance_events(created_at DESC)")
+        now_value = datetime.now(pytz.timezone(config.TIMEZONE)).isoformat()
+        for guild_id, bootstrap_settings in config.BOOTSTRAP_GUILDS.items():
+            normalized = config.normalize_guild_config(
+                guild_id,
+                {**bootstrap_settings, "SETUP_COMPLETE": True, "WELCOME_SENT": True},
+            )
+            await db.execute(
+                "INSERT OR IGNORE INTO guild_settings(guild_id, name, ticket_category_id, ticket_panel_channel_id, ticket_archive_category_id, log_channel_id, owner_role_ids, mod_role_id, trial_mod_role_id, warn_history_role_id, allowed_ban_user_ids, ticket_options, timezone, setup_complete, welcome_sent, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    guild_id,
+                    normalized["NAME"],
+                    normalized["TICKET_CATEGORY_ID"],
+                    normalized["TICKET_PANEL_CHANNEL_ID"],
+                    normalized["TICKET_ARCHIVE_CATEGORY_ID"],
+                    normalized["LOG_CHANNEL_ID"],
+                    json.dumps(normalized["OWNER_ROLES"]),
+                    normalized["MOD_ROLE"],
+                    normalized["TRIAL_MOD_ROLE"],
+                    normalized["WARN_HISTORY_ROLE_ID"],
+                    json.dumps(normalized["ALLOWED_BAN_USERS"]),
+                    json.dumps(normalized["TICKET_OPTIONS"]),
+                    normalized["TIMEZONE"],
+                    int(normalized["SETUP_COMPLETE"]),
+                    int(normalized["WELCOME_SENT"]),
+                    now_value,
+                    now_value,
+                ),
+            )
+        cursor = await db.execute(
+            "SELECT guild_id, name, ticket_category_id, ticket_panel_channel_id, ticket_archive_category_id, log_channel_id, owner_role_ids, mod_role_id, trial_mod_role_id, warn_history_role_id, allowed_ban_user_ids, ticket_options, timezone, setup_complete, welcome_sent FROM guild_settings"
+        )
+        admin_cursor = await db.execute("SELECT guild_id, user_id FROM guild_setup_admins ORDER BY user_id")
+        setup_admins = {}
+        for guild_id, user_id in await admin_cursor.fetchall():
+            setup_admins.setdefault(guild_id, []).append(user_id)
+        persistent_settings = {}
+        for row in await cursor.fetchall():
+            persistent_settings[row[0]] = {
+                "NAME": row[1],
+                "TICKET_CATEGORY_ID": row[2],
+                "TICKET_PANEL_CHANNEL_ID": row[3],
+                "TICKET_ARCHIVE_CATEGORY_ID": row[4],
+                "LOG_CHANNEL_ID": row[5],
+                "OWNER_ROLES": json.loads(row[6]),
+                "MOD_ROLE": row[7],
+                "TRIAL_MOD_ROLE": row[8],
+                "WARN_HISTORY_ROLE_ID": row[9],
+                "ALLOWED_BAN_USERS": json.loads(row[10]),
+                "SETUP_ADMIN_USERS": setup_admins.get(row[0], []),
+                "TICKET_OPTIONS": json.loads(row[11]),
+                "TIMEZONE": row[12],
+                "SETUP_COMPLETE": bool(row[13]),
+                "WELCOME_SENT": bool(row[14]),
+            }
+        config.replace_guild_configs(persistent_settings)
         for guild_id in config.GUILDS:
             cursor = await db.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM tickets WHERE guild_id=?", (guild_id,))
             suggested = (await cursor.fetchone())[0]
@@ -314,6 +377,118 @@ async def setup_database ():
     f"repaired {repaired_infraction_count } infraction UUID(s)"
     )
     )
+
+
+async def save_guild_settings(guild_id, settings):
+    normalized = config.normalize_guild_config(guild_id, settings)
+    now_value = datetime.now(pytz.timezone(config.TIMEZONE)).isoformat()
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute(
+            "INSERT INTO guild_settings(guild_id, name, ticket_category_id, ticket_panel_channel_id, ticket_archive_category_id, log_channel_id, owner_role_ids, mod_role_id, trial_mod_role_id, warn_history_role_id, allowed_ban_user_ids, ticket_options, timezone, setup_complete, welcome_sent, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(guild_id) DO UPDATE SET name=excluded.name, ticket_category_id=excluded.ticket_category_id, ticket_panel_channel_id=excluded.ticket_panel_channel_id, ticket_archive_category_id=excluded.ticket_archive_category_id, log_channel_id=excluded.log_channel_id, owner_role_ids=excluded.owner_role_ids, mod_role_id=excluded.mod_role_id, trial_mod_role_id=excluded.trial_mod_role_id, warn_history_role_id=excluded.warn_history_role_id, allowed_ban_user_ids=excluded.allowed_ban_user_ids, ticket_options=excluded.ticket_options, timezone=excluded.timezone, setup_complete=excluded.setup_complete, welcome_sent=excluded.welcome_sent, updated_at=excluded.updated_at",
+            (
+                int(guild_id),
+                normalized["NAME"],
+                normalized["TICKET_CATEGORY_ID"],
+                normalized["TICKET_PANEL_CHANNEL_ID"],
+                normalized["TICKET_ARCHIVE_CATEGORY_ID"],
+                normalized["LOG_CHANNEL_ID"],
+                json.dumps(normalized["OWNER_ROLES"]),
+                normalized["MOD_ROLE"],
+                normalized["TRIAL_MOD_ROLE"],
+                normalized["WARN_HISTORY_ROLE_ID"],
+                json.dumps(normalized["ALLOWED_BAN_USERS"]),
+                json.dumps(normalized["TICKET_OPTIONS"]),
+                normalized["TIMEZONE"],
+                int(normalized["SETUP_COMPLETE"]),
+                int(normalized["WELCOME_SENT"]),
+                now_value,
+                now_value,
+            ),
+        )
+        await db.execute(
+            "INSERT OR IGNORE INTO ticket_counters(guild_id, next_number) VALUES(?, 1)",
+            (int(guild_id),),
+        )
+        await db.execute("DELETE FROM guild_setup_admins WHERE guild_id=?", (int(guild_id),))
+        for user_id in normalized["SETUP_ADMIN_USERS"]:
+            await db.execute(
+                "INSERT INTO guild_setup_admins(guild_id, user_id, added_at) VALUES(?, ?, ?)",
+                (int(guild_id), int(user_id), now_value),
+            )
+        await db.commit()
+    return config.register_guild_config(guild_id, normalized)
+
+
+async def get_guild_settings(guild_id):
+    return config.GUILDS.get(int(guild_id))
+
+
+async def reset_guild_settings(guild_id):
+    current = config.GUILDS.get(int(guild_id), {})
+    reset_settings = await save_guild_settings(
+        guild_id,
+        {
+            "NAME": current.get("NAME", f"Server {guild_id}"),
+            "SETUP_ADMIN_USERS": current.get("SETUP_ADMIN_USERS", []),
+            "SETUP_COMPLETE": False,
+            "WELCOME_SENT": True,
+        },
+    )
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute("DELETE FROM staff_availability WHERE guild_id=?", (int(guild_id),))
+        await db.execute("DELETE FROM ticket_panels WHERE guild_id=?", (int(guild_id),))
+        await db.execute("DELETE FROM escalation_events WHERE guild_id=?", (int(guild_id),))
+        await db.commit()
+    return reset_settings
+
+
+async def purge_guild_data(guild_id):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute("SELECT uuid FROM infractions WHERE guild_id=? AND uuid IS NOT NULL", (int(guild_id),))
+        infraction_uuids = [row[0] for row in await cursor.fetchall()]
+        for table in (
+            "guild_settings",
+            "guild_setup_admins",
+            "staff_availability",
+            "ticket_panels",
+            "escalation_events",
+            "ticket_counters",
+            "tickets",
+            "infractions",
+            "user_stats",
+            "error_events",
+            "performance_events",
+        ):
+            await db.execute(f"DELETE FROM {table} WHERE guild_id=?", (int(guild_id),))
+        await db.commit()
+    transcript_directory = os.path.join(config.TRANSCRIPT_FOLDER, str(int(guild_id)))
+    if os.path.isdir(transcript_directory):
+        shutil.rmtree(transcript_directory)
+    monitor_directory = os.path.join(config.BASE_DIR, "MonitorUUID")
+    for infraction_uuid in infraction_uuids:
+        record_path = os.path.join(monitor_directory, f"{infraction_uuid}.txt")
+        if os.path.isfile(record_path):
+            os.remove(record_path)
+    config.remove_guild_config(guild_id)
+
+
+async def add_setup_admin(guild_id, user_id):
+    current = dict(config.GUILDS.get(int(guild_id)) or config.normalize_guild_config(guild_id))
+    admin_users = list(current.get("SETUP_ADMIN_USERS", []))
+    if int(user_id) in admin_users:
+        return False, current
+    admin_users.append(int(user_id))
+    current["SETUP_ADMIN_USERS"] = admin_users
+    return True, await save_guild_settings(guild_id, current)
+
+
+async def remove_setup_admin(guild_id, user_id):
+    current = dict(config.GUILDS.get(int(guild_id)) or config.normalize_guild_config(guild_id))
+    admin_users = list(current.get("SETUP_ADMIN_USERS", []))
+    if int(user_id) not in admin_users:
+        return False, current
+    current["SETUP_ADMIN_USERS"] = [admin_id for admin_id in admin_users if admin_id != int(user_id)]
+    return True, await save_guild_settings(guild_id, current)
 
 
     
@@ -545,7 +720,8 @@ guild_id :int =None
 
 
 async def get_infraction_by_uuid (
-uuid_str :str 
+uuid_str :str,
+guild_id :int,
 ):
 
     if not uuid_str :
@@ -577,12 +753,12 @@ uuid_str :str
                 uuid
             FROM infractions
             WHERE
-                uuid=?
-                OR uuid LIKE ?
-                OR uuid LIKE ?
+                guild_id=?
+                AND (uuid=? OR uuid LIKE ? OR uuid LIKE ?)
             ORDER BY id DESC
             LIMIT 1
         """,(
+        guild_id,
         uuid_str ,
         f"{uuid_str }%",
         f"%{uuid_str }"
@@ -610,7 +786,8 @@ uuid_str :str
     
 
 async def get_ticket_by_uuid (
-uuid_str :str 
+uuid_str :str,
+guild_id :int,
 ):
 
     if not uuid_str :
@@ -649,12 +826,12 @@ uuid_str :str
                 uuid
             FROM tickets
             WHERE
-                uuid=?
-                OR uuid LIKE ?
-                OR uuid LIKE ?
+                guild_id=?
+                AND (uuid=? OR uuid LIKE ? OR uuid LIKE ?)
             ORDER BY id DESC
             LIMIT 1
         """,(
+        guild_id,
         uuid_str ,
         f"{uuid_str }%",
         f"%{uuid_str }"
@@ -891,7 +1068,8 @@ guild_id :int =None
         
 
 async def remove_infraction_by_uuid (
-uuid_str :str 
+uuid_str :str,
+guild_id :int,
 ):
 
     if not uuid_str :
@@ -918,12 +1096,12 @@ uuid_str :str
                 uuid
             FROM infractions
             WHERE
-                uuid=?
-                OR uuid LIKE ?
-                OR uuid LIKE ?
+                guild_id=?
+                AND (uuid=? OR uuid LIKE ? OR uuid LIKE ?)
             ORDER BY id DESC
             LIMIT 1
         """,(
+        guild_id,
         uuid_str ,
         f"{uuid_str }%",
         f"%{uuid_str }"

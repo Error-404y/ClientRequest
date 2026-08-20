@@ -93,6 +93,7 @@ async def on_error(event_method, *args, **kwargs):
     log_exception("EVENT", error, context=f"Discord event: {event_method}")
 
 extensions =[
+"cogs.onboarding",
 "cogs.tickets",
 "cogs.transcript",
 "cogs.inactivity",

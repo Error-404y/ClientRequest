@@ -112,7 +112,7 @@ class Updates(commands.Cog):
                 continue
         return None
 
-    @app_commands.command(name="updatez", description="Broadcast a professional update to every ticket panel")
+    @app_commands.command(name="updatez", description="Publish a professional update to this server's ticket panel")
     @app_commands.describe(
         status="Current stage of the update",
         headline="Short title describing the update",
@@ -142,54 +142,42 @@ class Updates(commands.Cog):
         if interaction.guild is None:
             await interaction.response.send_message("This command can only be used inside a configured server.", ephemeral=True)
             return
+        if not config.is_guild_configured(interaction.guild.id):
+            await interaction.response.send_message("This server is not configured. Run `/setup start` first.", ephemeral=True)
+            return
         if not is_staff(interaction.user):
-            await interaction.response.send_message("You do not have permission to publish global updates.", ephemeral=True)
+            await interaction.response.send_message("You do not have permission to publish server updates.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
-        successful = []
-        unavailable = []
-        failed = []
+        panel_channel = await self.resolve_panel_channel(interaction.guild)
+        if panel_channel is None:
+            await interaction.followup.send("No accessible ticket panel was found. Run `/setup repair`.", ephemeral=True)
+            return
 
-        for guild in self.bot.guilds:
-            guild_id = guild.id
-            panel_channel = await self.resolve_panel_channel(guild)
-            if panel_channel is None:
-                unavailable.append(f"{guild.name} (`{guild_id}`): no accessible ticket panel was found")
-                continue
+        embed = self.build_embed(
+            interaction.guild,
+            interaction,
+            status.value,
+            headline,
+            details,
+            expected_time,
+            next_step,
+        )
+        try:
+            message = await panel_channel.send(embed=embed)
+        except discord.HTTPException as error:
+            reference = log_exception("UPDATE", error, guild=interaction.guild, channel=panel_channel, user=interaction.user, context="Server update publish failed")
+            await interaction.followup.send(f"The update could not be published. Error reference: `{reference}`", ephemeral=True)
+            return
 
-            embed = self.build_embed(
-                guild,
-                interaction,
-                status.value,
-                headline,
-                details,
-                expected_time,
-                next_step,
-            )
-            try:
-                message = await panel_channel.send(embed=embed)
-            except discord.HTTPException as error:
-                failed.append(f"{guild.name} (`{guild_id}`): {error}")
-                log_ticket("Global Update Failed", panel_channel, interaction.user, details=str(error))
-                continue
-
-            successful.append(f"{guild.name}: {panel_channel.mention}")
-            log_ticket(
-                "Global Update Published",
-                panel_channel,
-                interaction.user,
-                details=f"Status: {status.value}, Message ID: {message.id}, Guild ID: {guild_id}",
-            )
-
-        lines = [f"Published successfully to {len(successful)} of {len(self.bot.guilds)} connected servers."]
-        if successful:
-            lines.append("\nSuccessful\n" + "\n".join(successful))
-        if unavailable:
-            lines.append("\nUnavailable\n" + "\n".join(unavailable))
-        if failed:
-            lines.append("\nFailed\n" + "\n".join(failed))
-        await interaction.followup.send("\n".join(lines)[:2000], ephemeral=True)
+        log_ticket(
+            "Server Update Published",
+            panel_channel,
+            interaction.user,
+            details=f"Status: {status.value}, Message ID: {message.id}, Guild ID: {interaction.guild.id}",
+        )
+        await interaction.followup.send(f"Update published successfully in {panel_channel.mention}.", ephemeral=True)
 
 
 async def setup(bot):
