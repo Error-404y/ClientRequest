@@ -6,7 +6,7 @@ import pytz
 from discord.ext import commands
 
 import config
-from utils.embeds import error
+from utils.embeds import error as error_embed
 from utils.logger import log_command, log_exception
 from utils.permissions import is_staff
 
@@ -43,14 +43,18 @@ class Stats(commands.Cog):
         )
         if not is_staff(ctx.author):
             await ctx.send(
-                embed=error("You do not have permission to view staff statistics.")
+                embed=error_embed(
+                    "You do not have permission to view staff statistics."
+                )
             )
             return
 
         target_member = member or ctx.author
         if not is_staff(target_member):
             await ctx.send(
-                embed=error(f"**{target_member.display_name}** is not a staff member.")
+                embed=error_embed(
+                    f"**{target_member.display_name}** is not a staff member."
+                )
             )
             return
 
@@ -182,7 +186,9 @@ class Stats(commands.Cog):
         log_command(ctx.author, "!stats leaderboard", ctx.channel)
         if not is_staff(ctx.author):
             await ctx.send(
-                embed=error("You do not have permission to view staff leaderboard.")
+                embed=error_embed(
+                    "You do not have permission to view staff leaderboard."
+                )
             )
             return
 

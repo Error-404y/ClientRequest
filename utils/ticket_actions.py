@@ -15,7 +15,7 @@ timezone = pytz.timezone(config.TIMEZONE)
 
 
 async def close_ticket_channel(channel, moderator, reason, bot):
-    from utils.embeds import error
+    from utils.embeds import error as error_embed
 
     log_ticket("Closing Initiated", channel, moderator, details=f"Reason: {reason}")
     original_name = channel.name
@@ -239,7 +239,7 @@ async def close_ticket_channel(channel, moderator, reason, bot):
     if not dm_success and member:
         try:
             await channel.send(
-                embed=error(
+                embed=error_embed(
                     f"Could not send DM to applicant **{member.display_name}** (DMs are disabled). "
                     f"The offline transcript has been attached above for staff review."
                 )

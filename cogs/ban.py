@@ -16,7 +16,7 @@ from utils.database import (
     remove_infraction_by_uuid,
     remove_user_warning,
 )
-from utils.embeds import error
+from utils.embeds import error as error_embed
 from utils.logger import (
     log_command,
     log_dm,
@@ -251,7 +251,7 @@ class BanCog(commands.Cog):
             )
 
             await interaction.response.send_message(
-                embed=error("You do not have permission to use this command."),
+                embed=error_embed("You do not have permission to use this command."),
                 ephemeral=True,
             )
             return
@@ -264,7 +264,7 @@ class BanCog(commands.Cog):
 
         if not target_obj and not target_id:
             await interaction.response.send_message(
-                embed=error(f"Could not find or resolve user: `{user}`"),
+                embed=error_embed(f"Could not find or resolve user: `{user}`"),
                 ephemeral=True,
             )
             return
@@ -318,13 +318,15 @@ class BanCog(commands.Cog):
             )
 
             await ctx.send(
-                embed=error("You do not have permission to use this command.")
+                embed=error_embed("You do not have permission to use this command.")
             )
             return
 
         if not user_input:
             await ctx.send(
-                embed=error("Please specify a Username, Mention, or User ID to ban.")
+                embed=error_embed(
+                    "Please specify a Username, Mention, or User ID to ban."
+                )
             )
             return
 
@@ -336,7 +338,7 @@ class BanCog(commands.Cog):
 
         if not target_obj and not target_id:
             await ctx.send(
-                embed=error(f"Could not find or resolve user: `{user_input}`")
+                embed=error_embed(f"Could not find or resolve user: `{user_input}`")
             )
             return
 
@@ -392,7 +394,7 @@ class BanCog(commands.Cog):
             )
 
             await interaction.response.send_message(
-                embed=error("You do not have permission to use this command."),
+                embed=error_embed("You do not have permission to use this command."),
                 ephemeral=True,
             )
             return
@@ -405,7 +407,7 @@ class BanCog(commands.Cog):
 
         if not target_obj and not target_id:
             await interaction.response.send_message(
-                embed=error(f"Could not resolve banned user: `{user}`"),
+                embed=error_embed(f"Could not resolve banned user: `{user}`"),
                 ephemeral=True,
             )
             return
@@ -459,13 +461,13 @@ class BanCog(commands.Cog):
             )
 
             await ctx.send(
-                embed=error("You do not have permission to use this command.")
+                embed=error_embed("You do not have permission to use this command.")
             )
             return
 
         if not user_input:
             await ctx.send(
-                embed=error("Please specify a Username or User ID to unban.")
+                embed=error_embed("Please specify a Username or User ID to unban.")
             )
             return
 
@@ -477,7 +479,7 @@ class BanCog(commands.Cog):
 
         if not target_obj and not target_id:
             await ctx.send(
-                embed=error(f"Could not resolve banned user: `{user_input}`")
+                embed=error_embed(f"Could not resolve banned user: `{user_input}`")
             )
             return
 
@@ -533,7 +535,7 @@ class BanCog(commands.Cog):
             )
 
             await interaction.response.send_message(
-                embed=error("You do not have permission to use this command."),
+                embed=error_embed("You do not have permission to use this command."),
                 ephemeral=True,
             )
             return
@@ -546,7 +548,7 @@ class BanCog(commands.Cog):
 
         if not target_obj and not target_id:
             await interaction.response.send_message(
-                embed=error(f"Could not find or resolve user: `{user}`"),
+                embed=error_embed(f"Could not find or resolve user: `{user}`"),
                 ephemeral=True,
             )
             return
@@ -600,13 +602,15 @@ class BanCog(commands.Cog):
             )
 
             await ctx.send(
-                embed=error("You do not have permission to use this command.")
+                embed=error_embed("You do not have permission to use this command.")
             )
             return
 
         if not user_input:
             await ctx.send(
-                embed=error("Please specify a Username, Mention, or User ID to kick.")
+                embed=error_embed(
+                    "Please specify a Username, Mention, or User ID to kick."
+                )
             )
             return
 
@@ -618,7 +622,7 @@ class BanCog(commands.Cog):
 
         if not target_obj and not target_id:
             await ctx.send(
-                embed=error(f"Could not find or resolve user: `{user_input}`")
+                embed=error_embed(f"Could not find or resolve user: `{user_input}`")
             )
             return
 
@@ -794,7 +798,7 @@ class BanCog(commands.Cog):
             )
 
             await interaction.followup.send(
-                embed=error("You do not have permission to use this command."),
+                embed=error_embed("You do not have permission to use this command."),
                 ephemeral=True,
             )
             return
@@ -807,7 +811,7 @@ class BanCog(commands.Cog):
 
         if not target_obj and not target_id:
             await interaction.followup.send(
-                embed=error(f"Could not find or resolve user: `{user}`"),
+                embed=error_embed(f"Could not find or resolve user: `{user}`"),
                 ephemeral=True,
             )
             return
@@ -816,13 +820,13 @@ class BanCog(commands.Cog):
 
         if not actual_id:
             await interaction.followup.send(
-                embed=error(f"Could not determine the user ID for `{user}`"),
+                embed=error_embed(f"Could not determine the user ID for `{user}`"),
                 ephemeral=True,
             )
             return
         if not can_moderate_target(interaction.user, target_obj or actual_id):
             await interaction.followup.send(
-                embed=error(
+                embed=error_embed(
                     "You cannot warn yourself, the server owner, or a member with an equal or higher role."
                 ),
                 ephemeral=True,
@@ -866,13 +870,15 @@ class BanCog(commands.Cog):
             )
 
             await ctx.send(
-                embed=error("You do not have permission to use this command.")
+                embed=error_embed("You do not have permission to use this command.")
             )
             return
 
         if not user_input:
             await ctx.send(
-                embed=error("Please specify a Username, Mention, or User ID to warn.")
+                embed=error_embed(
+                    "Please specify a Username, Mention, or User ID to warn."
+                )
             )
             return
 
@@ -884,18 +890,20 @@ class BanCog(commands.Cog):
 
         if not target_obj and not target_id:
             await ctx.send(
-                embed=error(f"Could not find or resolve user: `{user_input}`")
+                embed=error_embed(f"Could not find or resolve user: `{user_input}`")
             )
             return
 
         actual_id = target_id or getattr(target_obj, "id", None)
 
         if not actual_id:
-            await ctx.send(embed=error("Could not determine the target user's ID."))
+            await ctx.send(
+                embed=error_embed("Could not determine the target user's ID.")
+            )
             return
         if not can_moderate_target(ctx.author, target_obj or actual_id):
             await ctx.send(
-                embed=error(
+                embed=error_embed(
                     "You cannot warn yourself, the server owner, or a member with an equal or higher role."
                 )
             )
@@ -1092,7 +1100,7 @@ class BanCog(commands.Cog):
             )
 
             await interaction.response.send_message(
-                embed=error("You do not have permission to use this command."),
+                embed=error_embed("You do not have permission to use this command."),
                 ephemeral=True,
             )
             return
@@ -1114,7 +1122,7 @@ class BanCog(commands.Cog):
 
         if not actual_id:
             await interaction.response.send_message(
-                embed=error(f"Could not find or resolve user: `{user}`"),
+                embed=error_embed(f"Could not find or resolve user: `{user}`"),
                 ephemeral=True,
             )
             return
@@ -1143,7 +1151,7 @@ class BanCog(commands.Cog):
                 )
 
             await interaction.response.send_message(
-                embed=error(message),
+                embed=error_embed(message),
                 ephemeral=True,
             )
             return
@@ -1181,13 +1189,13 @@ class BanCog(commands.Cog):
             )
 
             await ctx.send(
-                embed=error("You do not have permission to use this command.")
+                embed=error_embed("You do not have permission to use this command.")
             )
             return
 
         if not user_input:
             await ctx.send(
-                embed=error(
+                embed=error_embed(
                     "Please specify a Username, Mention, or User ID "
                     "to remove warning from."
                 )
@@ -1231,7 +1239,7 @@ class BanCog(commands.Cog):
 
         if not actual_id:
             await ctx.send(
-                embed=error(f"Could not find or resolve user: `{user_input}`")
+                embed=error_embed(f"Could not find or resolve user: `{user_input}`")
             )
             return
 
@@ -1258,7 +1266,7 @@ class BanCog(commands.Cog):
                     f"**{target_name}** (`{actual_id}`)."
                 )
 
-            await ctx.send(embed=error(message))
+            await ctx.send(embed=error_embed(message))
             return
 
         await ctx.send(embed=embed)
@@ -1451,7 +1459,7 @@ class BanCog(commands.Cog):
             )
 
             await interaction.response.send_message(
-                embed=error("You do not have permission to view user history."),
+                embed=error_embed("You do not have permission to view user history."),
                 ephemeral=True,
             )
             return
@@ -1468,7 +1476,7 @@ class BanCog(commands.Cog):
 
         if not actual_id:
             await interaction.response.send_message(
-                embed=error(f"Could not find or resolve user: `{search_user}`"),
+                embed=error_embed(f"Could not find or resolve user: `{search_user}`"),
                 ephemeral=True,
             )
             return
@@ -1506,7 +1514,7 @@ class BanCog(commands.Cog):
             )
 
             await ctx.send(
-                embed=error("You do not have permission to view user history.")
+                embed=error_embed("You do not have permission to view user history.")
             )
             return
 
@@ -1522,7 +1530,7 @@ class BanCog(commands.Cog):
 
         if not actual_id:
             await ctx.send(
-                embed=error(f"Could not find or resolve user: `{search_user}`")
+                embed=error_embed(f"Could not find or resolve user: `{search_user}`")
             )
             return
 
@@ -1854,7 +1862,7 @@ class BanCog(commands.Cog):
 
         if not can_warn_or_view_history(interaction.user):
             await interaction.response.send_message(
-                embed=error("You do not have permission to use this command."),
+                embed=error_embed("You do not have permission to use this command."),
                 ephemeral=True,
             )
             return
@@ -1864,14 +1872,14 @@ class BanCog(commands.Cog):
 
         if not uuid_value:
             await interaction.response.send_message(
-                embed=error("Please specify an Infraction UUID or Ticket UUID."),
+                embed=error_embed("Please specify an Infraction UUID or Ticket UUID."),
                 ephemeral=True,
             )
             return
 
         if action_value not in ("view", "remove"):
             await interaction.response.send_message(
-                embed=error("Invalid action. Please use `view` or `remove`."),
+                embed=error_embed("Invalid action. Please use `view` or `remove`."),
                 ephemeral=True,
             )
             return
@@ -1895,7 +1903,7 @@ class BanCog(commands.Cog):
 
                 if not removed:
                     await interaction.response.send_message(
-                        embed=error(f"Could not remove UUID: `{uuid_value}`"),
+                        embed=error_embed(f"Could not remove UUID: `{uuid_value}`"),
                         ephemeral=True,
                     )
                     return
@@ -1932,7 +1940,7 @@ class BanCog(commands.Cog):
         if ticket:
             if action_value == "remove":
                 await interaction.response.send_message(
-                    embed=error(
+                    embed=error_embed(
                         "This UUID belongs to a support ticket.\n\n"
                         "`/infraction remove` can only remove "
                         "moderation infractions. Tickets are not "
@@ -1948,7 +1956,9 @@ class BanCog(commands.Cog):
             return
 
         await interaction.response.send_message(
-            embed=error(f"No ticket or infraction found matching UUID: `{uuid_value}`"),
+            embed=error_embed(
+                f"No ticket or infraction found matching UUID: `{uuid_value}`"
+            ),
             ephemeral=True,
         )
 
@@ -1968,13 +1978,13 @@ class BanCog(commands.Cog):
 
         if not can_warn_or_view_history(ctx.author):
             await ctx.send(
-                embed=error("You do not have permission to use this command.")
+                embed=error_embed("You do not have permission to use this command.")
             )
             return
 
         if not uuid_input:
             await ctx.send(
-                embed=error("Please specify an Infraction UUID or Ticket UUID.")
+                embed=error_embed("Please specify an Infraction UUID or Ticket UUID.")
             )
             return
 
@@ -1983,7 +1993,7 @@ class BanCog(commands.Cog):
 
         if action_value not in ("view", "remove"):
             await ctx.send(
-                embed=error("Invalid action. Please use `view` or `remove`.")
+                embed=error_embed("Invalid action. Please use `view` or `remove`.")
             )
             return
 
@@ -1995,7 +2005,7 @@ class BanCog(commands.Cog):
 
                 if not removed:
                     await ctx.send(
-                        embed=error(f"Could not remove UUID: `{uuid_value}`")
+                        embed=error_embed(f"Could not remove UUID: `{uuid_value}`")
                     )
                     return
 
@@ -2018,7 +2028,7 @@ class BanCog(commands.Cog):
         if ticket:
             if action_value == "remove":
                 await ctx.send(
-                    embed=error(
+                    embed=error_embed(
                         "This UUID belongs to a support ticket.\n\n"
                         "`!infraction <UUID> remove` can only "
                         "remove moderation infractions. Tickets "
@@ -2031,7 +2041,9 @@ class BanCog(commands.Cog):
             return
 
         await ctx.send(
-            embed=error(f"No ticket or infraction found matching UUID: `{uuid_value}`")
+            embed=error_embed(
+                f"No ticket or infraction found matching UUID: `{uuid_value}`"
+            )
         )
 
 

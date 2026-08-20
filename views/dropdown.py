@@ -11,7 +11,8 @@ from utils.database import (
     get_next_ticket_number,
     mark_ticket_deleted,
 )
-from utils.embeds import error, ticket_created
+from utils.embeds import error as error_embed
+from utils.embeds import ticket_created
 from utils.logger import (
     log_exception,
     log_interaction,
@@ -50,7 +51,7 @@ class ApplicationDropdown(Select):
         guild = interaction.guild
         if guild is None:
             await interaction.followup.send(
-                embed=error("Tickets can only be created inside a server."),
+                embed=error_embed("Tickets can only be created inside a server."),
                 ephemeral=True,
             )
             return
@@ -74,7 +75,7 @@ class ApplicationDropdown(Select):
             guild_config = config.get_guild_config(guild_id)
         except ValueError:
             await interaction.followup.send(
-                embed=error("This server is not configured."), ephemeral=True
+                embed=error_embed("This server is not configured."), ephemeral=True
             )
             return
         ticket_category_id = guild_config["TICKET_CATEGORY_ID"]
@@ -94,7 +95,7 @@ class ApplicationDropdown(Select):
                 log_ticket("Creation Aborted (Duplicate Ticket)", channel, user)
 
                 await interaction.followup.send(
-                    embed=error("You already have an open application ticket."),
+                    embed=error_embed("You already have an open application ticket."),
                     ephemeral=True,
                 )
 
@@ -129,7 +130,7 @@ class ApplicationDropdown(Select):
 
         if category is None:
             await interaction.followup.send(
-                embed=error(
+                embed=error_embed(
                     "The ticket category could not be resolved. Contact administration."
                 ),
                 ephemeral=True,
@@ -211,7 +212,7 @@ class ApplicationDropdown(Select):
             )
 
             await interaction.followup.send(
-                embed=error(
+                embed=error_embed(
                     "I do not have sufficient permissions "
                     f"to create text channels on this server. Error reference: `{reference}`"
                 ),
@@ -231,7 +232,7 @@ class ApplicationDropdown(Select):
             )
 
             await interaction.followup.send(
-                embed=error(
+                embed=error_embed(
                     "An unexpected error occurred during ticket channel creation. "
                     f"Error reference: `{reference}`"
                 ),
@@ -264,7 +265,7 @@ class ApplicationDropdown(Select):
                 )
 
             await interaction.followup.send(
-                embed=error(
+                embed=error_embed(
                     "The ticket could not be registered "
                     "in the database. Please contact "
                     "administration."
@@ -324,7 +325,7 @@ class ApplicationDropdown(Select):
                 context="Failed to publish initial ticket message",
             )
             await interaction.followup.send(
-                embed=error(
+                embed=error_embed(
                     f"The ticket could not be initialized. Error reference: `{reference}`"
                 ),
                 ephemeral=True,

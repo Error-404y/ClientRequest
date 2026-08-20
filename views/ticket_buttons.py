@@ -5,7 +5,8 @@ import pytz
 
 import config
 from utils.database import claim_ticket
-from utils.embeds import error, ticket_claimed_dm
+from utils.embeds import error as error_embed
+from utils.embeds import ticket_claimed_dm
 from utils.logger import (
     log_dm,
     log_exception,
@@ -167,7 +168,7 @@ class TicketButtons(ReliableView):
                 "Claim Rejected (Not Staff)", interaction.channel, interaction.user
             )
             await interaction.response.send_message(
-                embed=error("You do not have permission to claim this ticket."),
+                embed=error_embed("You do not have permission to claim this ticket."),
                 ephemeral=True,
             )
             return
@@ -266,7 +267,7 @@ class TicketButtons(ReliableView):
                 "Close Rejected (Not Staff)", interaction.channel, interaction.user
             )
             await interaction.response.send_message(
-                embed=error("You do not have permission to close this ticket."),
+                embed=error_embed("You do not have permission to close this ticket."),
                 ephemeral=True,
             )
             return
@@ -287,7 +288,9 @@ class TicketButtons(ReliableView):
                 interaction.user,
             )
             await interaction.response.send_message(
-                embed=error("You do not have permission to change ticket priority."),
+                embed=error_embed(
+                    "You do not have permission to change ticket priority."
+                ),
                 ephemeral=True,
             )
             return

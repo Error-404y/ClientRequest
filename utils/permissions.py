@@ -16,7 +16,11 @@ def is_owner(member):
     guild_id = _guild_id(member)
     if guild_id not in config.GUILDS:
         return False
-    return bool(_role_ids(member).intersection(config.get_owner_roles(guild_id)))
+    guild = getattr(member, "guild", None)
+    return bool(
+        getattr(guild, "owner_id", None) == getattr(member, "id", None)
+        or _role_ids(member).intersection(config.get_owner_roles(guild_id))
+    )
 
 
 def is_moderator(member):

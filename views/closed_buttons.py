@@ -10,7 +10,8 @@ from utils.database import (
     mark_ticket_deleted,
     reopen_ticket,
 )
-from utils.embeds import error, ticket_reopened
+from utils.embeds import error as error_embed
+from utils.embeds import ticket_reopened
 from utils.logger import log_exception, log_interaction, log_perm, log_ticket
 from utils.permissions import is_owner, is_staff
 from views.base import ReliableView
@@ -30,7 +31,7 @@ class ClosedTicketButtons(ReliableView):
                 "Reopen Rejected (Not Staff)", interaction.channel, interaction.user
             )
             await interaction.response.send_message(
-                embed=error("You do not have permission to reopen this ticket."),
+                embed=error_embed("You do not have permission to reopen this ticket."),
                 ephemeral=True,
             )
             return
@@ -223,7 +224,9 @@ class ClosedTicketButtons(ReliableView):
                 "Transcript Rejected (Not Staff)", interaction.channel, interaction.user
             )
             await interaction.response.send_message(
-                embed=error("You do not have permission to generate transcripts."),
+                embed=error_embed(
+                    "You do not have permission to generate transcripts."
+                ),
                 ephemeral=True,
             )
             return
@@ -261,7 +264,7 @@ class ClosedTicketButtons(ReliableView):
                 context="Manual transcript generation failed",
             )
             await interaction.followup.send(
-                embed=error(
+                embed=error_embed(
                     f"Failed to generate transcript. Error reference: `{reference}`"
                 ),
                 ephemeral=True,
@@ -291,7 +294,9 @@ class ClosedTicketButtons(ReliableView):
                 "Delete Rejected (Not Owner)", interaction.channel, interaction.user
             )
             await interaction.response.send_message(
-                embed=error("Only owners can delete ticket channels permanently."),
+                embed=error_embed(
+                    "Only owners can delete ticket channels permanently."
+                ),
                 ephemeral=True,
             )
             return

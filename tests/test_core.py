@@ -43,7 +43,7 @@ from utils.database import (
 )
 from utils.embeds import estimate_response_time, ticket_claimed_dm, ticket_closed_dm
 from utils.logger import log_exception
-from utils.permissions import can_manage_setup_admins, can_setup
+from utils.permissions import can_manage_setup_admins, can_setup, is_owner
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -206,6 +206,14 @@ class ConfigurationTests(unittest.TestCase):
         self.assertTrue(is_staff(delegate))
         config.remove_guild_config(guild_id)
 
+    def test_discord_server_owner_has_owner_access_without_role(self):
+        guild_id = 700000000000000001
+        config.register_guild_config(guild_id, {"OWNER_ROLES": [999]})
+        guild = SimpleNamespace(id=guild_id, owner_id=123)
+        member = SimpleNamespace(id=123, guild=guild, roles=[])
+        self.assertTrue(is_owner(member))
+        config.remove_guild_config(guild_id)
+
     def test_runtime_prevents_duplicate_bot_instances(self):
         source = (
             Path(__file__)
@@ -353,6 +361,39 @@ class ConfigurationTests(unittest.TestCase):
                 )
                 if has_print:
                     invalid.append(f"{path.name}:{node.lineno}:print")
+        self.assertEqual(invalid, [])
+
+    def test_embed_helpers_are_not_shadowed_by_exception_variables(self):
+        root = Path(__file__).resolve().parents[1]
+        invalid = []
+        paths = [
+            *root.joinpath("cogs").glob("*.py"),
+            *root.joinpath("views").glob("*.py"),
+            *root.joinpath("utils").glob("*.py"),
+        ]
+        for path in paths:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            embed_helpers = {
+                alias.asname or alias.name
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ImportFrom) and node.module == "utils.embeds"
+                for alias in node.names
+            }
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                exception_names = {
+                    handler.name
+                    for handler in ast.walk(node)
+                    if isinstance(handler, ast.ExceptHandler) and handler.name
+                }
+                called_names = {
+                    call.func.id
+                    for call in ast.walk(node)
+                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                }
+                for name in embed_helpers & exception_names & called_names:
+                    invalid.append(f"{path.name}:{node.name}:{name}")
         self.assertEqual(invalid, [])
 
     def test_interactive_views_use_reliability_handler(self):
