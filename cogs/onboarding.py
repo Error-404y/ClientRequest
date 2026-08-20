@@ -74,6 +74,11 @@ def resource_report(guild, settings):
         resource = guild.get_channel(resource_id) if resource_id else None
         if not isinstance(resource, expected_type):
             issues.append(f"{name} is missing")
+    panel_channel = guild.get_channel(settings.get("TICKET_PANEL_CHANNEL_ID", 0))
+    if isinstance(panel_channel, discord.TextChannel):
+        panel_category = panel_channel.category
+        if panel_channel.name != "ticket" or panel_category is None or panel_category.name != "ticket-system":
+            issues.append("Ticket panel must be #ticket inside the ticket-system category")
     staff_role_id = settings.get("MOD_ROLE", 0)
     if not staff_role_id or guild.get_role(staff_role_id) is None:
         issues.append("Staff role is missing")
@@ -97,7 +102,7 @@ def welcome_embed(guild):
     )
     embed.add_field(
         name="Automatic Configuration",
-        value="The setup creates the ticket panel, private ticket category, archive category, logging channel, and initial ticket menu.",
+        value="The setup creates a `ticket-system` category with a `ticket` panel channel, plus the private ticket category, archive category, logging channel, and initial ticket menu.",
         inline=False,
     )
     embed.add_field(
@@ -356,11 +361,17 @@ class Onboarding(commands.Cog):
             f"{config.BOT_NAME} Archive",
             private_overwrites,
         )
+        panel_category = await self.ensure_category(
+            guild,
+            0,
+            "ticket-system",
+            panel_overwrites,
+        )
         panel_channel = await self.ensure_text_channel(
             guild,
             current.get("TICKET_PANEL_CHANNEL_ID", 0),
-            "ticket-panel",
-            None,
+            "ticket",
+            panel_category,
             panel_overwrites,
             f"{config.BOT_NAME} public ticket portal",
         )
@@ -375,6 +386,19 @@ class Onboarding(commands.Cog):
 
         await ticket_category.set_permissions(guild.default_role, view_channel=False, reason=f"{config.BOT_NAME} setup")
         await archive_category.set_permissions(guild.default_role, view_channel=False, reason=f"{config.BOT_NAME} setup")
+        await panel_category.set_permissions(
+            guild.default_role,
+            view_channel=True,
+            send_messages=False,
+            read_message_history=True,
+            reason=f"{config.BOT_NAME} setup",
+        )
+        if panel_channel.name != "ticket" or panel_channel.category_id != panel_category.id:
+            await panel_channel.edit(
+                name="ticket",
+                category=panel_category,
+                reason=f"{config.BOT_NAME} panel organization",
+            )
         await panel_channel.set_permissions(
             guild.default_role,
             view_channel=True,
@@ -382,7 +406,16 @@ class Onboarding(commands.Cog):
             read_message_history=True,
             reason=f"{config.BOT_NAME} setup",
         )
-        managed_channels = [ticket_category, archive_category, panel_channel, log_channel, *ticket_category.channels, *archive_category.channels]
+        managed_channels = [
+            ticket_category,
+            archive_category,
+            panel_category,
+            panel_channel,
+            log_channel,
+            *ticket_category.channels,
+            *archive_category.channels,
+            *panel_category.channels,
+        ]
         old_staff_role = guild.get_role(current.get("MOD_ROLE", 0))
         for managed_channel in dict.fromkeys(managed_channels):
             await managed_channel.set_permissions(
@@ -726,7 +759,7 @@ class Onboarding(commands.Cog):
         if config.SUPPORT_SERVER_URL:
             embed.add_field(name="Support", value=f"[Open the official support server]({config.SUPPORT_SERVER_URL})", inline=False)
         embed.set_footer(text=f"{config.BOT_NAME} | {len(lines)} Slash Commands")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="invite", description="Get the official bot installation link and permission summary")
     async def invite_command(self, interaction: discord.Interaction):

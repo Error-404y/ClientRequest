@@ -10,7 +10,7 @@ Professional multi-server ticket operations and staff-support system.
 4. Select an existing staff role or allow the bot to create one.
 5. Optionally provide comma-separated ticket types.
 
-The setup command creates a public ticket panel, private ticket category, archive category, logging channel, staff role when required, and a working ticket menu.
+The setup command creates a public `ticket-system` category containing the `ticket` panel channel, a separate private ticket category, archive category, logging channel, staff role when required, and a working ticket menu.
 
 ## Setup Commands
 

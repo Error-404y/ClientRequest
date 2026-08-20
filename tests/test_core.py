@@ -144,6 +144,18 @@ class ConfigurationTests(unittest.TestCase):
         )
         self.assertEqual(len(issues), 5)
 
+    def test_setup_creates_dedicated_ticket_system_location(self):
+        source = Path(__file__).resolve().parents[1].joinpath("cogs", "onboarding.py").read_text(encoding="utf-8")
+        self.assertIn('"ticket-system"', source)
+        self.assertIn('name="ticket"', source)
+        self.assertIn("category=panel_category", source)
+
+    def test_help_is_a_public_embed(self):
+        source = Path(__file__).resolve().parents[1].joinpath("cogs", "onboarding.py").read_text(encoding="utf-8")
+        help_block = source.split('name="help"', 1)[1].split('name="invite"', 1)[0]
+        self.assertIn("send_message(embed=embed)", help_block)
+        self.assertNotIn("ephemeral=True", help_block)
+
     def test_public_server_isolation_guards(self):
         updates_source = Path(__file__).resolve().parents[1].joinpath("cogs", "updates.py").read_text(encoding="utf-8")
         find_source = Path(__file__).resolve().parents[1].joinpath("cogs", "findz.py").read_text(encoding="utf-8")
