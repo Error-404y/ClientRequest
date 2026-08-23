@@ -173,10 +173,16 @@ class AutoModeration(commands.Cog):
             managed = [
                 rule for rule in all_rules if rule.name.startswith(RULE_PREFIX)
             ]
+            matching_rules = [
+                rule for rule in all_rules if rule.trigger.type == trigger.type
+            ]
             existing_rule = discord.utils.get(managed, name=name)
+            if trigger_limits[trigger.type] == 1 and matching_rules:
+                rule = existing_rule or matching_rules[0]
+                return rule, rule is not existing_rule
             adopt_rule = None
             if existing_rule is None:
-                used = sum(rule.trigger.type == trigger.type for rule in all_rules)
+                used = len(matching_rules)
                 if used >= trigger_limits[trigger.type]:
                     adopt_rule = next(
                         (
@@ -593,7 +599,7 @@ class AutoModeration(commands.Cog):
                 context="Failed to resolve AutoMod rule execution",
             )
             return
-        if not rule.name.startswith(RULE_PREFIX):
+        if not config.is_guild_configured(guild.id):
             return
         reason = f"Blocked by Discord AutoMod rule: {rule.name}"
         if execution.matched_keyword:

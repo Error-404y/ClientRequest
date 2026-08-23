@@ -767,6 +767,27 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(adopted)
         self.assertIsNone(existing_rule.received)
 
+    async def test_automod_single_rule_trigger_is_reused_before_update(self):
+        trigger = discord.AutoModTrigger(
+            type=discord.AutoModRuleTriggerType.mention_spam,
+            mention_limit=5,
+        )
+        existing_rule = SimpleNamespace(
+            name="Server Mention Protection",
+            trigger=trigger,
+        )
+
+        class Guild:
+            async def fetch_automod_rules(self):
+                return [existing_rule]
+
+        cog = AutoModeration(None)
+        result, reused = await cog.configure_rule(
+            Guild(), "Managed Mentions", trigger, build_actions()
+        )
+        self.assertIs(result, existing_rule)
+        self.assertTrue(reused)
+
     async def test_reopen_restores_database_ticket_state(self):
         guild_id = self.guild_id
         await create_ticket_record(
