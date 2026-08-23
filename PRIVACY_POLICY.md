@@ -1,16 +1,16 @@
 # Privacy Policy for ! maja !
 
-Effective date: 20 August 2026
+Effective date: 23 August 2026
 
 ## Information Processed
 
-! maja ! processes Discord server IDs, channel IDs, role IDs, user IDs, ticket lifecycle records, staff availability, moderation records, command activity, and diagnostic references required to provide its features.
+! maja ! processes Discord server IDs, channel IDs, role IDs, user IDs, ticket lifecycle records, staff availability, AFK status reasons and timestamps, moderation and AutoMod records, command activity, and diagnostic references required to provide its features.
 
 Ticket message content, attachments, display names, and avatars may be processed when the bot creates a transcript, evaluates ticket inactivity, or performs enabled moderation functions.
 
 ## Purpose
 
-Information is used only to configure the bot, operate tickets, enforce server-selected moderation actions, produce requested transcripts, calculate staff availability, diagnose failures, and protect the service from abuse.
+Information is used only to configure the bot, operate tickets, display requested AFK notices, enforce server-selected moderation and native Discord AutoMod actions, produce requested transcripts, calculate staff availability, diagnose failures, and protect the service from abuse.
 
 ## Storage and Retention
 
@@ -33,4 +33,3 @@ Server administrators may remove the bot to trigger deletion of stored server da
 ## Changes
 
 This policy may be updated when features, hosting, or legal requirements change. The effective date will be updated when material changes are published.
-

@@ -5,7 +5,7 @@ Professional multi-server ticket operations and staff-support system.
 ## Server Setup
 
 1. Add the bot with the `bot` and `applications.commands` scopes.
-2. Grant Manage Channels, Manage Roles, View Channels, Send Messages, Embed Links, Attach Files, Read Message History, Kick Members, and Ban Members.
+2. Grant Manage Channels, Manage Roles, Manage Server, Moderate Members, View Channels, Send Messages, Embed Links, Attach Files, Read Message History, Kick Members, and Ban Members.
 3. Run `/setup start` in the server.
 4. Select an existing staff role or allow the bot to create one.
 5. Optionally provide comma-separated ticket types.
@@ -16,6 +16,7 @@ The setup command creates a public `ticket-system` category containing the `tick
 
 - `/setup start` configures the complete system.
 - `/setup status` checks configuration and permissions.
+- `/setup autoassign` enables or disables workload-based ticket assignment.
 - `/setup admins` lists delegated setup administrators.
 - `/add admin` grants a member access to every setup command.
 - `/remove admin` revokes delegated setup access.
@@ -24,6 +25,10 @@ The setup command creates a public `ticket-system` category containing the `tick
 - `/help` explains member and staff workflows.
 - `/privacy` displays the operational data summary.
 - `/invite` creates the official installation link without requesting Administrator.
+- `/mutez` applies a tracked Discord timeout with an infraction UUID.
+- `/setafkz` activates a persistent AFK status until the member sends a message.
+- `/automodz setup` configures native Discord keyword, safety-preset, and mention-spam protection.
+- `/automodz status` displays all AutoMod rules managed by the bot.
 
 The server owner, members with Discord Administrator permission, and delegated setup administrators can use setup commands. Only the server owner can add or remove delegated setup administrators.
 

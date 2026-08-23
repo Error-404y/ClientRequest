@@ -16,6 +16,7 @@ from utils.database import (
     reset_guild_settings,
     save_guild_settings,
 )
+from utils.embeds import error as error_embed
 from utils.embeds import estimate_response_time, ticket_panel
 from utils.logger import log_exception, log_interaction
 from utils.permissions import can_manage_setup_admins, can_setup
@@ -49,6 +50,8 @@ def setup_permission_report(guild, needs_role_creation=False):
         "Embed Links": permissions.embed_links,
         "Attach Files": permissions.attach_files,
         "Read Message History": permissions.read_message_history,
+        "Moderate Members": getattr(permissions, "moderate_members", False),
+        "Manage Server": getattr(permissions, "manage_guild", False),
     }
     if needs_role_creation:
         required["Manage Roles"] = permissions.manage_roles
@@ -66,6 +69,8 @@ def public_install_permissions():
         manage_roles=True,
         kick_members=True,
         ban_members=True,
+        moderate_members=True,
+        manage_guild=True,
     )
 
 
@@ -147,6 +152,16 @@ def welcome_embed(guild):
     embed.add_field(
         name="Command Directory",
         value="Run `/help` at any time to view every available slash command and its purpose.",
+        inline=False,
+    )
+    embed.add_field(
+        name="Staff Operations",
+        value="Tickets support Claim and Unclaim controls with audit records. `/setup autoassign` can distribute new tickets to available staff automatically.",
+        inline=False,
+    )
+    embed.add_field(
+        name="Safety and Availability",
+        value="Use `/mutez` for tracked timeouts, `/setafkz` for automatic AFK notices, and `/automodz setup` to configure native Discord AutoMod protection.",
         inline=False,
     )
     links = []
@@ -779,6 +794,11 @@ class Onboarding(commands.Cog):
                 value=str(len(settings.get("SETUP_ADMIN_USERS", []))),
                 inline=False,
             )
+            embed.add_field(
+                name="Automatic Ticket Assignment",
+                value="Enabled" if settings.get("AUTO_ASSIGN_TICKETS") else "Disabled",
+                inline=False,
+            )
         if missing_permissions:
             embed.add_field(
                 name="Missing Permissions",
@@ -795,6 +815,46 @@ class Onboarding(commands.Cog):
                 inline=False,
             )
         embed.set_footer(text=f"{config.BOT_NAME} | Configuration Check")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @setup_group.command(
+        name="autoassign",
+        description="Enable or disable automatic assignment to available staff",
+    )
+    @app_commands.describe(
+        enabled="Whether new tickets should be assigned automatically"
+    )
+    async def setup_autoassign(self, interaction: discord.Interaction, enabled: bool):
+        if not await self.require_setup_admin(interaction):
+            return
+        current = dict(config.GUILDS.get(interaction.guild.id, {}))
+        if not current.get("SETUP_COMPLETE"):
+            await interaction.response.send_message(
+                embed=error_embed(
+                    "Run `/setup start` before changing assignment settings."
+                ),
+                ephemeral=True,
+            )
+            return
+        current["AUTO_ASSIGN_TICKETS"] = enabled
+        await save_guild_settings(interaction.guild.id, current)
+        embed = discord.Embed(
+            title="Automatic Assignment Updated",
+            description=(
+                "New tickets will be assigned to an available staff member with the lowest active workload."
+                if enabled
+                else "New tickets will remain unclaimed until an authorized staff member accepts them."
+            ),
+            color=discord.Color.green() if enabled else discord.Color.orange(),
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.add_field(name="Status", value="Enabled" if enabled else "Disabled")
+        embed.add_field(
+            name="Availability Source",
+            value="Staff availability records managed by the bot",
+            inline=False,
+        )
+        embed.set_footer(text=f"{config.BOT_NAME} | Ticket Assignment")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @setup_group.command(

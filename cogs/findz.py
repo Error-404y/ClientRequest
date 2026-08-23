@@ -4,6 +4,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+from utils.embeds import error as error_embed
 from utils.permissions import is_staff
 
 
@@ -166,12 +167,18 @@ class UUIDLookup(commands.Cog):
             interaction.guild.id
         ):
             await interaction.response.send_message(
-                "This command can only be used in a configured server.", ephemeral=True
+                embed=error_embed(
+                    "This command can only be used in a configured server."
+                ),
+                ephemeral=True,
             )
             return
         if not is_staff(interaction.user):
             await interaction.response.send_message(
-                "You do not have permission to inspect server records.", ephemeral=True
+                embed=error_embed(
+                    "You do not have permission to inspect server records."
+                ),
+                ephemeral=True,
             )
             return
 
@@ -179,7 +186,7 @@ class UUIDLookup(commands.Cog):
 
         if not uuid:
             await interaction.response.send_message(
-                "Please provide a UUID.", ephemeral=True
+                embed=error_embed("Please provide a UUID."), ephemeral=True
             )
 
             return
@@ -292,7 +299,8 @@ class UUIDLookup(commands.Cog):
             return
 
         await interaction.response.send_message(
-            (f"No ticket or infraction was found for UUID `{uuid}`."), ephemeral=True
+            embed=error_embed(f"No ticket or infraction was found for UUID `{uuid}`."),
+            ephemeral=True,
         )
 
 

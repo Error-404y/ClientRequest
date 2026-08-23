@@ -1,6 +1,6 @@
 # Terms of Service for ! maja !
 
-Effective date: 20 August 2026
+Effective date: 23 August 2026
 
 ## Acceptance
 
@@ -8,7 +8,7 @@ By installing or using ! maja !, you agree to these terms and Discord's applicab
 
 ## Service
 
-! maja ! provides ticket management, staff availability, transcripts, moderation utilities, operational updates, and diagnostics. Features may change as the service is improved.
+! maja ! provides ticket management, staff availability, AFK notices, transcripts, moderation and native Discord AutoMod utilities, operational updates, and diagnostics. Features may change as the service is improved.
 
 ## Acceptable Use
 
@@ -37,4 +37,3 @@ These terms may be updated when the service or applicable requirements change. C
 ## Contact
 
 Questions can be submitted through the support location configured on the bot's Discord application profile.
-

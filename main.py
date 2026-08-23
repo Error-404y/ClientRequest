@@ -8,6 +8,7 @@ from discord.ext import commands
 
 import config
 from utils.database import setup_database
+from utils.embeds import error as error_embed
 from utils.logger import (
     emit,
     log,
@@ -24,6 +25,8 @@ intents.message_content = True
 intents.guilds = True
 intents.members = True
 intents.presences = True
+intents.auto_moderation_configuration = True
+intents.auto_moderation_execution = True
 
 bot = commands.Bot(
     command_prefix="!",
@@ -60,12 +63,14 @@ async def on_app_command_error(interaction, error):
         user=interaction.user,
         context=f"Slash command: {getattr(interaction.command, 'qualified_name', 'Unknown')}",
     )
-    message = f"The operation could not be completed. Error reference: `{reference}`"
+    message = error_embed(
+        f"The operation could not be completed. Error reference: `{reference}`"
+    )
     try:
         if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
+            await interaction.followup.send(embed=message, ephemeral=True)
         else:
-            await interaction.response.send_message(message, ephemeral=True)
+            await interaction.response.send_message(embed=message, ephemeral=True)
     except discord.HTTPException as response_error:
         log_exception(
             "APPLICATION",
@@ -168,6 +173,9 @@ extensions = [
     "cogs.diagnostics",
     "cogs.availability",
     "cogs.escalations",
+    "cogs.moderation",
+    "cogs.afk",
+    "cogs.automod",
 ]
 
 
@@ -299,7 +307,6 @@ async def on_ready():
     diagnostics = bot.get_cog("Diagnostics")
     workers = diagnostics.workers() if diagnostics else []
     running_workers = sum(1 for worker in workers if worker["status"] == "Running")
-    primary_server = bot.guilds[0].name if bot.guilds else "Unavailable"
     gateway_latency = round(bot.latency * 1000)
 
     console_width = 66
@@ -315,8 +322,7 @@ async def on_ready():
     print(f"║{title:^{console_width}}║")
     print(f"╠{'═' * console_width}╣")
     print(console_row("SYSTEM STATUS", "ONLINE / READY"))
-    print(console_row("PRIMARY SERVER", primary_server))
-    print(console_row("CONNECTED SERVERS", str(len(bot.guilds))))
+    print(console_row("ACTIVE SERVERS", str(len(bot.guilds))))
     print(console_row("LOADED MODULES", f"{len(bot.extensions)}/{len(extensions)}"))
     print(
         console_row("BACKGROUND WORKERS", f"{running_workers}/{len(workers)} RUNNING")

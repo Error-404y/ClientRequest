@@ -4,8 +4,9 @@ import discord
 import pytz
 
 import config
-from utils.database import claim_ticket
+from utils.database import toggle_ticket_claim
 from utils.embeds import error as error_embed
+from utils.embeds import success as success_embed
 from utils.embeds import ticket_claimed_dm
 from utils.logger import (
     log_dm,
@@ -94,7 +95,9 @@ class CloseTicketModal(ReliableModal, title="Close Ticket"):
                     context="Failed to restore ticket controls after duplicate close",
                 )
             await interaction.followup.send(
-                "This ticket is already closed or is no longer available.",
+                embed=error_embed(
+                    "This ticket is already closed or is no longer available."
+                ),
                 ephemeral=True,
             )
 
@@ -140,7 +143,9 @@ class PrioritySelectionView(ReliableView):
         await set_ticket_priority(self.original_channel.id, priority)
 
         await interaction.response.edit_message(
-            content=f"Priority successfully set to **{priority}**.", view=None
+            content=None,
+            embed=success_embed(f"Ticket priority was set to **{priority}**."),
+            view=None,
         )
 
         embed = discord.Embed(
@@ -155,8 +160,16 @@ class PrioritySelectionView(ReliableView):
 
 
 class TicketButtons(ReliableView):
-    def __init__(self):
+    def __init__(self, claimed_by=None):
         super().__init__(timeout=None)
+        claim_button = discord.utils.get(self.children, custom_id="zer_claim")
+        if claim_button:
+            claim_button.label = "Unclaim Ticket" if claimed_by else "Claim Ticket"
+            claim_button.style = (
+                discord.ButtonStyle.secondary
+                if claimed_by
+                else discord.ButtonStyle.primary
+            )
 
     @discord.ui.button(
         label="Claim Ticket", style=discord.ButtonStyle.primary, custom_id="zer_claim"
@@ -175,13 +188,21 @@ class TicketButtons(ReliableView):
 
         await interaction.response.defer()
 
-        claimed_at = datetime.now(timezone).isoformat()
-        claimed = await claim_ticket(
-            interaction.channel.id, interaction.user.id, claimed_at
+        changed_at = datetime.now(timezone).isoformat()
+        result = await toggle_ticket_claim(
+            interaction.channel.id, interaction.user.id, changed_at
         )
-        if not claimed:
+        if result["status"] == "cooldown":
             await interaction.followup.send(
-                "This ticket has already been claimed or is no longer open.",
+                embed=error_embed(
+                    f"Ticket assignment controls are temporarily locked. Try again in {result['remaining']} second(s)."
+                ),
+                ephemeral=True,
+            )
+            return
+        if result["status"] in {"not_found", "not_open"}:
+            await interaction.followup.send(
+                embed=error_embed("This channel is not an open registered ticket."),
                 ephemeral=True,
             )
             return
@@ -196,12 +217,21 @@ class TicketButtons(ReliableView):
             except ValueError:
                 owner_id = None
 
-        button.disabled = True
-        button.label = f"Claimed by {interaction.user.display_name}"
-        button.style = discord.ButtonStyle.secondary
+        claimed = result["status"] == "claimed"
+        updated_view = TicketButtons(claimed_by=result["claimed_by"])
+        for row in interaction.message.components:
+            for component in getattr(row, "children", []):
+                if getattr(component, "url", None):
+                    updated_view.add_item(
+                        discord.ui.Button(
+                            label=component.label or "Open Link",
+                            style=discord.ButtonStyle.link,
+                            url=component.url,
+                        )
+                    )
 
         try:
-            await interaction.message.edit(view=self)
+            await interaction.message.edit(view=updated_view)
         except discord.HTTPException as error:
             log_exception(
                 "VIEW",
@@ -212,13 +242,61 @@ class TicketButtons(ReliableView):
                 context="Failed to update claimed ticket controls",
             )
 
-        await interaction.followup.send(
-            f"This ticket has been claimed by {interaction.user.mention}."
+        embed = discord.Embed(
+            title="Ticket Assignment Updated",
+            description=(
+                "Responsibility for this ticket has been accepted."
+                if claimed
+                else "The current assignment has been released and the ticket is available to staff."
+            ),
+            color=discord.Color.green() if claimed else discord.Color.orange(),
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.add_field(
+            name="Action",
+            value="Claimed" if claimed else "Unclaimed",
+            inline=True,
+        )
+        embed.add_field(
+            name="Performed By",
+            value=f"{interaction.user.mention}\n`{interaction.user.id}`",
+            inline=True,
+        )
+        if not claimed:
+            previous_id = result.get("previous_claimed_by")
+            previous = (
+                interaction.guild.get_member(previous_id) if previous_id else None
+            )
+            embed.add_field(
+                name="Previous Assignment",
+                value=(
+                    f"{previous.mention}\n`{previous_id}`"
+                    if previous
+                    else f"User ID: `{previous_id}`"
+                ),
+                inline=True,
+            )
+        embed.add_field(
+            name="Current Status",
+            value="Assigned and under review"
+            if claimed
+            else "Awaiting staff assignment",
+            inline=False,
+        )
+        embed.set_footer(text=f"{config.BOT_NAME} | Ticket Assignment Audit")
+        await interaction.followup.send(embed=embed)
+
+        log_ticket(
+            "Ticket Claimed" if claimed else "Ticket Unclaimed",
+            channel,
+            interaction.user,
+            details=f"Previous assignment: {result.get('previous_claimed_by')}",
         )
 
-        ticket_claim_report(channel, interaction.user, owner_id, interaction.client)
+        if claimed:
+            ticket_claim_report(channel, interaction.user, owner_id, interaction.client)
 
-        if owner_id:
+        if claimed and owner_id:
             try:
                 owner = interaction.guild.get_member(owner_id)
                 if owner is None:
@@ -296,8 +374,14 @@ class TicketButtons(ReliableView):
             return
 
         view = PrioritySelectionView(interaction.channel)
+        embed = discord.Embed(
+            title="Select Ticket Priority",
+            description="Choose the priority level that best reflects the required response.",
+            color=discord.Color.blurple(),
+        )
+        embed.set_footer(text=f"{config.BOT_NAME} | Ticket Priority")
         await interaction.response.send_message(
-            content="Select the priority level for this ticket:",
+            embed=embed,
             view=view,
             ephemeral=True,
         )

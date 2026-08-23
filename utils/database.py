@@ -10,7 +10,7 @@ import aiosqlite
 import pytz
 
 import config
-from utils.logger import log_db
+from utils.logger import log_db, log_exception
 
 
 async def setup_database():
@@ -77,6 +77,16 @@ async def setup_database():
                 ALTER TABLE tickets
                 ADD COLUMN claimed_at TEXT DEFAULT NULL
             """)
+
+        if "claim_changed_at" not in columns:
+            await db.execute(
+                "ALTER TABLE tickets ADD COLUMN claim_changed_at TEXT DEFAULT NULL"
+            )
+
+        if "control_message_id" not in columns:
+            await db.execute(
+                "ALTER TABLE tickets ADD COLUMN control_message_id INTEGER DEFAULT NULL"
+            )
 
         if "uuid" not in columns:
             await db.execute("""
@@ -239,6 +249,17 @@ async def setup_database():
             "CREATE TABLE IF NOT EXISTS guild_setup_admins (guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, added_at TEXT NOT NULL, PRIMARY KEY (guild_id, user_id))"
         )
         await db.execute(
+            "CREATE TABLE IF NOT EXISTS afk_status (guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, reason TEXT NOT NULL, set_at TEXT NOT NULL, PRIMARY KEY (guild_id, user_id))"
+        )
+        guild_settings_cursor = await db.execute("PRAGMA table_info(guild_settings)")
+        guild_settings_columns = [
+            row[1] for row in await guild_settings_cursor.fetchall()
+        ]
+        if "auto_assign_tickets" not in guild_settings_columns:
+            await db.execute(
+                "ALTER TABLE guild_settings ADD COLUMN auto_assign_tickets INTEGER NOT NULL DEFAULT 0"
+            )
+        await db.execute(
             "CREATE TABLE IF NOT EXISTS error_events (reference TEXT PRIMARY KEY, fingerprint TEXT UNIQUE NOT NULL, category TEXT NOT NULL, error_type TEXT NOT NULL, message TEXT NOT NULL, traceback TEXT NOT NULL, context TEXT, guild_id INTEGER, channel_id INTEGER, user_id INTEGER, occurrence_count INTEGER NOT NULL DEFAULT 1, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL)"
         )
         await db.execute(
@@ -254,7 +275,7 @@ async def setup_database():
             "CREATE INDEX IF NOT EXISTS idx_performance_events_created_at ON performance_events(created_at DESC)"
         )
         cursor = await db.execute(
-            "SELECT guild_id, name, ticket_category_id, ticket_panel_channel_id, ticket_archive_category_id, log_channel_id, owner_role_ids, mod_role_id, trial_mod_role_id, warn_history_role_id, allowed_ban_user_ids, ticket_options, timezone, setup_complete, welcome_sent FROM guild_settings"
+            "SELECT guild_id, name, ticket_category_id, ticket_panel_channel_id, ticket_archive_category_id, log_channel_id, owner_role_ids, mod_role_id, trial_mod_role_id, warn_history_role_id, allowed_ban_user_ids, ticket_options, timezone, setup_complete, welcome_sent, auto_assign_tickets FROM guild_settings"
         )
         admin_cursor = await db.execute(
             "SELECT guild_id, user_id FROM guild_setup_admins ORDER BY user_id"
@@ -280,6 +301,7 @@ async def setup_database():
                 "TIMEZONE": row[12],
                 "SETUP_COMPLETE": bool(row[13]),
                 "WELCOME_SENT": bool(row[14]),
+                "AUTO_ASSIGN_TICKETS": bool(row[15]),
             }
         config.replace_guild_configs(persistent_settings)
         for guild_id in config.GUILDS:
@@ -310,7 +332,7 @@ async def save_guild_settings(guild_id, settings):
     now_value = datetime.now(pytz.timezone(config.TIMEZONE)).isoformat()
     async with aiosqlite.connect(config.DATABASE) as db:
         await db.execute(
-            "INSERT INTO guild_settings(guild_id, name, ticket_category_id, ticket_panel_channel_id, ticket_archive_category_id, log_channel_id, owner_role_ids, mod_role_id, trial_mod_role_id, warn_history_role_id, allowed_ban_user_ids, ticket_options, timezone, setup_complete, welcome_sent, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(guild_id) DO UPDATE SET name=excluded.name, ticket_category_id=excluded.ticket_category_id, ticket_panel_channel_id=excluded.ticket_panel_channel_id, ticket_archive_category_id=excluded.ticket_archive_category_id, log_channel_id=excluded.log_channel_id, owner_role_ids=excluded.owner_role_ids, mod_role_id=excluded.mod_role_id, trial_mod_role_id=excluded.trial_mod_role_id, warn_history_role_id=excluded.warn_history_role_id, allowed_ban_user_ids=excluded.allowed_ban_user_ids, ticket_options=excluded.ticket_options, timezone=excluded.timezone, setup_complete=excluded.setup_complete, welcome_sent=excluded.welcome_sent, updated_at=excluded.updated_at",
+            "INSERT INTO guild_settings(guild_id, name, ticket_category_id, ticket_panel_channel_id, ticket_archive_category_id, log_channel_id, owner_role_ids, mod_role_id, trial_mod_role_id, warn_history_role_id, allowed_ban_user_ids, ticket_options, timezone, setup_complete, welcome_sent, auto_assign_tickets, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(guild_id) DO UPDATE SET name=excluded.name, ticket_category_id=excluded.ticket_category_id, ticket_panel_channel_id=excluded.ticket_panel_channel_id, ticket_archive_category_id=excluded.ticket_archive_category_id, log_channel_id=excluded.log_channel_id, owner_role_ids=excluded.owner_role_ids, mod_role_id=excluded.mod_role_id, trial_mod_role_id=excluded.trial_mod_role_id, warn_history_role_id=excluded.warn_history_role_id, allowed_ban_user_ids=excluded.allowed_ban_user_ids, ticket_options=excluded.ticket_options, timezone=excluded.timezone, setup_complete=excluded.setup_complete, welcome_sent=excluded.welcome_sent, auto_assign_tickets=excluded.auto_assign_tickets, updated_at=excluded.updated_at",
             (
                 int(guild_id),
                 normalized["NAME"],
@@ -327,6 +349,7 @@ async def save_guild_settings(guild_id, settings):
                 normalized["TIMEZONE"],
                 int(normalized["SETUP_COMPLETE"]),
                 int(normalized["WELCOME_SENT"]),
+                int(normalized["AUTO_ASSIGN_TICKETS"]),
                 now_value,
                 now_value,
             ),
@@ -393,6 +416,7 @@ async def purge_guild_data(guild_id):
             "DELETE FROM user_stats WHERE guild_id=?",
             "DELETE FROM error_events WHERE guild_id=?",
             "DELETE FROM performance_events WHERE guild_id=?",
+            "DELETE FROM afk_status WHERE guild_id=?",
         ):
             await db.execute(statement, (int(guild_id),))
         await db.commit()
@@ -538,7 +562,18 @@ async def add_infraction(
 
     file_path = os.path.join(monitor_dir, f"{infraction_uuid}.txt")
 
-    await asyncio.to_thread(Path(file_path).write_text, log_content, encoding="utf-8")
+    try:
+        await asyncio.to_thread(
+            Path(file_path).write_text, log_content, encoding="utf-8"
+        )
+    except OSError as error:
+        log_exception(
+            "DATABASE",
+            error,
+            guild=guild_id,
+            user=user_id,
+            context=f"Infraction mirror file could not be written for {infraction_uuid}",
+        )
 
     return infraction_uuid
 
@@ -1169,6 +1204,177 @@ async def claim_ticket(channel_id, user_id, claimed_at):
     )
 
     return claimed
+
+
+async def toggle_ticket_claim(channel_id, user_id, changed_at, cooldown_seconds=3):
+    changed_time = datetime.fromisoformat(changed_at)
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cursor = await db.execute(
+            "SELECT status, claimed_by, claim_changed_at FROM tickets WHERE channel_id=?",
+            (int(channel_id),),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            await db.rollback()
+            return {"status": "not_found"}
+        status, previous_claimed_by, previous_changed_at = row
+        if status != "open":
+            await db.rollback()
+            return {"status": "not_open", "claimed_by": previous_claimed_by}
+        if previous_changed_at:
+            try:
+                elapsed = (
+                    changed_time - datetime.fromisoformat(previous_changed_at)
+                ).total_seconds()
+            except (TypeError, ValueError):
+                elapsed = cooldown_seconds
+            if elapsed < cooldown_seconds:
+                await db.rollback()
+                return {
+                    "status": "cooldown",
+                    "claimed_by": previous_claimed_by,
+                    "remaining": max(1, int(cooldown_seconds - elapsed + 0.999)),
+                }
+        if previous_claimed_by is None:
+            await db.execute(
+                "UPDATE tickets SET claimed_by=?, claimed_at=?, claim_changed_at=? WHERE channel_id=? AND status='open'",
+                (int(user_id), changed_at, changed_at, int(channel_id)),
+            )
+            result = {
+                "status": "claimed",
+                "claimed_by": int(user_id),
+                "previous_claimed_by": None,
+            }
+        else:
+            await db.execute(
+                "UPDATE tickets SET claimed_by=NULL, claimed_at=NULL, claim_changed_at=? WHERE channel_id=? AND status='open'",
+                (changed_at, int(channel_id)),
+            )
+            result = {
+                "status": "unclaimed",
+                "claimed_by": None,
+                "previous_claimed_by": previous_claimed_by,
+            }
+        await db.commit()
+    return result
+
+
+async def set_ticket_control_message(channel_id, message_id):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute(
+            "UPDATE tickets SET control_message_id=? WHERE channel_id=?",
+            (int(message_id), int(channel_id)),
+        )
+        await db.commit()
+
+
+async def get_open_ticket_controls():
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT channel_id, control_message_id, claimed_by, application FROM tickets WHERE status='open'"
+        )
+        rows = await cursor.fetchall()
+    return [
+        {
+            "channel_id": row[0],
+            "control_message_id": row[1],
+            "claimed_by": row[2],
+            "application": row[3],
+        }
+        for row in rows
+    ]
+
+
+async def auto_assign_ticket(channel_id, guild_id, candidate_ids, claimed_at):
+    candidates = sorted({int(user_id) for user_id in candidate_ids})
+    if not candidates:
+        return None
+    placeholders = ",".join("?" for _ in candidates)
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cursor = await db.execute(
+            f"SELECT claimed_by, COUNT(*) FROM tickets WHERE guild_id=? AND status='open' AND claimed_by IN ({placeholders}) GROUP BY claimed_by",
+            (int(guild_id), *candidates),
+        )
+        workloads = {row[0]: row[1] for row in await cursor.fetchall()}
+        selected = min(
+            candidates, key=lambda user_id: (workloads.get(user_id, 0), user_id)
+        )
+        cursor = await db.execute(
+            "UPDATE tickets SET claimed_by=?, claimed_at=?, claim_changed_at=? WHERE channel_id=? AND status='open' AND claimed_by IS NULL",
+            (selected, claimed_at, claimed_at, int(channel_id)),
+        )
+        await db.commit()
+    return selected if cursor.rowcount == 1 else None
+
+
+async def set_afk_status(guild_id, user_id, reason, set_at):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute(
+            "INSERT INTO afk_status(guild_id, user_id, reason, set_at) VALUES(?, ?, ?, ?) ON CONFLICT(guild_id, user_id) DO UPDATE SET reason=excluded.reason, set_at=excluded.set_at",
+            (int(guild_id), int(user_id), reason, set_at),
+        )
+        await db.commit()
+
+
+async def clear_afk_status(guild_id, user_id):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "DELETE FROM afk_status WHERE guild_id=? AND user_id=?",
+            (int(guild_id), int(user_id)),
+        )
+        await db.commit()
+    return cursor.rowcount == 1
+
+
+async def get_afk_statuses(guild_id, user_ids):
+    ids = sorted({int(user_id) for user_id in user_ids})
+    if not ids:
+        return []
+    placeholders = ",".join("?" for _ in ids)
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            f"SELECT user_id, reason, set_at FROM afk_status WHERE guild_id=? AND user_id IN ({placeholders})",
+            (int(guild_id), *ids),
+        )
+        rows = await cursor.fetchall()
+    return [{"user_id": row[0], "reason": row[1], "set_at": row[2]} for row in rows]
+
+
+async def process_afk_message(guild_id, author_id, mentioned_user_ids):
+    ids = sorted(
+        {
+            int(user_id)
+            for user_id in mentioned_user_ids
+            if int(user_id) != int(author_id)
+        }
+    )
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT 1 FROM afk_status WHERE guild_id=? AND user_id=?",
+            (int(guild_id), int(author_id)),
+        )
+        removed = await cursor.fetchone() is not None
+        if removed:
+            await db.execute(
+                "DELETE FROM afk_status WHERE guild_id=? AND user_id=?",
+                (int(guild_id), int(author_id)),
+            )
+        records = []
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            cursor = await db.execute(
+                f"SELECT user_id, reason, set_at FROM afk_status WHERE guild_id=? AND user_id IN ({placeholders})",
+                (int(guild_id), *ids),
+            )
+            records = [
+                {"user_id": row[0], "reason": row[1], "set_at": row[2]}
+                for row in await cursor.fetchall()
+            ]
+        if removed:
+            await db.commit()
+    return removed, records
 
 
 async def get_ticket_record(channel_id):

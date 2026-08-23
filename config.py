@@ -66,6 +66,7 @@ def normalize_guild_config(guild_id, settings=None):
         "TIMEZONE": str(values.get("TIMEZONE") or "Europe/Athens"),
         "SETUP_COMPLETE": bool(values.get("SETUP_COMPLETE", False)),
         "WELCOME_SENT": bool(values.get("WELCOME_SENT", False)),
+        "AUTO_ASSIGN_TICKETS": bool(values.get("AUTO_ASSIGN_TICKETS", False)),
     }
 
 

@@ -6,9 +6,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import aiosqlite
+import discord
 import pytz
 
 import config
+from cogs.afk import english_elapsed
+from cogs.automod import build_actions
 from cogs.diagnostics import Diagnostics
 from cogs.escalations import minutes_since
 from cogs.inactivity import hours_since
@@ -20,10 +23,13 @@ from cogs.onboarding import (
 )
 from utils.database import (
     add_setup_admin,
+    auto_assign_ticket,
     claim_ticket,
+    clear_afk_status,
     close_ticket,
     create_ticket_record,
     escalation_event_exists,
+    get_afk_statuses,
     get_available_staff_count,
     get_guild_settings,
     get_infraction_by_uuid,
@@ -31,6 +37,7 @@ from utils.database import (
     get_staff_availability,
     get_ticket_by_uuid,
     get_ticket_panels,
+    process_afk_message,
     register_escalation_event,
     register_ticket_panel,
     remove_infraction_by_uuid,
@@ -38,8 +45,10 @@ from utils.database import (
     remove_user_warning,
     reset_guild_settings,
     save_guild_settings,
+    set_afk_status,
     set_staff_availability,
     setup_database,
+    toggle_ticket_claim,
 )
 from utils.embeds import estimate_response_time, ticket_claimed_dm, ticket_closed_dm
 from utils.logger import log_exception
@@ -154,6 +163,8 @@ class ConfigurationTests(unittest.TestCase):
             attach_files=False,
             read_message_history=True,
             manage_roles=False,
+            moderate_members=True,
+            manage_guild=True,
         )
         guild = SimpleNamespace(me=SimpleNamespace(guild_permissions=permissions))
         self.assertEqual(setup_permission_report(guild), ["Attach Files"])
@@ -230,6 +241,25 @@ class ConfigurationTests(unittest.TestCase):
         self.assertFalse(permissions.administrator)
         self.assertTrue(permissions.manage_channels)
         self.assertTrue(permissions.embed_links)
+        self.assertTrue(permissions.moderate_members)
+        self.assertTrue(permissions.manage_guild)
+
+    def test_afk_elapsed_time_is_english(self):
+        now = datetime.now(pytz.utc)
+        value = (now - timedelta(hours=10)).isoformat()
+        self.assertEqual(english_elapsed(value, now), "10 hours ago")
+
+    def test_automod_timeout_is_only_added_when_requested(self):
+        without_timeout = build_actions(123, 0)
+        with_timeout = build_actions(123, 10)
+        self.assertNotIn(
+            discord.AutoModRuleActionType.timeout,
+            [action.type for action in without_timeout],
+        )
+        self.assertIn(
+            discord.AutoModRuleActionType.timeout,
+            [action.type for action in with_timeout],
+        )
 
     def test_setup_resource_report_detects_missing_resources(self):
         guild = SimpleNamespace(
@@ -476,6 +506,17 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn("discord.InteractionType.component", source)
         self.assertIn("discord.InteractionType.modal_submit", source)
 
+    def test_operations_console_uses_active_server_count(self):
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("main.py")
+            .read_text(encoding="utf-8")
+        )
+        self.assertIn('console_row("ACTIVE SERVERS", str(len(bot.guilds)))', source)
+        self.assertNotIn("PRIMARY SERVER", source)
+
     def test_runtime_uses_one_configured_timezone(self):
         root = Path(__file__).resolve().parents[1]
         self.assertEqual(config.TIMEZONE, "Europe/Athens")
@@ -523,6 +564,27 @@ class ConfigurationTests(unittest.TestCase):
             )
         )
 
+    def test_new_operational_modules_are_loaded(self):
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("main.py")
+            .read_text(encoding="utf-8")
+        )
+        self.assertIn('"cogs.moderation"', source)
+        self.assertIn('"cogs.afk"', source)
+        self.assertIn('"cogs.automod"', source)
+        self.assertIn("auto_moderation_configuration = True", source)
+        self.assertIn("auto_moderation_execution = True", source)
+
+    def test_new_interaction_responses_use_embeds(self):
+        root = Path(__file__).resolve().parents[1]
+        for filename in ("moderation.py", "afk.py", "automod.py"):
+            source = root.joinpath("cogs", filename).read_text(encoding="utf-8")
+            self.assertNotIn('send_message(\n                "', source)
+            self.assertNotIn('followup.send(\n                "', source)
+
 
 class DatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -559,6 +621,57 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(
             await close_ticket(100, datetime.now().isoformat(), 300, "Done")
+        )
+
+    async def test_ticket_claim_toggle_has_persistent_cooldown(self):
+        await create_ticket_record(
+            102, self.guild_id, 202, "Test", datetime.now().isoformat()
+        )
+        started = datetime.now(pytz.utc)
+        claimed = await toggle_ticket_claim(102, 300, started.isoformat())
+        blocked = await toggle_ticket_claim(
+            102, 301, (started + timedelta(seconds=1)).isoformat()
+        )
+        released = await toggle_ticket_claim(
+            102, 301, (started + timedelta(seconds=3)).isoformat()
+        )
+        self.assertEqual(claimed["status"], "claimed")
+        self.assertEqual(blocked["status"], "cooldown")
+        self.assertEqual(released["status"], "unclaimed")
+        self.assertEqual(released["previous_claimed_by"], 300)
+
+    async def test_afk_status_is_persistent_and_clearable(self):
+        set_at = datetime.now(pytz.utc).isoformat()
+        await set_afk_status(self.guild_id, 200, "Working", set_at)
+        records = await get_afk_statuses(self.guild_id, [200, 201])
+        self.assertEqual(
+            records, [{"user_id": 200, "reason": "Working", "set_at": set_at}]
+        )
+        self.assertTrue(await clear_afk_status(self.guild_id, 200))
+        self.assertFalse(await clear_afk_status(self.guild_id, 200))
+
+    async def test_afk_message_processing_clears_author_and_finds_mentions(self):
+        set_at = datetime.now(pytz.utc).isoformat()
+        await set_afk_status(self.guild_id, 210, "Away", set_at)
+        await set_afk_status(self.guild_id, 211, "Working", set_at)
+        removed, records = await process_afk_message(self.guild_id, 210, [211])
+        self.assertTrue(removed)
+        self.assertEqual(records[0]["user_id"], 211)
+        self.assertEqual(await get_afk_statuses(self.guild_id, [210]), [])
+
+    async def test_auto_assignment_uses_lowest_active_workload(self):
+        now = datetime.now(pytz.utc).isoformat()
+        await create_ticket_record(103, self.guild_id, 203, "Test", now)
+        await create_ticket_record(104, self.guild_id, 204, "Test", now)
+        await create_ticket_record(105, self.guild_id, 205, "Test", now)
+        self.assertEqual(
+            await auto_assign_ticket(103, self.guild_id, [300, 301], now), 300
+        )
+        self.assertEqual(
+            await auto_assign_ticket(104, self.guild_id, [300, 301], now), 301
+        )
+        self.assertEqual(
+            await auto_assign_ticket(105, self.guild_id, [300, 301], now), 300
         )
 
     async def test_reopen_restores_database_ticket_state(self):
@@ -648,9 +761,11 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                 "TICKET_OPTIONS": ["Support", "Reports"],
                 "SETUP_COMPLETE": True,
                 "WELCOME_SENT": True,
+                "AUTO_ASSIGN_TICKETS": True,
             },
         )
         self.assertTrue(saved["SETUP_COMPLETE"])
+        self.assertTrue(saved["AUTO_ASSIGN_TICKETS"])
         self.assertEqual(
             (await get_guild_settings(guild_id))["TICKET_OPTIONS"],
             ["Support", "Reports"],
