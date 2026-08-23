@@ -1,6 +1,7 @@
 import discord
 
 from utils.database import add_infraction
+from utils.embeds import error as error_embed
 from utils.logger import log_exception, log_interaction, log_mod
 from utils.permissions import can_ban
 from views.base import ReliableView
@@ -35,7 +36,8 @@ class UnbanConfirmView(ReliableView):
                 self.target_name,
             )
             await interaction.response.send_message(
-                "Unauthorized action. Permission denied.", ephemeral=True
+                embed=error_embed("Unauthorized action. Permission denied."),
+                ephemeral=True,
             )
             return
 
@@ -61,7 +63,9 @@ class UnbanConfirmView(ReliableView):
                 user_id = self.target_user.id
             else:
                 await interaction.followup.send(
-                    f"Unable to unban target: Invalid user resolution for {self.target_name}.",
+                    embed=error_embed(
+                        f"Unable to unban target: Invalid user resolution for {self.target_name}."
+                    ),
                     ephemeral=True,
                 )
                 return
@@ -98,7 +102,9 @@ class UnbanConfirmView(ReliableView):
                 "Unban Failed (User Not Banned)", interaction.user, self.target_name
             )
             await interaction.followup.send(
-                f"User not found in ban registry: **{self.target_name}** is not currently banned.",
+                embed=error_embed(
+                    f"User not found in ban registry: **{self.target_name}** is not currently banned."
+                ),
                 ephemeral=True,
             )
         except discord.Forbidden as error:
@@ -116,7 +122,9 @@ class UnbanConfirmView(ReliableView):
                 context=f"Unban permission denied for {self.target_name}",
             )
             await interaction.followup.send(
-                f"Failed to unban user: Bot lacks required administrative permissions. Error reference: `{reference}`",
+                embed=error_embed(
+                    f"Failed to unban user: Bot lacks required administrative permissions. Error reference: `{reference}`"
+                ),
                 ephemeral=True,
             )
         except Exception as error:
@@ -130,7 +138,10 @@ class UnbanConfirmView(ReliableView):
                 context=f"Unban failed for {self.target_name}",
             )
             await interaction.followup.send(
-                f"Failed to unban user. Error reference: `{reference}`", ephemeral=True
+                embed=error_embed(
+                    f"Failed to unban user. Error reference: `{reference}`"
+                ),
+                ephemeral=True,
             )
 
     @discord.ui.button(
@@ -147,7 +158,8 @@ class UnbanConfirmView(ReliableView):
         )
         if not can_ban(interaction.user) or interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "Unauthorized action. Permission denied.", ephemeral=True
+                embed=error_embed("Unauthorized action. Permission denied."),
+                ephemeral=True,
             )
             return
 

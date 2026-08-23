@@ -11,6 +11,7 @@ from utils.database import (
     reopen_ticket,
 )
 from utils.embeds import error as error_embed
+from utils.embeds import success as success_embed
 from utils.embeds import ticket_reopened
 from utils.logger import log_exception, log_interaction, log_perm, log_ticket
 from utils.permissions import is_owner, is_staff
@@ -250,7 +251,9 @@ class ClosedTicketButtons(ReliableView):
         try:
             file_path = await create_transcript(interaction.channel)
             await interaction.followup.send(
-                content="Transcript successfully generated. Download below:",
+                embed=success_embed(
+                    "The transcript was generated successfully and is attached below."
+                ),
                 file=discord.File(file_path),
                 ephemeral=True,
             )
@@ -317,7 +320,9 @@ class ClosedTicketButtons(ReliableView):
             )
 
         await interaction.followup.send(
-            content="Channel deletion initiated. Deleting channel in 5 seconds...",
+            embed=success_embed(
+                "Channel deletion was authorized and will begin in 5 seconds."
+            ),
             ephemeral=True,
         )
 
@@ -366,6 +371,8 @@ class ClosedTicketButtons(ReliableView):
                 context="Ticket channel deletion failed",
             )
             await interaction.followup.send(
-                f"The channel could not be deleted. Error reference: `{reference}`",
+                embed=error_embed(
+                    f"The channel could not be deleted. Error reference: `{reference}`"
+                ),
                 ephemeral=True,
             )

@@ -1,5 +1,6 @@
 import discord
 
+from utils.embeds import error as error_embed
 from utils.logger import log_exception
 
 
@@ -7,9 +8,11 @@ async def notify_interaction_failure(interaction, reference):
     message = f"The operation could not be completed. Error reference: `{reference}`"
     try:
         if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
+            await interaction.followup.send(embed=error_embed(message), ephemeral=True)
         else:
-            await interaction.response.send_message(message, ephemeral=True)
+            await interaction.response.send_message(
+                embed=error_embed(message), ephemeral=True
+            )
     except discord.HTTPException as error:
         log_exception(
             "INTERACTION",

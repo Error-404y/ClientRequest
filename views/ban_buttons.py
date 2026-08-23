@@ -1,6 +1,7 @@
 import discord
 
 import config
+from utils.embeds import error as error_embed
 from utils.logger import log_dm, log_exception, log_interaction, log_mod
 from utils.permissions import can_ban, can_moderate_target
 from views.base import ReliableView
@@ -35,12 +36,15 @@ class BanConfirmView(ReliableView):
                 self.target_name,
             )
             await interaction.response.send_message(
-                "Unauthorized action. Permission denied.", ephemeral=True
+                embed=error_embed("Unauthorized action. Permission denied."),
+                ephemeral=True,
             )
             return
         if not can_moderate_target(interaction.user, self.target_user):
             await interaction.response.send_message(
-                "You cannot moderate yourself, the server owner, or a member with an equal or higher role.",
+                embed=error_embed(
+                    "You cannot moderate yourself, the server owner, or a member with an equal or higher role."
+                ),
                 ephemeral=True,
             )
             return
@@ -126,7 +130,9 @@ class BanConfirmView(ReliableView):
                 )
             else:
                 await interaction.followup.send(
-                    f"Unable to ban target: Invalid resolution for {self.target_name}.",
+                    embed=error_embed(
+                        f"Unable to ban target: Invalid resolution for {self.target_name}."
+                    ),
                     ephemeral=True,
                 )
                 return
@@ -189,7 +195,9 @@ class BanConfirmView(ReliableView):
                 context=f"Ban permission denied for {self.target_name}",
             )
             await interaction.followup.send(
-                f"Failed to ban user: Bot lacks required permissions or target role is superior. Error reference: `{reference}`",
+                embed=error_embed(
+                    f"Failed to ban user: Bot lacks required permissions or target role is superior. Error reference: `{reference}`"
+                ),
                 ephemeral=True,
             )
         except Exception as error:
@@ -203,7 +211,10 @@ class BanConfirmView(ReliableView):
                 context=f"Ban failed for {self.target_name}",
             )
             await interaction.followup.send(
-                f"Failed to ban user. Error reference: `{reference}`", ephemeral=True
+                embed=error_embed(
+                    f"Failed to ban user. Error reference: `{reference}`"
+                ),
+                ephemeral=True,
             )
 
     @discord.ui.button(
@@ -220,7 +231,8 @@ class BanConfirmView(ReliableView):
         )
         if not can_ban(interaction.user) or interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "Unauthorized action. Permission denied.", ephemeral=True
+                embed=error_embed("Unauthorized action. Permission denied."),
+                ephemeral=True,
             )
             return
 

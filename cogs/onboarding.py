@@ -18,6 +18,7 @@ from utils.database import (
 )
 from utils.embeds import error as error_embed
 from utils.embeds import estimate_response_time, ticket_panel
+from utils.embeds import success as success_embed
 from utils.logger import log_exception, log_interaction
 from utils.permissions import can_manage_setup_admins, can_setup
 from views.dropdown import TicketPanel
@@ -189,7 +190,9 @@ class ResetSetupView(discord.ui.View):
     async def confirm(self, interaction, button):
         if interaction.user.id != self.requester_id:
             await interaction.response.send_message(
-                "Only the administrator who requested this reset can confirm it.",
+                embed=error_embed(
+                    "Only the administrator who requested this reset can confirm it."
+                ),
                 ephemeral=True,
             )
             return
@@ -197,8 +200,10 @@ class ResetSetupView(discord.ui.View):
         for item in self.children:
             item.disabled = True
         await interaction.response.edit_message(
-            content="The bot configuration has been reset. Existing Discord channels were retained. Run `/setup start` to configure the server again.",
-            embed=None,
+            content=None,
+            embed=success_embed(
+                "The bot configuration has been reset. Existing Discord channels were retained. Run `/setup start` to configure the server again."
+            ),
             view=self,
         )
 
@@ -206,14 +211,16 @@ class ResetSetupView(discord.ui.View):
     async def cancel(self, interaction, button):
         if interaction.user.id != self.requester_id:
             await interaction.response.send_message(
-                "Only the administrator who requested this reset can cancel it.",
+                embed=error_embed(
+                    "Only the administrator who requested this reset can cancel it."
+                ),
                 ephemeral=True,
             )
             return
         for item in self.children:
             item.disabled = True
         await interaction.response.edit_message(
-            content="Setup reset cancelled.", embed=None, view=self
+            content=None, embed=success_embed("Setup reset cancelled."), view=self
         )
 
     async def on_error(self, interaction, error, item):
@@ -229,9 +236,11 @@ class ResetSetupView(discord.ui.View):
             f"The reset action could not be completed. Error reference: `{reference}`"
         )
         if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
+            await interaction.followup.send(embed=error_embed(message), ephemeral=True)
         else:
-            await interaction.response.send_message(message, ephemeral=True)
+            await interaction.response.send_message(
+                embed=error_embed(message), ephemeral=True
+            )
 
 
 class Onboarding(commands.Cog):
@@ -320,12 +329,15 @@ class Onboarding(commands.Cog):
             interaction.user, discord.Member
         ):
             await interaction.response.send_message(
-                "This command can only be used inside a server.", ephemeral=True
+                embed=error_embed("This command can only be used inside a server."),
+                ephemeral=True,
             )
             return False
         if not can_setup(interaction.user):
             await interaction.response.send_message(
-                "Setup access is limited to the server owner, Discord administrators, and delegated setup administrators.",
+                embed=error_embed(
+                    "Setup access is limited to the server owner, Discord administrators, and delegated setup administrators."
+                ),
                 ephemeral=True,
             )
             return False
@@ -336,12 +348,15 @@ class Onboarding(commands.Cog):
             interaction.user, discord.Member
         ):
             await interaction.response.send_message(
-                "This command can only be used inside a server.", ephemeral=True
+                embed=error_embed("This command can only be used inside a server."),
+                ephemeral=True,
             )
             return False
         if not can_manage_setup_admins(interaction.user):
             await interaction.response.send_message(
-                "Only the server owner can manage setup administrators.",
+                embed=error_embed(
+                    "Only the server owner can manage setup administrators."
+                ),
                 ephemeral=True,
             )
             return False
@@ -674,7 +689,9 @@ class Onboarding(commands.Cog):
                 context="Automatic setup forbidden",
             )
             await interaction.followup.send(
-                f"Automatic setup was blocked by Discord permissions. Error reference: `{reference}`",
+                embed=error_embed(
+                    f"Automatic setup was blocked by Discord permissions. Error reference: `{reference}`"
+                ),
                 ephemeral=True,
             )
             return
@@ -687,15 +704,19 @@ class Onboarding(commands.Cog):
                 context="Automatic setup failed",
             )
             await interaction.followup.send(
-                f"Automatic setup could not be completed. Error reference: `{reference}`",
+                embed=error_embed(
+                    f"Automatic setup could not be completed. Error reference: `{reference}`"
+                ),
                 ephemeral=True,
             )
             return
 
         if missing_permissions:
             await interaction.followup.send(
-                "Setup cannot continue until the bot receives these permissions:\n"
-                + "\n".join(f"- {name}" for name in missing_permissions),
+                embed=error_embed(
+                    "Setup cannot continue until the bot receives these permissions:\n"
+                    + "\n".join(f"- {name}" for name in missing_permissions)
+                ),
                 ephemeral=True,
             )
             return
@@ -868,7 +889,10 @@ class Onboarding(commands.Cog):
             return
         if staff_role == interaction.guild.default_role:
             await interaction.response.send_message(
-                "The everyone role cannot be used as the staff role.", ephemeral=True
+                embed=error_embed(
+                    "The everyone role cannot be used as the staff role."
+                ),
+                ephemeral=True,
             )
             return
         await interaction.response.defer(ephemeral=True)
@@ -885,19 +909,25 @@ class Onboarding(commands.Cog):
                 context="Staff role update failed",
             )
             await interaction.followup.send(
-                f"The staff role could not be updated. Error reference: `{reference}`",
+                embed=error_embed(
+                    f"The staff role could not be updated. Error reference: `{reference}`"
+                ),
                 ephemeral=True,
             )
             return
         if missing_permissions:
             await interaction.followup.send(
-                "The staff role cannot be updated until these permissions are granted:\n"
-                + "\n".join(f"- {name}" for name in missing_permissions),
+                embed=error_embed(
+                    "The staff role cannot be updated until these permissions are granted:\n"
+                    + "\n".join(f"- {name}" for name in missing_permissions)
+                ),
                 ephemeral=True,
             )
             return
         await interaction.followup.send(
-            f"The staff role is now <@&{settings['MOD_ROLE']}>. Existing managed ticket resources and the registered panel were updated.",
+            embed=success_embed(
+                f"The staff role is now <@&{settings['MOD_ROLE']}>. Existing managed ticket resources and the registered panel were updated."
+            ),
             ephemeral=True,
         )
 
@@ -917,7 +947,8 @@ class Onboarding(commands.Cog):
         current = config.GUILDS.get(interaction.guild.id)
         if not current or not current.get("SETUP_COMPLETE"):
             await interaction.response.send_message(
-                "Run `/setup start` before changing ticket types.", ephemeral=True
+                embed=error_embed("Run `/setup start` before changing ticket types."),
+                ephemeral=True,
             )
             return
         staff_role = interaction.guild.get_role(current.get("MOD_ROLE", 0))
@@ -935,20 +966,26 @@ class Onboarding(commands.Cog):
                 context="Ticket type update failed",
             )
             await interaction.followup.send(
-                f"Ticket types could not be updated. Error reference: `{reference}`",
+                embed=error_embed(
+                    f"Ticket types could not be updated. Error reference: `{reference}`"
+                ),
                 ephemeral=True,
             )
             return
         if missing_permissions:
             await interaction.followup.send(
-                "Ticket types cannot be updated until these permissions are granted:\n"
-                + "\n".join(f"- {name}" for name in missing_permissions),
+                embed=error_embed(
+                    "Ticket types cannot be updated until these permissions are granted:\n"
+                    + "\n".join(f"- {name}" for name in missing_permissions)
+                ),
                 ephemeral=True,
             )
             return
         await interaction.followup.send(
-            "Ticket types updated successfully:\n"
-            + "\n".join(f"- {name}" for name in settings["TICKET_OPTIONS"]),
+            embed=success_embed(
+                "Ticket types updated successfully:\n"
+                + "\n".join(f"- {name}" for name in settings["TICKET_OPTIONS"])
+            ),
             ephemeral=True,
         )
 
@@ -996,19 +1033,25 @@ class Onboarding(commands.Cog):
         target = await self.resolve_admin_member(interaction.guild, member, user_id)
         if target is None:
             await interaction.response.send_message(
-                "Select a valid server member or enter a valid Discord user ID.",
+                embed=error_embed(
+                    "Select a valid server member or enter a valid Discord user ID."
+                ),
                 ephemeral=True,
             )
             return
         if target.bot:
             await interaction.response.send_message(
-                "Bot accounts cannot be setup administrators.", ephemeral=True
+                embed=error_embed("Bot accounts cannot be setup administrators."),
+                ephemeral=True,
             )
             return
         added, settings = await add_setup_admin(interaction.guild.id, target.id)
         if not added:
             await interaction.response.send_message(
-                f"{target.mention} already has delegated setup access.", ephemeral=True
+                embed=error_embed(
+                    f"{target.mention} already has delegated setup access."
+                ),
+                ephemeral=True,
             )
             return
         log_interaction(
@@ -1049,14 +1092,18 @@ class Onboarding(commands.Cog):
         target = await self.resolve_admin_member(interaction.guild, member, user_id)
         if target is None:
             await interaction.response.send_message(
-                "Select a valid server member or enter a valid Discord user ID.",
+                embed=error_embed(
+                    "Select a valid server member or enter a valid Discord user ID."
+                ),
                 ephemeral=True,
             )
             return
         removed, settings = await remove_setup_admin(interaction.guild.id, target.id)
         if not removed:
             await interaction.response.send_message(
-                f"{target.mention} does not have delegated setup access.",
+                embed=error_embed(
+                    f"{target.mention} does not have delegated setup access."
+                ),
                 ephemeral=True,
             )
             return
@@ -1103,18 +1150,23 @@ class Onboarding(commands.Cog):
                 context="Setup repair failed",
             )
             await interaction.followup.send(
-                f"Repair failed. Error reference: `{reference}`", ephemeral=True
+                embed=error_embed(f"Repair failed. Error reference: `{reference}`"),
+                ephemeral=True,
             )
             return
         if missing_permissions:
             await interaction.followup.send(
-                "Repair requires these permissions:\n"
-                + "\n".join(f"- {name}" for name in missing_permissions),
+                embed=error_embed(
+                    "Repair requires these permissions:\n"
+                    + "\n".join(f"- {name}" for name in missing_permissions)
+                ),
                 ephemeral=True,
             )
             return
         await interaction.followup.send(
-            f"Configuration repaired successfully. A fresh panel was published in <#{settings['TICKET_PANEL_CHANNEL_ID']}>.",
+            embed=success_embed(
+                f"Configuration repaired successfully. A fresh panel was published in <#{settings['TICKET_PANEL_CHANNEL_ID']}>."
+            ),
             ephemeral=True,
         )
 
@@ -1196,7 +1248,8 @@ class Onboarding(commands.Cog):
         client_id = self.bot.user.id if self.bot.user else self.bot.application_id
         if not client_id:
             await interaction.response.send_message(
-                "The installation link is temporarily unavailable.", ephemeral=True
+                embed=error_embed("The installation link is temporarily unavailable."),
+                ephemeral=True,
             )
             return
         install_url = discord.utils.oauth_url(

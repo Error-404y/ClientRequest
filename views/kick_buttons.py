@@ -1,6 +1,7 @@
 import discord
 
 import config
+from utils.embeds import error as error_embed
 from utils.logger import log_dm, log_exception, log_interaction, log_mod
 from utils.permissions import can_kick, can_moderate_target
 from views.base import ReliableView
@@ -37,12 +38,15 @@ class KickConfirmView(ReliableView):
                 self.target_name,
             )
             await interaction.response.send_message(
-                "Unauthorized action. Permission denied.", ephemeral=True
+                embed=error_embed("Unauthorized action. Permission denied."),
+                ephemeral=True,
             )
             return
         if not can_moderate_target(interaction.user, self.target_user):
             await interaction.response.send_message(
-                "You cannot moderate yourself, the server owner, or a member with an equal or higher role.",
+                embed=error_embed(
+                    "You cannot moderate yourself, the server owner, or a member with an equal or higher role."
+                ),
                 ephemeral=True,
             )
             return
@@ -118,7 +122,10 @@ class KickConfirmView(ReliableView):
                 await self.target_user.kick(reason=kick_reason)
             else:
                 await interaction.followup.send(
-                    "Unable to kick target: User is not in the server.", ephemeral=True
+                    embed=error_embed(
+                        "Unable to kick target: User is not in the server."
+                    ),
+                    ephemeral=True,
                 )
                 return
 
@@ -180,7 +187,9 @@ class KickConfirmView(ReliableView):
                 context=f"Kick permission denied for {self.target_name}",
             )
             await interaction.followup.send(
-                f"Failed to kick user: Bot lacks required permissions or target role is superior. Error reference: `{reference}`",
+                embed=error_embed(
+                    f"Failed to kick user: Bot lacks required permissions or target role is superior. Error reference: `{reference}`"
+                ),
                 ephemeral=True,
             )
         except Exception as error:
@@ -194,7 +203,10 @@ class KickConfirmView(ReliableView):
                 context=f"Kick failed for {self.target_name}",
             )
             await interaction.followup.send(
-                f"Failed to kick user. Error reference: `{reference}`", ephemeral=True
+                embed=error_embed(
+                    f"Failed to kick user. Error reference: `{reference}`"
+                ),
+                ephemeral=True,
             )
 
     @discord.ui.button(
@@ -211,7 +223,8 @@ class KickConfirmView(ReliableView):
         )
         if not can_kick(interaction.user) or interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "Unauthorized action. Permission denied.", ephemeral=True
+                embed=error_embed("Unauthorized action. Permission denied."),
+                ephemeral=True,
             )
             return
 

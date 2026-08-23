@@ -48,13 +48,9 @@ class AFK(commands.Cog):
         interaction: discord.Interaction,
         reason: app_commands.Range[str, 2, 300],
     ):
-        if interaction.guild is None or not config.is_guild_configured(
-            interaction.guild.id
-        ):
+        if interaction.guild is None:
             await interaction.response.send_message(
-                embed=error_embed(
-                    "This command can only be used in a configured server."
-                ),
+                embed=error_embed("This command can only be used inside a server."),
                 ephemeral=True,
             )
             return
@@ -138,27 +134,32 @@ class AFK(commands.Cog):
                 for key, value in self.mention_cooldowns.items()
                 if now_counter - value < 300
             }
-        embed = discord.Embed(
-            title="AFK Status Notice",
-            description=f"{message.author.mention}, one or more mentioned members are currently away.",
-            color=discord.Color.blurple(),
-            timestamp=discord.utils.utcnow(),
-        )
+        embeds = []
         for record in active_records[:10]:
             member = message.guild.get_member(record["user_id"])
             display = member.mention if member else f"User `{record['user_id']}`"
-            embed.add_field(
-                name=member.display_name if member else str(record["user_id"]),
-                value=(
-                    f"{display} is currently **AFK**\n"
-                    f"Reason: {record['reason']}\n"
-                    f"Set: {english_elapsed(record['set_at'])}"
+            embed = discord.Embed(
+                title="AFK Status",
+                description=(
+                    f"{message.author.mention}, {display} is currently **AFK**."
                 ),
+                color=discord.Color.blurple(),
+                timestamp=discord.utils.utcnow(),
+            )
+            embed.add_field(
+                name="Reason",
+                value=record["reason"],
                 inline=False,
             )
-        embed.set_footer(text=f"{config.BOT_NAME} | Presence Status")
+            embed.add_field(
+                name="AFK Since",
+                value=english_elapsed(record["set_at"]),
+                inline=False,
+            )
+            embed.set_footer(text=f"{config.BOT_NAME} | Presence Status")
+            embeds.append(embed)
         await message.channel.send(
-            embed=embed,
+            embeds=embeds,
             allowed_mentions=discord.AllowedMentions.none(),
         )
 

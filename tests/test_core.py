@@ -585,6 +585,58 @@ class ConfigurationTests(unittest.TestCase):
             self.assertNotIn('send_message(\n                "', source)
             self.assertNotIn('followup.send(\n                "', source)
 
+    def test_all_interaction_text_responses_use_embeds(self):
+        root = Path(__file__).resolve().parents[1]
+        invalid = []
+        for directory in ("cogs", "views"):
+            for path in root.joinpath(directory).glob("*.py"):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Call) or not isinstance(
+                        node.func, ast.Attribute
+                    ):
+                        continue
+                    if node.func.attr not in {"send", "send_message", "edit_message"}:
+                        continue
+                    owner = ast.unparse(node.func.value)
+                    if (
+                        "interaction.response" not in owner
+                        and "interaction.followup" not in owner
+                    ):
+                        continue
+                    has_text = bool(node.args) or any(
+                        keyword.arg == "content"
+                        and not (
+                            isinstance(keyword.value, ast.Constant)
+                            and keyword.value.value is None
+                        )
+                        for keyword in node.keywords
+                    )
+                    has_embed = any(
+                        keyword.arg == "embed"
+                        and not (
+                            isinstance(keyword.value, ast.Constant)
+                            and keyword.value.value is None
+                        )
+                        for keyword in node.keywords
+                    )
+                    if has_text and not has_embed:
+                        invalid.append(f"{path.name}:{node.lineno}")
+        self.assertEqual(invalid, [])
+
+    def test_afk_command_does_not_require_ticket_setup(self):
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("cogs", "afk.py")
+            .read_text(encoding="utf-8")
+        )
+        command_block = source.split("async def setafkz", 1)[1].split(
+            "@commands.Cog.listener", 1
+        )[0]
+        self.assertNotIn("is_guild_configured", command_block)
+
 
 class DatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

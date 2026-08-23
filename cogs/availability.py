@@ -14,6 +14,7 @@ from utils.database import (
     remove_ticket_panel,
     set_staff_availability,
 )
+from utils.embeds import error as error_embed
 from utils.embeds import estimate_response_time, ticket_panel
 from utils.logger import log_exception, log_interaction
 from utils.permissions import is_staff
@@ -127,12 +128,17 @@ class Availability(commands.Cog):
             interaction.guild.id
         ):
             await interaction.response.send_message(
-                "This command can only be used in a configured server.", ephemeral=True
+                embed=error_embed(
+                    "This command can only be used in a configured server."
+                ),
+                ephemeral=True,
             )
             return
         if not is_staff(interaction.user):
             await interaction.response.send_message(
-                "You do not have permission to update staff availability.",
+                embed=error_embed(
+                    "You do not have permission to update staff availability."
+                ),
                 ephemeral=True,
             )
             return
@@ -181,12 +187,18 @@ class Availability(commands.Cog):
             interaction.guild.id
         ):
             await interaction.response.send_message(
-                "This command can only be used in a configured server.", ephemeral=True
+                embed=error_embed(
+                    "This command can only be used in a configured server."
+                ),
+                ephemeral=True,
             )
             return
         if not is_staff(interaction.user):
             await interaction.response.send_message(
-                "You do not have permission to view staff availability.", ephemeral=True
+                embed=error_embed(
+                    "You do not have permission to view staff availability."
+                ),
+                ephemeral=True,
             )
             return
 

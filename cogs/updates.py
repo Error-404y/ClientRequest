@@ -6,6 +6,8 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+from utils.embeds import error as error_embed
+from utils.embeds import success as success_embed
 from utils.logger import log_exception, log_interaction, log_ticket
 from utils.permissions import is_staff
 
@@ -169,19 +171,26 @@ class Updates(commands.Cog):
 
         if interaction.guild is None:
             await interaction.response.send_message(
-                "This command can only be used inside a configured server.",
+                embed=error_embed(
+                    "This command can only be used inside a configured server."
+                ),
                 ephemeral=True,
             )
             return
         if not config.is_guild_configured(interaction.guild.id):
             await interaction.response.send_message(
-                "This server is not configured. Run `/setup start` first.",
+                embed=error_embed(
+                    "This server is not configured. Run `/setup start` first."
+                ),
                 ephemeral=True,
             )
             return
         if not is_staff(interaction.user):
             await interaction.response.send_message(
-                "You do not have permission to publish server updates.", ephemeral=True
+                embed=error_embed(
+                    "You do not have permission to publish server updates."
+                ),
+                ephemeral=True,
             )
             return
 
@@ -189,7 +198,9 @@ class Updates(commands.Cog):
         panel_channel = await self.resolve_panel_channel(interaction.guild)
         if panel_channel is None:
             await interaction.followup.send(
-                "No accessible ticket panel was found. Run `/setup repair`.",
+                embed=error_embed(
+                    "No accessible ticket panel was found. Run `/setup repair`."
+                ),
                 ephemeral=True,
             )
             return
@@ -215,7 +226,9 @@ class Updates(commands.Cog):
                 context="Server update publish failed",
             )
             await interaction.followup.send(
-                f"The update could not be published. Error reference: `{reference}`",
+                embed=error_embed(
+                    f"The update could not be published. Error reference: `{reference}`"
+                ),
                 ephemeral=True,
             )
             return
@@ -227,7 +240,10 @@ class Updates(commands.Cog):
             details=f"Status: {status.value}, Message ID: {message.id}, Guild ID: {interaction.guild.id}",
         )
         await interaction.followup.send(
-            f"Update published successfully in {panel_channel.mention}.", ephemeral=True
+            embed=success_embed(
+                f"Update published successfully in {panel_channel.mention}."
+            ),
+            ephemeral=True,
         )
 
 

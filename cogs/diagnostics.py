@@ -11,6 +11,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
+from utils.embeds import error as error_embed
 from utils.logger import emit, log_exception, log_performance, redact
 from utils.permissions import can_setup
 
@@ -370,7 +371,9 @@ class Diagnostics(commands.Cog):
             and can_setup(interaction.user)
         ):
             return True
-        await interaction.response.send_message(message, ephemeral=True)
+        await interaction.response.send_message(
+            embed=error_embed(message), ephemeral=True
+        )
         return False
 
     @app_commands.command(
@@ -518,7 +521,8 @@ class Diagnostics(commands.Cog):
         record = await self.find_error(reference, interaction.guild.id)
         if not record:
             await interaction.followup.send(
-                "No stored error matches that reference.", ephemeral=True
+                embed=error_embed("No stored error matches that reference."),
+                ephemeral=True,
             )
             return
         embed = discord.Embed(
