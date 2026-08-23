@@ -208,6 +208,11 @@ class UUIDLookup(commands.Cog):
                     name="Priority", value=str(ticket["priority"]), inline=True
                 )
 
+            if ticket["label"]:
+                embed.add_field(
+                    name="Ticket Label", value=str(ticket["label"]), inline=True
+                )
+
             embed.add_field(
                 name="Ticket Database ID", value=str(ticket["id"]), inline=True
             )

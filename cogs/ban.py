@@ -1676,6 +1676,7 @@ class BanCog(commands.Cog):
         guild_id = self._ticket_value(ticket, "guild_id", "Unknown")
         created_at = self._ticket_value(ticket, "created_at", "Unknown")
         priority = self._ticket_value(ticket, "priority", "Not set")
+        label = self._ticket_value(ticket, "label", "Not assigned")
 
         try:
             created_dt = datetime.fromisoformat(str(created_at))
@@ -1741,6 +1742,11 @@ class BanCog(commands.Cog):
         embed.add_field(
             name="PRIORITY",
             value=priority_text,
+            inline=True,
+        )
+        embed.add_field(
+            name="TICKET LABEL",
+            value=str(label or "Not assigned"),
             inline=True,
         )
 

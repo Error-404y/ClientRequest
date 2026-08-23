@@ -48,11 +48,17 @@ from utils.database import (
     save_guild_settings,
     set_afk_status,
     set_staff_availability,
+    set_ticket_label,
     set_ticket_priority,
     setup_database,
     toggle_ticket_claim,
 )
-from utils.embeds import estimate_response_time, ticket_claimed_dm, ticket_closed_dm
+from utils.embeds import (
+    apply_ticket_label,
+    estimate_response_time,
+    ticket_claimed_dm,
+    ticket_closed_dm,
+)
 from utils.logger import log_exception
 from utils.permissions import can_manage_setup_admins, can_setup, is_owner
 
@@ -811,6 +817,29 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             cursor = await database.execute("PRAGMA table_info(tickets)")
             names = {row[1] for row in await cursor.fetchall()}
         self.assertIn("warned_at", names)
+
+    async def test_ticket_label_is_persistent_and_open_ticket_scoped(self):
+        await create_ticket_record(
+            109, self.guild_id, 209, "Technical", datetime.now().isoformat()
+        )
+        self.assertTrue(await set_ticket_label(109, "Urgent"))
+        from utils.database import get_ticket_record
+
+        record = await get_ticket_record(109)
+        self.assertEqual(record["label"], "Urgent")
+        self.assertTrue(
+            await close_ticket(109, datetime.now().isoformat(), 309, "Resolved")
+        )
+        self.assertFalse(await set_ticket_label(109, "Billing"))
+        self.assertEqual((await get_ticket_record(109))["label"], "Urgent")
+
+    def test_ticket_label_updates_main_embed_field(self):
+        embed = discord.Embed(title="Support Ticket")
+        apply_ticket_label(embed, "Technical")
+        apply_ticket_label(embed, "Escalated")
+        fields = [field for field in embed.fields if field.name == "Ticket Label"]
+        self.assertEqual(len(fields), 1)
+        self.assertEqual(fields[0].value, "Escalated")
 
     async def test_legacy_infraction_uuid_is_repaired(self):
         async with aiosqlite.connect(config.DATABASE) as database:

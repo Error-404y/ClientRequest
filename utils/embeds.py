@@ -77,6 +77,7 @@ def ticket_created(user, application, form, ticket_uuid=None):
     embed = discord.Embed(title=title, description=desc, color=PRIMARY)
     embed.add_field(name="User", value=user.mention, inline=True)
     embed.add_field(name="Ticket Category", value=application, inline=True)
+    embed.add_field(name="Ticket Label", value="Not assigned", inline=True)
 
     if ticket_uuid:
         embed.add_field(name="Ticket UUID", value=f"`{ticket_uuid}`", inline=False)
@@ -99,6 +100,16 @@ def ticket_created(user, application, form, ticket_uuid=None):
 
     embed.set_thumbnail(url=user.display_avatar.url)
     embed.set_footer(text=f"{config.BOT_NAME} | Private Channel")
+    return embed
+
+
+def apply_ticket_label(embed, label):
+    value = label or "Not assigned"
+    for index, field in enumerate(embed.fields):
+        if field.name.casefold() == "ticket label":
+            embed.set_field_at(index, name="Ticket Label", value=value, inline=True)
+            return embed
+    embed.add_field(name="Ticket Label", value=value, inline=True)
     return embed
 
 

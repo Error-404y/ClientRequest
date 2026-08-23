@@ -66,6 +66,11 @@ async def setup_database():
                 ADD COLUMN priority TEXT DEFAULT 'Medium'
             """)
 
+        if "label" not in columns:
+            await db.execute(
+                "ALTER TABLE tickets ADD COLUMN label TEXT DEFAULT NULL"
+            )
+
         if "closed_by" not in columns:
             await db.execute("""
                 ALTER TABLE tickets
@@ -719,7 +724,8 @@ async def get_ticket_by_uuid(
                 closed_by,
                 warned_inactive,
                 uuid,
-                control_message_id
+                control_message_id,
+                label
             FROM tickets
             WHERE
                 guild_id=?
@@ -768,6 +774,7 @@ async def get_ticket_by_uuid(
         "warned_inactive": row[13],
         "uuid": row[14],
         "control_message_id": row[15],
+        "label": row[16],
     }
 
 
@@ -1362,7 +1369,7 @@ async def set_ticket_control_message(channel_id, message_id):
 async def get_ticket_controls():
     async with aiosqlite.connect(config.DATABASE) as db:
         cursor = await db.execute(
-            "SELECT channel_id, control_message_id, claimed_by, application, status FROM tickets WHERE status IN ('open', 'closed')"
+            "SELECT channel_id, control_message_id, claimed_by, application, status, label FROM tickets WHERE status IN ('open', 'closed')"
         )
         rows = await cursor.fetchall()
     return [
@@ -1372,6 +1379,7 @@ async def get_ticket_controls():
             "claimed_by": row[2],
             "application": row[3],
             "status": row[4],
+            "label": row[5],
         }
         for row in rows
     ]
@@ -1495,7 +1503,9 @@ async def get_ticket_record(channel_id):
                 claimed_at,
                 closed_by,
                 warned_inactive,
-                uuid
+                uuid,
+                control_message_id,
+                label
             FROM tickets
             WHERE channel_id=?
         """,
@@ -1523,6 +1533,8 @@ async def get_ticket_record(channel_id):
         "closed_by": row[12],
         "warned_inactive": row[13],
         "uuid": row[14],
+        "control_message_id": row[15],
+        "label": row[16],
     }
 
 
@@ -1545,6 +1557,22 @@ async def set_ticket_priority(channel_id, priority):
         "UPDATE",
         "tickets",
         f"{'Priority updated' if updated else 'Priority update skipped'} for Channel: {channel_id} | Value: {priority}",
+    )
+    return updated
+
+
+async def set_ticket_label(channel_id, label):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "UPDATE tickets SET label=? WHERE channel_id=? AND status='open'",
+            (label, int(channel_id)),
+        )
+        await db.commit()
+    updated = cursor.rowcount == 1
+    log_db(
+        "UPDATE",
+        "tickets",
+        f"{'Label updated' if updated else 'Label update skipped'} for Channel: {channel_id} | Value: {label or 'None'}",
     )
     return updated
 
