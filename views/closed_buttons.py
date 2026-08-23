@@ -9,18 +9,39 @@ from utils.database import (
     get_ticket_record,
     mark_ticket_deleted,
     reopen_ticket,
+    set_ticket_control_message,
 )
 from utils.embeds import error as error_embed
 from utils.embeds import success as success_embed
 from utils.embeds import ticket_reopened
 from utils.logger import log_exception, log_interaction, log_perm, log_ticket
-from utils.permissions import is_owner, is_staff
+from utils.permissions import can_setup, is_staff
 from views.base import ReliableView
 
 
 class ClosedTicketButtons(ReliableView):
     def __init__(self):
         super().__init__(timeout=None)
+
+    async def restore_controls(self, interaction):
+        for item in self.children:
+            item.disabled = False
+        if interaction.message:
+            try:
+                await interaction.message.edit(view=self)
+            except discord.HTTPException as error:
+                log_exception(
+                    "VIEW",
+                    error,
+                    guild=interaction.guild,
+                    channel=interaction.channel,
+                    user=interaction.user,
+                    context="Failed to restore archived ticket controls",
+                )
+
+    async def on_error(self, interaction, error, item):
+        await self.restore_controls(interaction)
+        await super().on_error(interaction, error, item)
 
     @discord.ui.button(
         label="Reopen Ticket", style=discord.ButtonStyle.success, custom_id="zer_reopen"
@@ -145,7 +166,16 @@ class ClosedTicketButtons(ReliableView):
                     raise
 
         await perform_background_reopen()
-        await reopen_ticket(channel.id)
+        reopened = await reopen_ticket(channel.id)
+        if not reopened:
+            await self.restore_controls(interaction)
+            await interaction.followup.send(
+                embed=error_embed(
+                    "This ticket is already open or is no longer available."
+                ),
+                ephemeral=True,
+            )
+            return
 
         await interaction.followup.send(embed=ticket_reopened(applicant=member))
 
@@ -156,7 +186,8 @@ class ClosedTicketButtons(ReliableView):
         ticket_record = await get_ticket_record(channel.id)
         from views.ticket_buttons import TicketButtons
 
-        view = TicketButtons()
+        claimed_by = ticket_record.get("claimed_by") if ticket_record else None
+        view = TicketButtons(claimed_by=claimed_by)
 
         if ticket_record:
             application = ticket_record.get("application")
@@ -173,33 +204,15 @@ class ClosedTicketButtons(ReliableView):
                 )
                 view.add_item(form_button)
 
-            claimed_by = ticket_record.get("claimed_by")
-            if claimed_by:
-                for item in view.children:
-                    if getattr(item, "custom_id", None) == "zer_claim":
-                        item.disabled = True
-                        try:
-                            claimant = interaction.guild.get_member(claimed_by)
-                            if claimant is None:
-                                claimant = await interaction.guild.fetch_member(
-                                    claimed_by
-                                )
-                            if claimant:
-                                item.label = f"Claimed by {claimant.display_name}"
-                                item.style = discord.ButtonStyle.secondary
-                        except discord.HTTPException as error:
-                            log_exception(
-                                "DISCORD",
-                                error,
-                                guild=interaction.guild,
-                                channel=channel,
-                                user=claimed_by,
-                                context="Failed to resolve claimant while reopening ticket",
-                            )
-                            item.label = "Claimed"
-                            item.style = discord.ButtonStyle.secondary
-
-        await channel.send(view=view)
+        controls_embed = discord.Embed(
+            title="Ticket Controls Restored",
+            description="This ticket is active again. Authorized staff can manage its assignment, priority, and lifecycle using the controls below.",
+            color=discord.Color.green(),
+            timestamp=discord.utils.utcnow(),
+        )
+        controls_embed.set_footer(text=f"{config.BOT_NAME} | Active Ticket Controls")
+        control_message = await channel.send(embed=controls_embed, view=view)
+        await set_ticket_control_message(channel.id, control_message.id)
 
         try:
             await interaction.message.delete()
@@ -292,13 +305,13 @@ class ClosedTicketButtons(ReliableView):
     )
     async def delete(self, interaction, button):
         log_interaction(interaction.user, "zer_delete", interaction.channel)
-        if not is_owner(interaction.user):
+        if not can_setup(interaction.user):
             log_ticket(
                 "Delete Rejected (Not Owner)", interaction.channel, interaction.user
             )
             await interaction.response.send_message(
                 embed=error_embed(
-                    "Only owners can delete ticket channels permanently."
+                    "Only the server owner or an authorized administrator can delete ticket channels permanently."
                 ),
                 ephemeral=True,
             )

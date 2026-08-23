@@ -1,9 +1,9 @@
-import aiosqlite
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 import config
+from utils.database import get_infraction_by_uuid, get_ticket_by_uuid
 from utils.embeds import error as error_embed
 from utils.permissions import is_staff
 
@@ -38,44 +38,10 @@ class UUIDLookup(commands.Cog):
         if not uuid_value:
             return None
 
-        async with aiosqlite.connect(config.DATABASE) as db:
-            cursor = await db.execute(
-                """
-                SELECT
-                    id,
-                    uuid,
-                    guild_id,
-                    user_id,
-                    moderator_id,
-                    action_type,
-                    reason,
-                    timestamp
-                FROM infractions
-                WHERE
-                    guild_id = ?
-                    AND (uuid = ? OR uuid LIKE ? OR uuid LIKE ?)
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (guild_id, uuid_value, f"{uuid_value}%", f"%{uuid_value}"),
-            )
-
-            row = await cursor.fetchone()
-
-        if not row:
+        record = await get_infraction_by_uuid(uuid_value, guild_id)
+        if not record:
             return None
-
-        return {
-            "type": "infraction",
-            "id": row[0],
-            "uuid": row[1],
-            "guild_id": row[2],
-            "user_id": row[3],
-            "moderator_id": row[4],
-            "action_type": row[5],
-            "reason": row[6],
-            "timestamp": row[7],
-        }
+        return {"type": "infraction", **record}
 
     async def get_ticket(
         self,
@@ -88,58 +54,10 @@ class UUIDLookup(commands.Cog):
         if not uuid_value:
             return None
 
-        async with aiosqlite.connect(config.DATABASE) as db:
-            cursor = await db.execute(
-                """
-                SELECT
-                    id,
-                    uuid,
-                    channel_id,
-                    guild_id,
-                    user_id,
-                    application,
-                    status,
-                    created_at,
-                    closed_at,
-                    claimed_by,
-                    close_reason,
-                    priority,
-                    claimed_at,
-                    closed_by,
-                    warned_inactive
-                FROM tickets
-                WHERE
-                    guild_id = ?
-                    AND (uuid = ? OR uuid LIKE ? OR uuid LIKE ?)
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (guild_id, uuid_value, f"{uuid_value}%", f"%{uuid_value}"),
-            )
-
-            row = await cursor.fetchone()
-
-        if not row:
+        record = await get_ticket_by_uuid(uuid_value, guild_id)
+        if not record:
             return None
-
-        return {
-            "type": "ticket",
-            "id": row[0],
-            "uuid": row[1],
-            "channel_id": row[2],
-            "guild_id": row[3],
-            "user_id": row[4],
-            "application": row[5],
-            "status": row[6],
-            "created_at": row[7],
-            "closed_at": row[8],
-            "claimed_by": row[9],
-            "close_reason": row[10],
-            "priority": row[11],
-            "claimed_at": row[12],
-            "closed_by": row[13],
-            "warned_inactive": row[14],
-        }
+        return {"type": "ticket", **record}
 
     async def fetch_user_text(self, user_id):
 

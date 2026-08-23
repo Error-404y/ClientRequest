@@ -123,13 +123,49 @@ class Moderation(commands.Cog):
                 ephemeral=True,
             )
             return
-        infraction_uuid = await add_infraction(
-            user_id=user.id,
-            moderator_id=interaction.user.id,
-            action_type="TIMEOUT",
-            reason=f"{reason_text} | Duration: {duration_text}",
-            guild_id=guild.id,
-        )
+        try:
+            infraction_uuid = await add_infraction(
+                user_id=user.id,
+                moderator_id=interaction.user.id,
+                action_type="TIMEOUT",
+                reason=f"{reason_text} | Duration: {duration_text}",
+                guild_id=guild.id,
+            )
+        except Exception as record_error:
+            reference = log_exception(
+                "DATABASE",
+                record_error,
+                guild=guild,
+                channel=interaction.channel,
+                user=interaction.user,
+                context=f"Timeout record creation failed for target {user.id}",
+            )
+            reverted = False
+            try:
+                await user.timeout(
+                    None,
+                    reason=f"Timeout reverted after record failure | Moderator: {interaction.user} ({interaction.user.id})",
+                )
+                reverted = True
+            except discord.HTTPException as rollback_error:
+                log_exception(
+                    "MODERATION",
+                    rollback_error,
+                    guild=guild,
+                    channel=interaction.channel,
+                    user=interaction.user,
+                    context=f"Failed to revert unrecorded timeout for target {user.id}",
+                )
+            message = (
+                "The timeout was reverted because its tracking record could not be created."
+                if reverted
+                else "The timeout was applied, but its tracking record could not be created. Remove it manually and inspect the error logs immediately."
+            )
+            await interaction.followup.send(
+                embed=error_embed(f"{message} Error reference: `{reference}`"),
+                ephemeral=True,
+            )
+            return
         log_mod(
             "TIMEOUT",
             interaction.user,

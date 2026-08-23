@@ -97,7 +97,9 @@ async def on_command_error(ctx, error):
     )
     try:
         await ctx.send(
-            f"The command could not be completed. Error reference: `{reference}`"
+            embed=error_embed(
+                f"The command could not be completed. Error reference: `{reference}`"
+            )
         )
     except discord.HTTPException as response_error:
         log_exception(
@@ -242,6 +244,10 @@ async def on_ready():
         log("Activity status set to: Ticket Operations | ! maja !")
     except Exception as error:
         log_exception("DISCORD", error, context="Failed to set bot activity status")
+
+    if getattr(bot, "operations_console_ready", False):
+        return
+    bot.operations_console_ready = True
 
     for gid, gcfg in config.GUILDS.items():
         current_guild = bot.get_guild(gid)

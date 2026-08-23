@@ -8,6 +8,7 @@ from discord.ext import commands
 import config
 from utils.database import (
     add_setup_admin,
+    get_staff_availability,
     get_ticket_panels,
     purge_guild_data,
     register_ticket_panel,
@@ -20,7 +21,7 @@ from utils.embeds import error as error_embed
 from utils.embeds import estimate_response_time, ticket_panel
 from utils.embeds import success as success_embed
 from utils.logger import log_exception, log_interaction
-from utils.permissions import can_manage_setup_admins, can_setup
+from utils.permissions import can_manage_setup_admins, can_setup, is_staff
 from views.dropdown import TicketPanel
 
 timezone = pytz.timezone(config.TIMEZONE)
@@ -461,7 +462,16 @@ class Onboarding(commands.Cog):
                     )
             panels = await get_ticket_panels(guild.id)
 
-        available_staff = 0
+        availability_records = await get_staff_availability(guild.id)
+        available_staff = sum(
+            1
+            for record in availability_records
+            if record["status"] == "Available"
+            and (member := guild.get_member(record["user_id"])) is not None
+            and is_staff(member)
+            and member.status
+            not in {discord.Status.offline, discord.Status.invisible}
+        )
         panel_embed = ticket_panel(
             self.bot,
             guild=guild,

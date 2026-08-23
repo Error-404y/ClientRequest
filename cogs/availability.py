@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 
 import discord
@@ -7,7 +8,6 @@ from discord.ext import commands
 
 import config
 from utils.database import (
-    get_available_staff_count,
     get_staff_availability,
     get_ticket_panels,
     register_ticket_panel,
@@ -34,6 +34,65 @@ STATUS_COLORS = {
 class Availability(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.presence_refresh_tasks = {}
+        self.ready_refreshed = False
+
+    def cog_unload(self):
+        for task in self.presence_refresh_tasks.values():
+            task.cancel()
+
+    async def delayed_presence_refresh(self, guild):
+        try:
+            await asyncio.sleep(10)
+            await self.refresh_ticket_panels(guild)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            log_exception(
+                "AVAILABILITY",
+                error,
+                guild=guild,
+                context="Presence-based ticket panel refresh failed",
+            )
+        finally:
+            self.presence_refresh_tasks.pop(guild.id, None)
+
+    @commands.Cog.listener()
+    async def on_presence_update(self, before, after):
+        if before.status == after.status or not config.is_guild_configured(
+            after.guild.id
+        ):
+            return
+        records = await get_staff_availability(after.guild.id)
+        available_ids = {
+            record["user_id"]
+            for record in records
+            if record["status"] == "Available"
+        }
+        if after.id not in available_ids or not is_staff(after):
+            return
+        current = self.presence_refresh_tasks.get(after.guild.id)
+        if current is None or current.done():
+            self.presence_refresh_tasks[after.guild.id] = asyncio.create_task(
+                self.delayed_presence_refresh(after.guild)
+            )
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        if self.ready_refreshed:
+            return
+        self.ready_refreshed = True
+        for guild in self.bot.guilds:
+            if config.is_guild_configured(guild.id):
+                try:
+                    await self.refresh_ticket_panels(guild)
+                except Exception as error:
+                    log_exception(
+                        "AVAILABILITY",
+                        error,
+                        guild=guild,
+                        context="Startup ticket panel availability refresh failed",
+                    )
 
     def is_ticket_panel_message(self, message):
         for row in message.components:
@@ -70,7 +129,16 @@ class Availability(commands.Cog):
             )
 
     async def refresh_ticket_panels(self, guild):
-        available_staff = await get_available_staff_count(guild.id)
+        records = await get_staff_availability(guild.id)
+        available_staff = sum(
+            1
+            for record in records
+            if record["status"] == "Available"
+            and (member := guild.get_member(record["user_id"])) is not None
+            and is_staff(member)
+            and member.status
+            not in {discord.Status.offline, discord.Status.invisible}
+        )
         response_time = estimate_response_time(available_staff)
         panels = await get_ticket_panels(guild.id)
         if not panels:
@@ -203,8 +271,21 @@ class Availability(commands.Cog):
             return
 
         records = await get_staff_availability(interaction.guild.id)
+        records = [
+            record
+            for record in records
+            if (member := interaction.guild.get_member(record["user_id"])) is not None
+            and is_staff(member)
+        ]
         available_staff = sum(
-            1 for record in records if record["status"] == "Available"
+            1
+            for record in records
+            if record["status"] == "Available"
+            and (member := interaction.guild.get_member(record["user_id"]))
+            is not None
+            and is_staff(member)
+            and member.status
+            not in {discord.Status.offline, discord.Status.invisible}
         )
         embed = discord.Embed(
             title=f"{config.BOT_NAME} Staff Availability",
@@ -223,7 +304,13 @@ class Availability(commands.Cog):
             for record in records:
                 member = interaction.guild.get_member(record["user_id"])
                 name = member.mention if member else f"User `{record['user_id']}`"
-                lines.append(f"{name} — **{record['status']}**")
+                status_text = record["status"]
+                if record["status"] == "Available" and member.status in {
+                    discord.Status.offline,
+                    discord.Status.invisible,
+                }:
+                    status_text = "Available (Discord Offline)"
+                lines.append(f"{name} — **{status_text}**")
             embed.add_field(
                 name="Current Team", value="\n".join(lines)[:1024], inline=False
             )

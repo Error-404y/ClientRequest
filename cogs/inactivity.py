@@ -86,13 +86,10 @@ class Inactivity(commands.Cog):
                 continue
 
             last_activity = None
-            human_activity = False
             try:
                 async for message in channel.history(limit=None):
-                    if last_activity is None:
-                        last_activity = message.created_at.astimezone(timezone)
                     if not message.author.bot:
-                        human_activity = True
+                        last_activity = message.created_at.astimezone(timezone)
                         break
             except discord.HTTPException as error:
                 log_exception(
@@ -114,7 +111,7 @@ class Inactivity(commands.Cog):
                 ).total_seconds() / 3600.0
 
             if (
-                not human_activity
+                last_activity is None
                 and hours_since(created_at) >= config.NO_RESPONSE_ESCALATION_HOURS
             ):
                 continue
@@ -187,6 +184,10 @@ class Inactivity(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or message.guild is None:
+            return
+        if not getattr(message.channel, "topic", None) or "ticket_owner:" not in (
+            message.channel.topic
+        ):
             return
         async with aiosqlite.connect(config.DATABASE) as db:
             cursor = await db.execute(

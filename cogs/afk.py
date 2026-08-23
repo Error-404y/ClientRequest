@@ -6,7 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from utils.database import process_afk_message, set_afk_status
+from utils.database import get_all_afk_user_ids, process_afk_message, set_afk_status
 from utils.embeds import error as error_embed
 from utils.logger import log_interaction
 
@@ -40,6 +40,15 @@ class AFK(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.mention_cooldowns = {}
+        self.afk_users = set()
+        self.afk_cache_loaded = False
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        if self.afk_cache_loaded:
+            return
+        self.afk_users = await get_all_afk_user_ids()
+        self.afk_cache_loaded = True
 
     @app_commands.command(name="setafkz", description="Set your server AFK status")
     @app_commands.describe(reason="Why you are currently away")
@@ -59,6 +68,7 @@ class AFK(commands.Cog):
         await set_afk_status(
             interaction.guild.id, interaction.user.id, clean_reason, set_at
         )
+        self.afk_users.add((interaction.guild.id, interaction.user.id))
         log_interaction(
             interaction.user,
             "setafkz",
@@ -96,10 +106,17 @@ class AFK(commands.Cog):
             for member in message.mentions
             if member.id != message.author.id and not member.bot
         }
+        author_key = (message.guild.id, message.author.id)
+        if self.afk_cache_loaded and author_key not in self.afk_users and not any(
+            (message.guild.id, user_id) in self.afk_users
+            for user_id in mentioned_ids
+        ):
+            return
         removed, records = await process_afk_message(
             message.guild.id, message.author.id, mentioned_ids
         )
         if removed:
+            self.afk_users.discard(author_key)
             embed = discord.Embed(
                 title="Welcome Back",
                 description=f"{message.author.mention}, your AFK status has been removed automatically.",

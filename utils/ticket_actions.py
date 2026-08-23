@@ -6,7 +6,7 @@ import pytz
 
 import config
 from cogs.transcript import create_transcript
-from utils.database import close_ticket, reopen_ticket
+from utils.database import close_ticket, reopen_ticket, set_ticket_control_message
 from utils.embeds import ticket_closed, ticket_closed_dm
 from utils.logger import log_dm, log_exception, log_perm, log_ticket, log_transcript
 from views.closed_buttons import ClosedTicketButtons
@@ -284,8 +284,20 @@ async def close_ticket_channel(channel, moderator, reason, bot):
                 ) from channel_error
 
         try:
-            await channel.send(view=ClosedTicketButtons())
-        except discord.HTTPException as controls_error:
+            controls_embed = discord.Embed(
+                title="Archived Ticket Controls",
+                description="Authorized staff can reopen this ticket, generate another transcript, or permanently delete the channel.",
+                color=discord.Color.orange(),
+                timestamp=discord.utils.utcnow(),
+            )
+            controls_embed.set_footer(
+                text=f"{config.BOT_NAME} | Archived Ticket Controls"
+            )
+            control_message = await channel.send(
+                embed=controls_embed, view=ClosedTicketButtons()
+            )
+            await set_ticket_control_message(channel.id, control_message.id)
+        except Exception as controls_error:
             await rollback_close()
             raise RuntimeError(
                 "Failed to publish closed ticket controls"

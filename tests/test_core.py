@@ -11,7 +11,7 @@ import pytz
 
 import config
 from cogs.afk import english_elapsed
-from cogs.automod import build_actions
+from cogs.automod import AutoModeration, build_actions
 from cogs.diagnostics import Diagnostics
 from cogs.escalations import minutes_since
 from cogs.inactivity import hours_since
@@ -34,6 +34,7 @@ from utils.database import (
     get_guild_settings,
     get_infraction_by_uuid,
     get_next_ticket_number,
+    get_open_ticket_for_user,
     get_staff_availability,
     get_ticket_by_uuid,
     get_ticket_panels,
@@ -47,6 +48,7 @@ from utils.database import (
     save_guild_settings,
     set_afk_status,
     set_staff_availability,
+    set_ticket_priority,
     setup_database,
     toggle_ticket_claim,
 )
@@ -332,7 +334,8 @@ class ConfigurationTests(unittest.TestCase):
             .read_text(encoding="utf-8")
         )
         self.assertNotIn("for guild in self.bot.guilds", updates_source)
-        self.assertIn("guild_id = ?", find_source)
+        self.assertIn("get_infraction_by_uuid(uuid_value, guild_id)", find_source)
+        self.assertIn("get_ticket_by_uuid(uuid_value, guild_id)", find_source)
         self.assertNotIn("config .SETUP_USER_ID", dropdown_source)
         self.assertNotIn("config.SETUP_USER_ID", transcript_source)
 
@@ -674,6 +677,17 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(
             await close_ticket(100, datetime.now().isoformat(), 300, "Done")
         )
+        self.assertFalse(await set_ticket_priority(100, "High"))
+
+    async def test_open_ticket_lookup_is_scoped_to_server_and_user(self):
+        await create_ticket_record(
+            109, self.guild_id, 209, "Support", datetime.now().isoformat()
+        )
+        record = await get_open_ticket_for_user(self.guild_id, 209)
+        self.assertEqual(record["channel_id"], 109)
+        self.assertIsNone(await get_open_ticket_for_user(self.guild_id, 210))
+        self.assertIsNone(await get_open_ticket_for_user(self.guild_id + 1, 209))
+        self.assertTrue(await set_ticket_priority(109, "High"))
 
     async def test_ticket_claim_toggle_has_persistent_cooldown(self):
         await create_ticket_record(
@@ -726,6 +740,35 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             await auto_assign_ticket(105, self.guild_id, [300, 301], now), 300
         )
 
+    async def test_automod_adoption_preserves_existing_trigger(self):
+        class ExistingRule:
+            def __init__(self):
+                self.received = None
+
+            async def edit(self, **kwargs):
+                self.received = kwargs
+                return self
+
+        existing_rule = ExistingRule()
+        cog = AutoModeration(None)
+        actions = build_actions(123, 10)
+        result, adopted = await cog.upsert_rule(
+            SimpleNamespace(),
+            [],
+            "Managed Rule",
+            discord.AutoModTrigger(
+                type=discord.AutoModRuleTriggerType.mention_spam,
+                mention_limit=5,
+            ),
+            actions,
+            adopt_rule=existing_rule,
+        )
+        self.assertIs(result, existing_rule)
+        self.assertTrue(adopted)
+        self.assertEqual(existing_rule.received["name"], "Managed Rule")
+        self.assertEqual(existing_rule.received["actions"], actions)
+        self.assertNotIn("trigger", existing_rule.received)
+
     async def test_reopen_restores_database_ticket_state(self):
         guild_id = self.guild_id
         await create_ticket_record(
@@ -736,7 +779,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         )
         from utils.database import get_ticket_record, reopen_ticket
 
-        await reopen_ticket(101)
+        self.assertTrue(await reopen_ticket(101))
+        self.assertFalse(await reopen_ticket(101))
         record = await get_ticket_record(101)
         self.assertEqual(record["status"], "open")
         self.assertIsNone(record["closed_at"])
@@ -875,6 +919,34 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await remove_infraction_by_uuid(infraction_uuid, 1002))
         self.assertIsNotNone(await get_infraction_by_uuid(infraction_uuid, 1001))
 
+    async def test_ambiguous_partial_infraction_uuid_is_rejected(self):
+        values = (
+            "G600000000000000001-shared-prefix-one",
+            "G600000000000000001-shared-prefix-two",
+        )
+        async with aiosqlite.connect(config.DATABASE) as database:
+            for value in values:
+                await database.execute(
+                    "INSERT INTO infractions(uuid, guild_id, user_id, moderator_id, action_type, reason, timestamp) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        value,
+                        self.guild_id,
+                        200,
+                        300,
+                        "WARN",
+                        "Ambiguity test",
+                        datetime.now().isoformat(),
+                    ),
+                )
+            await database.commit()
+        partial = f"G{self.guild_id}-shared-prefix"
+        self.assertIsNone(await get_infraction_by_uuid(partial, self.guild_id))
+        self.assertIsNone(await remove_infraction_by_uuid(partial, self.guild_id))
+        self.assertEqual(
+            (await get_infraction_by_uuid(values[0], self.guild_id))["uuid"],
+            values[0],
+        )
+
     async def test_warning_removal_never_falls_back_to_another_guild(self):
         async with aiosqlite.connect(config.DATABASE) as database:
             await database.execute(
@@ -892,6 +964,11 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             await database.commit()
         count, records = await remove_user_warning(
             501, guild_id=2001, warn_id="G2002-warning"
+        )
+        self.assertEqual((count, records), (0, []))
+        self.assertIsNotNone(await get_infraction_by_uuid("G2002-warning", 2002))
+        count, records = await remove_user_warning(
+            999, guild_id=2002, warn_id="G2002-warning"
         )
         self.assertEqual((count, records), (0, []))
         self.assertIsNotNone(await get_infraction_by_uuid("G2002-warning", 2002))

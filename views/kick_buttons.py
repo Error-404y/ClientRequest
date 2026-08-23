@@ -15,7 +15,7 @@ class KickConfirmView(ReliableView):
         self.author_id = author_id
         self.target_user = target_user
         self.target_name = target_name
-        self.reason = reason
+        self.reason = " ".join(reason.split())[:400] if reason else None
 
     @discord.ui.button(
         label="Confirm kick",
@@ -76,51 +76,11 @@ class KickConfirmView(ReliableView):
                     )
                     user_to_dm = None
 
-        dm_sent = False
-        if user_to_dm:
-            try:
-                dm_embed = discord.Embed(
-                    title="Kick Notification",
-                    description=f"You have been kicked from **{interaction.guild.name}**.",
-                    color=discord.Color.from_rgb(220, 100, 69),
-                )
-                dm_embed.add_field(
-                    name="REASON",
-                    value=self.reason or "No reason specified",
-                    inline=False,
-                )
-                dm_embed.add_field(
-                    name="ISSUED BY", value=interaction.user.display_name, inline=True
-                )
-                dm_embed.set_footer(text=f"{config.BOT_NAME} | Moderation Operations")
-                await user_to_dm.send(embed=dm_embed)
-                dm_sent = True
-                log_dm(user_to_dm, "Kick Notice", success=True)
-            except discord.Forbidden as error:
-                dm_sent = False
-                log_dm(
-                    user_to_dm, "Kick Notice", success=False, error_detail=str(error)
-                )
-            except discord.HTTPException as error:
-                dm_sent = False
-                log_dm(
-                    user_to_dm, "Kick Notice", success=False, error_detail=str(error)
-                )
-                log_exception(
-                    "DM",
-                    error,
-                    guild=interaction.guild,
-                    channel=interaction.channel,
-                    user=user_to_dm,
-                    context="Failed to deliver kick notice",
-                )
-
         kick_reason = f"Kicked by {interaction.user} (ID: {interaction.user.id}) | Reason: {self.reason or 'No reason specified'}"
+        action_completed = False
 
         try:
-            if isinstance(self.target_user, discord.Member):
-                await self.target_user.kick(reason=kick_reason)
-            else:
+            if not isinstance(self.target_user, discord.Member):
                 await interaction.followup.send(
                     embed=error_embed(
                         "Unable to kick target: User is not in the server."
@@ -129,22 +89,68 @@ class KickConfirmView(ReliableView):
                 )
                 return
 
-            target_id = getattr(
-                self.target_user,
-                "id",
-                self.target_user if isinstance(self.target_user, int) else None,
-            )
-            inf_uuid = None
-            if target_id:
-                from utils.database import add_infraction
+            from utils.database import add_infraction, remove_infraction_by_uuid
 
-                inf_uuid = await add_infraction(
-                    user_id=target_id,
-                    moderator_id=interaction.user.id,
-                    action_type="KICK",
-                    reason=self.reason or "No reason specified",
-                    guild_id=interaction.guild.id if interaction.guild else None,
-                )
+            inf_uuid = await add_infraction(
+                user_id=self.target_user.id,
+                moderator_id=interaction.user.id,
+                action_type="KICK",
+                reason=self.reason or "No reason specified",
+                guild_id=interaction.guild.id,
+            )
+            try:
+                await self.target_user.kick(reason=kick_reason)
+                action_completed = True
+            except Exception:
+                await remove_infraction_by_uuid(inf_uuid, interaction.guild.id)
+                raise
+
+            dm_sent = False
+            if user_to_dm:
+                try:
+                    dm_embed = discord.Embed(
+                        title="Kick Notification",
+                        description=f"You have been kicked from **{interaction.guild.name}**.",
+                        color=discord.Color.from_rgb(220, 100, 69),
+                    )
+                    dm_embed.add_field(
+                        name="REASON",
+                        value=self.reason or "No reason specified",
+                        inline=False,
+                    )
+                    dm_embed.add_field(
+                        name="ISSUED BY",
+                        value=interaction.user.display_name,
+                        inline=True,
+                    )
+                    dm_embed.set_footer(
+                        text=f"{config.BOT_NAME} | Moderation Operations"
+                    )
+                    await user_to_dm.send(embed=dm_embed)
+                    dm_sent = True
+                    log_dm(user_to_dm, "Kick Notice", success=True)
+                except discord.Forbidden as error:
+                    log_dm(
+                        user_to_dm,
+                        "Kick Notice",
+                        success=False,
+                        error_detail=str(error),
+                    )
+                except discord.HTTPException as error:
+                    log_dm(
+                        user_to_dm,
+                        "Kick Notice",
+                        success=False,
+                        error_detail=str(error),
+                    )
+                    log_exception(
+                        "DM",
+                        error,
+                        guild=interaction.guild,
+                        channel=interaction.channel,
+                        user=user_to_dm,
+                        context="Failed to deliver kick notice",
+                    )
 
             log_mod(
                 "kicked",
@@ -188,7 +194,11 @@ class KickConfirmView(ReliableView):
             )
             await interaction.followup.send(
                 embed=error_embed(
-                    f"Failed to kick user: Bot lacks required permissions or target role is superior. Error reference: `{reference}`"
+                    (
+                        f"The kick succeeded, but the confirmation message could not be updated. Error reference: `{reference}`"
+                        if action_completed
+                        else f"Failed to kick user: Bot lacks required permissions or target role is superior. Error reference: `{reference}`"
+                    )
                 ),
                 ephemeral=True,
             )
@@ -204,7 +214,11 @@ class KickConfirmView(ReliableView):
             )
             await interaction.followup.send(
                 embed=error_embed(
-                    f"Failed to kick user. Error reference: `{reference}`"
+                    (
+                        f"The kick succeeded, but a follow-up operation failed. Error reference: `{reference}`"
+                        if action_completed
+                        else f"Failed to kick user. Error reference: `{reference}`"
+                    )
                 ),
                 ephemeral=True,
             )

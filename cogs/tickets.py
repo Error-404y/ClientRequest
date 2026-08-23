@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 
 import config
-from utils.database import get_open_ticket_controls, set_ticket_control_message
+from utils.database import get_ticket_controls, set_ticket_control_message
 from utils.logger import log_exception
 from views.closed_buttons import ClosedTicketButtons
 from views.dropdown import TicketPanel
@@ -18,8 +18,7 @@ class TicketControlRecovery(commands.Cog):
     async def on_ready(self):
         if self.recovered:
             return
-        self.recovered = True
-        for record in await get_open_ticket_controls():
+        for record in await get_ticket_controls():
             channel = self.bot.get_channel(record["channel_id"])
             if not isinstance(channel, discord.TextChannel):
                 continue
@@ -33,7 +32,7 @@ class TicketControlRecovery(commands.Cog):
             if message is None:
                 try:
                     async for candidate in channel.history(
-                        limit=100, oldest_first=True
+                        limit=100, oldest_first=record["status"] == "open"
                     ):
                         if candidate.author.id != self.bot.user.id:
                             continue
@@ -42,7 +41,10 @@ class TicketControlRecovery(commands.Cog):
                             for row in candidate.components
                             for component in getattr(row, "children", [])
                         }
-                        if "zer_claim" in custom_ids:
+                        target_custom_id = (
+                            "zer_claim" if record["status"] == "open" else "zer_reopen"
+                        )
+                        if target_custom_id in custom_ids:
                             message = candidate
                             await set_ticket_control_message(channel.id, candidate.id)
                             break
@@ -57,6 +59,9 @@ class TicketControlRecovery(commands.Cog):
                     continue
             if message:
                 try:
+                    if record["status"] == "closed":
+                        await message.edit(view=ClosedTicketButtons())
+                        continue
                     view = TicketButtons(record["claimed_by"])
                     form = None
                     if record["application"] == "Moderator Application":
@@ -80,6 +85,7 @@ class TicketControlRecovery(commands.Cog):
                         channel=channel,
                         context="Ticket control state restoration failed",
                     )
+        self.recovered = True
 
 
 async def setup(bot):

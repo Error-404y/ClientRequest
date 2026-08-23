@@ -218,6 +218,7 @@ class Diagnostics(commands.Cog):
             "TICKET_CATEGORY_ID",
             "TICKET_PANEL_CHANNEL_ID",
             "TICKET_ARCHIVE_CATEGORY_ID",
+            "LOG_CHANNEL_ID",
         )
         permission_names = (
             "view_channel",
@@ -226,7 +227,14 @@ class Diagnostics(commands.Cog):
             "attach_files",
             "read_message_history",
         )
-        guild_permission_names = ("manage_channels", "ban_members", "kick_members")
+        guild_permission_names = (
+            "manage_channels",
+            "manage_roles",
+            "manage_guild",
+            "moderate_members",
+            "ban_members",
+            "kick_members",
+        )
         configured_guilds = (
             config.GUILDS.items()
             if guild_id is None
@@ -245,6 +253,8 @@ class Diagnostics(commands.Cog):
             guild = self.bot.get_guild(checked_guild_id)
             issues = []
             warnings = []
+            if not settings.get("SETUP_COMPLETE"):
+                issues.append("Server setup is incomplete")
             if guild is None:
                 results.append(
                     {
@@ -361,8 +371,6 @@ class Diagnostics(commands.Cog):
             "HEALTH",
             f"Startup status: {report['status']} | issues={len(report['issues'])} | warnings={len(report['warnings'])}",
         )
-        for warning in report["warnings"]:
-            emit("WARNING", "CONFIGURATION", warning)
 
     async def require_owner(self, interaction, message):
         if (

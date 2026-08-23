@@ -10,6 +10,7 @@ from utils.database import (
     auto_assign_ticket,
     create_ticket_record,
     get_next_ticket_number,
+    get_open_ticket_for_user,
     get_staff_availability,
     mark_ticket_deleted,
     set_ticket_control_message,
@@ -93,6 +94,44 @@ class ApplicationDropdown(Select):
             details=(f"Selected Application: {application}"),
         )
 
+        existing_record = await get_open_ticket_for_user(guild_id, user.id)
+        if existing_record:
+            existing_channel = guild.get_channel(existing_record["channel_id"])
+            if existing_channel is None:
+                try:
+                    existing_channel = await guild.fetch_channel(
+                        existing_record["channel_id"]
+                    )
+                except discord.NotFound:
+                    existing_channel = None
+                except discord.HTTPException as lookup_error:
+                    reference = log_exception(
+                        "TICKET",
+                        lookup_error,
+                        guild=guild,
+                        user=user,
+                        context="Existing open ticket validation failed",
+                    )
+                    await interaction.followup.send(
+                        embed=error_embed(
+                            f"Your existing ticket could not be validated. Error reference: `{reference}`"
+                        ),
+                        ephemeral=True,
+                    )
+                    return
+            if isinstance(existing_channel, discord.TextChannel):
+                log_ticket(
+                    "Creation Aborted (Duplicate Ticket)", existing_channel, user
+                )
+                await interaction.followup.send(
+                    embed=error_embed(
+                        f"You already have an open ticket: {existing_channel.mention}"
+                    ),
+                    ephemeral=True,
+                )
+                return
+            await mark_ticket_deleted(existing_record["channel_id"])
+
         for channel in guild.text_channels:
             if channel.category_id != ticket_category_id:
                 continue
@@ -154,6 +193,15 @@ class ApplicationDropdown(Select):
                 view_channel=True, send_messages=True, read_message_history=True
             ),
         }
+        if guild.me:
+            overwrites[guild.me] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                manage_channels=True,
+                read_message_history=True,
+                embed_links=True,
+                attach_files=True,
+            )
 
         owner_roles = config.get_owner_roles(guild_id)
 
@@ -296,18 +344,34 @@ class ApplicationDropdown(Select):
 
         assigned_id = None
         if guild_config.get("AUTO_ASSIGN_TICKETS"):
-            availability = await get_staff_availability(guild.id)
-            candidates = []
-            for record in availability:
-                member = guild.get_member(record["user_id"])
-                if member and record["status"] == "Available" and is_staff(member):
-                    candidates.append(member.id)
-            assigned_id = await auto_assign_ticket(
-                channel.id,
-                guild.id,
-                candidates,
-                datetime.now(timezone).isoformat(),
-            )
+            try:
+                availability = await get_staff_availability(guild.id)
+                candidates = []
+                for record in availability:
+                    member = guild.get_member(record["user_id"])
+                    if (
+                        member
+                        and record["status"] == "Available"
+                        and is_staff(member)
+                        and member.status
+                        not in {discord.Status.offline, discord.Status.invisible}
+                    ):
+                        candidates.append(member.id)
+                assigned_id = await auto_assign_ticket(
+                    channel.id,
+                    guild.id,
+                    candidates,
+                    datetime.now(timezone).isoformat(),
+                )
+            except Exception as assignment_error:
+                log_exception(
+                    "TICKET",
+                    assignment_error,
+                    guild=guild,
+                    channel=channel,
+                    user=user,
+                    context="Automatic ticket assignment failed; ticket left unclaimed",
+                )
 
         view = TicketButtons(claimed_by=assigned_id)
 
@@ -324,67 +388,6 @@ class ApplicationDropdown(Select):
                 embed=ticket_created(user, application, form, ticket_uuid),
                 view=view,
             )
-            await set_ticket_control_message(channel.id, control_message.id)
-            if assigned_id:
-                assigned_member = guild.get_member(assigned_id)
-                assignment_embed = discord.Embed(
-                    title="Ticket Automatically Assigned",
-                    description="The assignment system selected an available staff member with the lowest active workload.",
-                    color=discord.Color.green(),
-                    timestamp=discord.utils.utcnow(),
-                )
-                assignment_embed.add_field(
-                    name="Assigned Staff",
-                    value=(
-                        f"{assigned_member.mention}\n`{assigned_id}`"
-                        if assigned_member
-                        else f"User ID: `{assigned_id}`"
-                    ),
-                    inline=True,
-                )
-                assignment_embed.add_field(
-                    name="Status", value="Assigned and under review", inline=True
-                )
-                assignment_embed.set_footer(
-                    text=f"{config.BOT_NAME} | Automatic Assignment"
-                )
-                await channel.send(embed=assignment_embed)
-                if assigned_member:
-                    ticket_claim_report(
-                        channel, assigned_member, user.id, interaction.client
-                    )
-                    try:
-                        await user.send(
-                            embed=ticket_claimed_dm(
-                                guild,
-                                channel,
-                                assigned_member,
-                                interaction.client.user,
-                            )
-                        )
-                        log_dm(user, "Automatic Ticket Assignment", success=True)
-                    except discord.Forbidden:
-                        log_dm(
-                            user,
-                            "Automatic Ticket Assignment",
-                            success=False,
-                            error_detail="Direct Messages Disabled",
-                        )
-                    except discord.HTTPException as dm_error:
-                        log_dm(
-                            user,
-                            "Automatic Ticket Assignment",
-                            success=False,
-                            error_detail=str(dm_error),
-                        )
-                        log_exception(
-                            "DM",
-                            dm_error,
-                            guild=guild,
-                            channel=channel,
-                            user=user,
-                            context="Failed to deliver automatic ticket assignment notice",
-                        )
         except discord.HTTPException as exc:
             await mark_ticket_deleted(channel.id)
             try:
@@ -413,6 +416,89 @@ class ApplicationDropdown(Select):
                 ephemeral=True,
             )
             return
+
+        try:
+            await set_ticket_control_message(channel.id, control_message.id)
+        except Exception as control_error:
+            log_exception(
+                "DATABASE",
+                control_error,
+                guild=guild,
+                channel=channel,
+                user=user,
+                context="Ticket control message ID could not be stored",
+            )
+
+        if assigned_id:
+            assigned_member = guild.get_member(assigned_id)
+            assignment_embed = discord.Embed(
+                title="Ticket Automatically Assigned",
+                description="The assignment system selected an available staff member with the lowest active workload.",
+                color=discord.Color.green(),
+                timestamp=discord.utils.utcnow(),
+            )
+            assignment_embed.add_field(
+                name="Assigned Staff",
+                value=(
+                    f"{assigned_member.mention}\n`{assigned_id}`"
+                    if assigned_member
+                    else f"User ID: `{assigned_id}`"
+                ),
+                inline=True,
+            )
+            assignment_embed.add_field(
+                name="Status", value="Assigned and under review", inline=True
+            )
+            assignment_embed.set_footer(
+                text=f"{config.BOT_NAME} | Automatic Assignment"
+            )
+            try:
+                await channel.send(embed=assignment_embed)
+            except discord.HTTPException as assignment_notice_error:
+                log_exception(
+                    "TICKET",
+                    assignment_notice_error,
+                    guild=guild,
+                    channel=channel,
+                    user=user,
+                    context="Automatic assignment audit message failed",
+                )
+            if assigned_member:
+                ticket_claim_report(
+                    channel, assigned_member, user.id, interaction.client
+                )
+                try:
+                    await user.send(
+                        embed=ticket_claimed_dm(
+                            guild,
+                            channel,
+                            assigned_member,
+                            interaction.client.user,
+                        )
+                    )
+                    log_dm(user, "Automatic Ticket Assignment", success=True)
+                except discord.Forbidden:
+                    log_dm(
+                        user,
+                        "Automatic Ticket Assignment",
+                        success=False,
+                        error_detail="Direct Messages Disabled",
+                    )
+                except discord.HTTPException as dm_error:
+                    log_dm(
+                        user,
+                        "Automatic Ticket Assignment",
+                        success=False,
+                        error_detail=str(dm_error),
+                    )
+                    log_exception(
+                        "DM",
+                        dm_error,
+                        guild=guild,
+                        channel=channel,
+                        user=user,
+                        context="Failed to deliver automatic ticket assignment notice",
+                    )
 
         ticket_report(user, application, channel, bot=interaction.client)
 

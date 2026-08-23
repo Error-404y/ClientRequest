@@ -114,22 +114,47 @@ class AutoModeration(commands.Cog):
             if rule.name.startswith(RULE_PREFIX)
         ]
 
-    async def upsert_rule(self, guild, existing, name, trigger, actions, enabled=True):
+    async def upsert_rule(
+        self,
+        guild,
+        existing,
+        name,
+        trigger,
+        actions,
+        enabled=True,
+        adopt_rule=None,
+    ):
         rule = discord.utils.get(existing, name=name)
         if rule:
-            return await rule.edit(
+            return (
+                await rule.edit(
+                    trigger=trigger,
+                    actions=actions,
+                    enabled=enabled,
+                    reason=f"{config.BOT_NAME} AutoMod configuration",
+                ),
+                False,
+            )
+        if adopt_rule:
+            return (
+                await adopt_rule.edit(
+                    name=name,
+                    actions=actions,
+                    enabled=enabled,
+                    reason=f"{config.BOT_NAME} AutoMod rule adoption",
+                ),
+                True,
+            )
+        return (
+            await guild.create_automod_rule(
+                name=name,
+                event_type=discord.AutoModRuleEventType.message_send,
                 trigger=trigger,
                 actions=actions,
                 enabled=enabled,
                 reason=f"{config.BOT_NAME} AutoMod configuration",
-            )
-        return await guild.create_automod_rule(
-            name=name,
-            event_type=discord.AutoModRuleEventType.message_send,
-            trigger=trigger,
-            actions=actions,
-            enabled=enabled,
-            reason=f"{config.BOT_NAME} AutoMod configuration",
+            ),
+            False,
         )
 
     @automodz.command(
@@ -200,6 +225,7 @@ class AutoModeration(commands.Cog):
             discord.AutoModRuleTriggerType.keyword_preset: 1,
             discord.AutoModRuleTriggerType.mention_spam: 1,
         }
+        adoptable = {}
         for key, trigger_type in (
             ("keywords", discord.AutoModRuleTriggerType.keyword),
             ("presets", discord.AutoModRuleTriggerType.keyword_preset),
@@ -209,31 +235,22 @@ class AutoModeration(commands.Cog):
                 continue
             used = sum(rule.trigger.type == trigger_type for rule in all_rules)
             if used >= trigger_limits[trigger_type]:
-                await interaction.followup.send(
-                    embed=error_embed(
-                        f"Discord's server limit for {trigger_type.name.replace('_', ' ')} AutoMod rules is already reached. Remove or replace an existing rule before running setup."
-                    ),
-                    ephemeral=True,
+                adoptable[key] = next(
+                    rule for rule in all_rules if rule.trigger.type == trigger_type
                 )
-                return
         rules = []
-        rules.append(
-            await self.upsert_rule(
-                guild,
-                existing,
-                RULE_NAMES["keywords"],
+        adopted_count = 0
+        specifications = (
+            (
+                "keywords",
                 discord.AutoModTrigger(
                     type=discord.AutoModRuleTriggerType.keyword,
                     keyword_filter=list(dict.fromkeys(config.BAD_WORDS))[:1000],
                 ),
                 keyword_actions,
-            )
-        )
-        rules.append(
-            await self.upsert_rule(
-                guild,
-                existing,
-                RULE_NAMES["presets"],
+            ),
+            (
+                "presets",
                 discord.AutoModTrigger(
                     type=discord.AutoModRuleTriggerType.keyword_preset,
                     presets=discord.AutoModPresets(
@@ -241,21 +258,28 @@ class AutoModeration(commands.Cog):
                     ),
                 ),
                 preset_actions,
-            )
-        )
-        rules.append(
-            await self.upsert_rule(
-                guild,
-                existing,
-                RULE_NAMES["mentions"],
+            ),
+            (
+                "mentions",
                 discord.AutoModTrigger(
                     type=discord.AutoModRuleTriggerType.mention_spam,
                     mention_limit=mention_limit,
                     mention_raid_protection=True,
                 ),
                 mention_actions,
-            )
+            ),
         )
+        for key, trigger, actions in specifications:
+            rule, adopted = await self.upsert_rule(
+                guild,
+                existing,
+                RULE_NAMES[key],
+                trigger,
+                actions,
+                adopt_rule=adoptable.get(key),
+            )
+            rules.append(rule)
+            adopted_count += int(adopted)
         log_interaction(
             interaction.user,
             "automodz setup",
@@ -278,6 +302,17 @@ class AutoModeration(commands.Cog):
             ),
             inline=True,
         )
+        embed.add_field(
+            name="Existing Rules Adopted",
+            value=str(adopted_count),
+            inline=True,
+        )
+        if adopted_count:
+            embed.add_field(
+                name="Preserved Configuration",
+                value="Existing trigger thresholds, keyword selections, allow lists, regular expressions, role exemptions, and channel exemptions were retained for adopted rules.",
+                inline=False,
+            )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @automodz.command(
@@ -331,6 +366,14 @@ class AutoModeration(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True)
         clean = " ".join(keyword.lower().split())
+        if not 2 <= len(clean) <= 60:
+            await interaction.followup.send(
+                embed=error_embed(
+                    "The normalized keyword must contain between 2 and 60 characters."
+                ),
+                ephemeral=True,
+            )
+            return
         rules = await self.managed_rules(interaction.guild)
         rule = discord.utils.get(rules, name=RULE_NAMES["keywords"])
         if rule is None:
@@ -352,6 +395,14 @@ class AutoModeration(commands.Cog):
                 return
             words.remove(existing[clean.casefold()])
         elif clean.casefold() not in existing:
+            if len(words) >= 1000:
+                await interaction.followup.send(
+                    embed=error_embed(
+                        "Discord allows a maximum of 1,000 keyword entries in this rule."
+                    ),
+                    ephemeral=True,
+                )
+                return
             words.append(clean)
         await rule.edit(
             trigger=discord.AutoModTrigger(
@@ -484,13 +535,22 @@ class AutoModeration(commands.Cog):
         reason = f"Blocked by Discord AutoMod rule: {rule.name}"
         if execution.matched_keyword:
             reason += f" | Matched keyword: {execution.matched_keyword}"
-        await add_infraction(
-            user_id=execution.user_id,
-            moderator_id=self.bot.user.id,
-            action_type="AUTOMOD",
-            reason=reason,
-            guild_id=guild.id,
-        )
+        try:
+            await add_infraction(
+                user_id=execution.user_id,
+                moderator_id=self.bot.user.id,
+                action_type="AUTOMOD",
+                reason=reason,
+                guild_id=guild.id,
+            )
+        except Exception as error:
+            log_exception(
+                "AUTOMOD",
+                error,
+                guild=guild,
+                user=execution.user_id,
+                context=f"Failed to record AutoMod action for rule {execution.rule_id}",
+            )
 
 
 async def setup(bot):

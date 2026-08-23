@@ -3,6 +3,7 @@ import html
 import os
 import re
 import shutil
+import weakref
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,7 @@ from utils.logger import log_exception, log_transcript
 
 timezone = pytz.timezone(config.TIMEZONE)
 MAX_TRANSCRIPT_ASSET_BYTES = 8_000_000
+TRANSCRIPT_LOCKS = weakref.WeakValueDictionary()
 
 
 def build_archive(source, destination):
@@ -101,6 +103,15 @@ def parse_markdown(text):
 
 
 async def create_transcript(channel, lightweight=False):
+    lock = TRANSCRIPT_LOCKS.get(channel.id)
+    if lock is None:
+        lock = asyncio.Lock()
+        TRANSCRIPT_LOCKS[channel.id] = lock
+    async with lock:
+        return await _create_transcript(channel, lightweight)
+
+
+async def _create_transcript(channel, lightweight=False):
     log_transcript("Initiated creation", channel, details=f"Lightweight: {lightweight}")
 
     guild_transcript_dir = os.path.join(config.TRANSCRIPT_FOLDER, str(channel.guild.id))

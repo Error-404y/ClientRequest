@@ -94,19 +94,19 @@ async def resolve_user(
         for member in guild.members:
             if (
                 member.name.lower() == search_term
-                or (member.global_name and member.global_name.lower() == search_term)
-                or member.display_name.lower() == search_term
                 or str(member).lower() == search_term
             ):
                 return member, member.name, member.id
 
-        for member in guild.members:
-            if (
-                search_term in member.name.lower()
-                or (member.global_name and search_term in member.global_name.lower())
-                or search_term in member.display_name.lower()
-            ):
-                return member, member.name, member.id
+        display_matches = [
+            member
+            for member in guild.members
+            if member.display_name.lower() == search_term
+            or (member.global_name and member.global_name.lower() == search_term)
+        ]
+        if len(display_matches) == 1:
+            member = display_matches[0]
+            return member, member.name, member.id
 
     return None, clean_input.lstrip("@"), None
 
@@ -233,8 +233,8 @@ class BanCog(commands.Cog):
     async def banz_slash(
         self,
         interaction: discord.Interaction,
-        user: str,
-        reason: str | None = None,
+        user: app_commands.Range[str, 1, 100],
+        reason: app_commands.Range[str, 1, 400] | None = None,
     ):
         log_command(
             interaction.user,
@@ -376,8 +376,8 @@ class BanCog(commands.Cog):
     async def unbanz_slash(
         self,
         interaction: discord.Interaction,
-        user: str,
-        reason: str | None = None,
+        user: app_commands.Range[str, 1, 100],
+        reason: app_commands.Range[str, 1, 400] | None = None,
     ):
         log_command(
             interaction.user,
@@ -517,8 +517,8 @@ class BanCog(commands.Cog):
     async def kickz_slash(
         self,
         interaction: discord.Interaction,
-        user: str,
-        reason: str | None = None,
+        user: app_commands.Range[str, 1, 100],
+        reason: app_commands.Range[str, 1, 400] | None = None,
     ):
         log_command(
             interaction.user,
@@ -659,6 +659,14 @@ class BanCog(commands.Cog):
         actual_id: int,
         reason: str,
     ):
+        reason = " ".join(reason.split())[:400]
+        infraction_uuid = await add_infraction(
+            user_id=actual_id,
+            moderator_id=moderator.id,
+            action_type="WARN",
+            reason=reason,
+            guild_id=guild.id,
+        )
         dm_sent = False
 
         if isinstance(target_obj, (discord.Member, discord.User)):
@@ -710,14 +718,6 @@ class BanCog(commands.Cog):
                     user=target_obj,
                     context="Failed to deliver warning notice",
                 )
-
-        infraction_uuid = await add_infraction(
-            user_id=actual_id,
-            moderator_id=moderator.id,
-            action_type="WARN",
-            reason=reason,
-            guild_id=guild.id if guild else None,
-        )
 
         log_mod(
             "warned",
@@ -778,8 +778,8 @@ class BanCog(commands.Cog):
     async def warnz_slash(
         self,
         interaction: discord.Interaction,
-        user: str,
-        reason: str,
+        user: app_commands.Range[str, 1, 100],
+        reason: app_commands.Range[str, 1, 400],
     ):
         await interaction.response.defer()
 
@@ -931,6 +931,7 @@ class BanCog(commands.Cog):
         warn_id: str,
         reason: str,
     ):
+        reason = " ".join(reason.split())[:400]
         count_removed, records = await remove_user_warning(
             actual_id,
             warn_id=warn_id,
@@ -1081,9 +1082,9 @@ class BanCog(commands.Cog):
     async def warnremovez_slash(
         self,
         interaction: discord.Interaction,
-        user: str,
-        warn_id: str | None = None,
-        reason: str = "No reason specified",
+        user: app_commands.Range[str, 1, 100],
+        warn_id: app_commands.Range[str, 1, 100] | None = None,
+        reason: app_commands.Range[str, 1, 400] = "No reason specified",
     ):
         log_command(
             interaction.user,
@@ -1377,7 +1378,7 @@ class BanCog(commands.Cog):
 
         embed.add_field(
             name=f"WARNING RECORDS ({len(warnings)})",
-            value=warning_string,
+            value=warning_string[:1024],
             inline=False,
         )
 
@@ -1402,7 +1403,7 @@ class BanCog(commands.Cog):
 
         embed.add_field(
             name=f"MODERATION HISTORY ({len(other_mods)})",
-            value=moderation_string,
+            value=moderation_string[:1024],
             inline=False,
         )
 
@@ -1424,7 +1425,7 @@ class BanCog(commands.Cog):
 
         embed.add_field(
             name=f"BAD WORD LOGS ({len(bad_word_logs)})",
-            value=bad_word_string,
+            value=bad_word_string[:1024],
             inline=False,
         )
 
@@ -1587,7 +1588,7 @@ class BanCog(commands.Cog):
         )
         embed.add_field(
             name="REASON",
-            value=(infraction["reason"] or "No reason specified"),
+            value=(infraction["reason"] or "No reason specified")[:1024],
             inline=False,
         )
 
@@ -1619,7 +1620,7 @@ class BanCog(commands.Cog):
         )
         embed.add_field(
             name="REASON",
-            value=(removed["reason"] or "No reason specified"),
+            value=(removed["reason"] or "No reason specified")[:1024],
             inline=False,
         )
 

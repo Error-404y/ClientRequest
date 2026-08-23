@@ -1,6 +1,6 @@
 import discord
 
-from utils.database import add_infraction
+from utils.database import add_infraction, remove_infraction_by_uuid
 from utils.embeds import error as error_embed
 from utils.logger import log_exception, log_interaction, log_mod
 from utils.permissions import can_ban
@@ -15,7 +15,7 @@ class UnbanConfirmView(ReliableView):
         self.author_id = author_id
         self.target_user = target_user
         self.target_name = target_name
-        self.reason = reason
+        self.reason = " ".join(reason.split())[:400] if reason else None
 
     @discord.ui.button(
         label="Confirm", style=discord.ButtonStyle.success, custom_id="unbanz_confirm"
@@ -42,26 +42,15 @@ class UnbanConfirmView(ReliableView):
             return
 
         await interaction.response.defer()
+        action_completed = False
 
         try:
-            if isinstance(self.target_user, (discord.Member, discord.User)):
-                await interaction.guild.unban(
-                    self.target_user, reason=self.reason or "Unbanned via /unbanZ"
-                )
-                user_id = self.target_user.id
-            elif isinstance(self.target_user, int):
-                await interaction.guild.unban(
-                    discord.Object(id=self.target_user),
-                    reason=self.reason or "Unbanned via /unbanZ",
-                )
-                user_id = self.target_user
-            elif hasattr(self.target_user, "id"):
-                await interaction.guild.unban(
-                    discord.Object(id=self.target_user.id),
-                    reason=self.reason or "Unbanned via /unbanZ",
-                )
-                user_id = self.target_user.id
-            else:
+            user_id = getattr(
+                self.target_user,
+                "id",
+                self.target_user if isinstance(self.target_user, int) else None,
+            )
+            if not user_id:
                 await interaction.followup.send(
                     embed=error_embed(
                         f"Unable to unban target: Invalid user resolution for {self.target_name}."
@@ -69,20 +58,40 @@ class UnbanConfirmView(ReliableView):
                     ephemeral=True,
                 )
                 return
+            infraction_uuid = await add_infraction(
+                user_id=user_id,
+                moderator_id=interaction.user.id,
+                action_type="UNBAN",
+                reason=self.reason or "Unbanned via /unbanZ",
+                guild_id=interaction.guild.id,
+            )
+            if isinstance(self.target_user, (discord.Member, discord.User)):
+                unban_target = self.target_user
+            elif isinstance(self.target_user, int):
+                unban_target = discord.Object(id=self.target_user)
+            elif hasattr(self.target_user, "id"):
+                unban_target = discord.Object(id=self.target_user.id)
+            else:
+                await remove_infraction_by_uuid(
+                    infraction_uuid, interaction.guild.id
+                )
+                return
+            try:
+                await interaction.guild.unban(
+                    unban_target, reason=self.reason or "Unbanned via /unbanZ"
+                )
+                action_completed = True
+            except Exception:
+                await remove_infraction_by_uuid(
+                    infraction_uuid, interaction.guild.id
+                )
+                raise
 
             log_mod(
                 "unbanned",
                 interaction.user,
                 self.target_user or self.target_name,
                 reason=self.reason or "Unbanned via /unbanZ",
-            )
-
-            await add_infraction(
-                user_id=user_id,
-                moderator_id=interaction.user.id,
-                action_type="UNBAN",
-                reason=self.reason or "Unbanned via /unbanZ",
-                guild_id=interaction.guild.id if interaction.guild else None,
             )
 
             desc = f"**{self.target_name}** has successfully been unbanned!"
@@ -94,10 +103,31 @@ class UnbanConfirmView(ReliableView):
                 description=desc,
                 color=discord.Color.from_rgb(255, 255, 255),
             )
+            embed.add_field(
+                name="INFRACTION UUID",
+                value=f"`{infraction_uuid}`",
+                inline=False,
+            )
 
             await interaction.message.edit(embed=embed, view=None)
 
-        except discord.NotFound:
+        except discord.NotFound as error:
+            if action_completed:
+                reference = log_exception(
+                    "MODERATION",
+                    error,
+                    guild=interaction.guild,
+                    channel=interaction.channel,
+                    user=interaction.user,
+                    context=f"Unban confirmation message missing for {self.target_name}",
+                )
+                await interaction.followup.send(
+                    embed=error_embed(
+                        f"The unban succeeded, but the original confirmation message no longer exists. Error reference: `{reference}`"
+                    ),
+                    ephemeral=True,
+                )
+                return
             log_mod(
                 "Unban Failed (User Not Banned)", interaction.user, self.target_name
             )
@@ -123,7 +153,11 @@ class UnbanConfirmView(ReliableView):
             )
             await interaction.followup.send(
                 embed=error_embed(
-                    f"Failed to unban user: Bot lacks required administrative permissions. Error reference: `{reference}`"
+                    (
+                        f"The unban succeeded, but the confirmation message could not be updated. Error reference: `{reference}`"
+                        if action_completed
+                        else f"Failed to unban user: Bot lacks required administrative permissions. Error reference: `{reference}`"
+                    )
                 ),
                 ephemeral=True,
             )
@@ -139,7 +173,11 @@ class UnbanConfirmView(ReliableView):
             )
             await interaction.followup.send(
                 embed=error_embed(
-                    f"Failed to unban user. Error reference: `{reference}`"
+                    (
+                        f"The unban succeeded, but a follow-up operation failed. Error reference: `{reference}`"
+                        if action_completed
+                        else f"Failed to unban user. Error reference: `{reference}`"
+                    )
                 ),
                 ephemeral=True,
             )

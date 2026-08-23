@@ -15,7 +15,7 @@ class BanConfirmView(ReliableView):
         self.author_id = author_id
         self.target_user = target_user
         self.target_name = target_name
-        self.reason = reason
+        self.reason = " ".join(reason.split())[:400] if reason else None
 
     @discord.ui.button(
         label="Confirm ban", style=discord.ButtonStyle.danger, custom_id="banz_confirm"
@@ -74,61 +74,16 @@ class BanConfirmView(ReliableView):
                     )
                     user_to_dm = None
 
-        dm_sent = False
-        if user_to_dm:
-            try:
-                dm_embed = discord.Embed(
-                    title="Ban Notification",
-                    description=f"You have been banned from **{interaction.guild.name}**.",
-                    color=discord.Color.from_rgb(220, 53, 69),
-                )
-                dm_embed.add_field(
-                    name="REASON",
-                    value=self.reason or "No reason specified",
-                    inline=False,
-                )
-                dm_embed.add_field(
-                    name="ISSUED BY", value=interaction.user.display_name, inline=True
-                )
-                dm_embed.set_footer(text=f"{config.BOT_NAME} | Moderation Operations")
-                await user_to_dm.send(embed=dm_embed)
-                dm_sent = True
-                log_dm(user_to_dm, "Ban Notice", success=True)
-            except discord.Forbidden as error:
-                dm_sent = False
-                log_dm(user_to_dm, "Ban Notice", success=False, error_detail=str(error))
-            except discord.HTTPException as error:
-                dm_sent = False
-                log_dm(user_to_dm, "Ban Notice", success=False, error_detail=str(error))
-                log_exception(
-                    "DM",
-                    error,
-                    guild=interaction.guild,
-                    channel=interaction.channel,
-                    user=user_to_dm,
-                    context="Failed to deliver ban notice",
-                )
-
         ban_reason = f"Banned by {interaction.user} (ID: {interaction.user.id}) | Reason: {self.reason or 'No reason specified'}"
+        action_completed = False
 
         try:
-            if isinstance(self.target_user, (discord.Member, discord.User)):
-                await interaction.guild.ban(
-                    self.target_user, reason=ban_reason, delete_message_days=14
-                )
-            elif isinstance(self.target_user, int):
-                await interaction.guild.ban(
-                    discord.Object(id=self.target_user),
-                    reason=ban_reason,
-                    delete_message_days=14,
-                )
-            elif hasattr(self.target_user, "id"):
-                await interaction.guild.ban(
-                    discord.Object(id=self.target_user.id),
-                    reason=ban_reason,
-                    delete_message_days=14,
-                )
-            else:
+            target_id = getattr(
+                self.target_user,
+                "id",
+                self.target_user if isinstance(self.target_user, int) else None,
+            )
+            if not target_id:
                 await interaction.followup.send(
                     embed=error_embed(
                         f"Unable to ban target: Invalid resolution for {self.target_name}."
@@ -136,23 +91,79 @@ class BanConfirmView(ReliableView):
                     ephemeral=True,
                 )
                 return
+            from utils.database import add_infraction, remove_infraction_by_uuid
 
-            target_id = getattr(
-                self.target_user,
-                "id",
-                self.target_user if isinstance(self.target_user, int) else None,
+            inf_uuid = await add_infraction(
+                user_id=target_id,
+                moderator_id=interaction.user.id,
+                action_type="BAN",
+                reason=self.reason or "No reason specified",
+                guild_id=interaction.guild.id,
             )
-            inf_uuid = None
-            if target_id:
-                from utils.database import add_infraction
-
-                inf_uuid = await add_infraction(
-                    user_id=target_id,
-                    moderator_id=interaction.user.id,
-                    action_type="BAN",
-                    reason=self.reason or "No reason specified",
-                    guild_id=interaction.guild.id if interaction.guild else None,
+            if isinstance(self.target_user, (discord.Member, discord.User)):
+                ban_target = self.target_user
+            elif isinstance(self.target_user, int):
+                ban_target = discord.Object(id=self.target_user)
+            elif hasattr(self.target_user, "id"):
+                ban_target = discord.Object(id=self.target_user.id)
+            else:
+                await remove_infraction_by_uuid(inf_uuid, interaction.guild.id)
+                return
+            try:
+                await interaction.guild.ban(
+                    ban_target, reason=ban_reason, delete_message_days=14
                 )
+                action_completed = True
+            except Exception:
+                await remove_infraction_by_uuid(inf_uuid, interaction.guild.id)
+                raise
+
+            dm_sent = False
+            if user_to_dm:
+                try:
+                    dm_embed = discord.Embed(
+                        title="Ban Notification",
+                        description=f"You have been banned from **{interaction.guild.name}**.",
+                        color=discord.Color.from_rgb(220, 53, 69),
+                    )
+                    dm_embed.add_field(
+                        name="REASON",
+                        value=self.reason or "No reason specified",
+                        inline=False,
+                    )
+                    dm_embed.add_field(
+                        name="ISSUED BY",
+                        value=interaction.user.display_name,
+                        inline=True,
+                    )
+                    dm_embed.set_footer(
+                        text=f"{config.BOT_NAME} | Moderation Operations"
+                    )
+                    await user_to_dm.send(embed=dm_embed)
+                    dm_sent = True
+                    log_dm(user_to_dm, "Ban Notice", success=True)
+                except discord.Forbidden as error:
+                    log_dm(
+                        user_to_dm,
+                        "Ban Notice",
+                        success=False,
+                        error_detail=str(error),
+                    )
+                except discord.HTTPException as error:
+                    log_dm(
+                        user_to_dm,
+                        "Ban Notice",
+                        success=False,
+                        error_detail=str(error),
+                    )
+                    log_exception(
+                        "DM",
+                        error,
+                        guild=interaction.guild,
+                        channel=interaction.channel,
+                        user=user_to_dm,
+                        context="Failed to deliver ban notice",
+                    )
 
             log_mod(
                 "banned",
@@ -196,7 +207,11 @@ class BanConfirmView(ReliableView):
             )
             await interaction.followup.send(
                 embed=error_embed(
-                    f"Failed to ban user: Bot lacks required permissions or target role is superior. Error reference: `{reference}`"
+                    (
+                        f"The ban succeeded, but the confirmation message could not be updated. Error reference: `{reference}`"
+                        if action_completed
+                        else f"Failed to ban user: Bot lacks required permissions or target role is superior. Error reference: `{reference}`"
+                    )
                 ),
                 ephemeral=True,
             )
@@ -212,7 +227,11 @@ class BanConfirmView(ReliableView):
             )
             await interaction.followup.send(
                 embed=error_embed(
-                    f"Failed to ban user. Error reference: `{reference}`"
+                    (
+                        f"The ban succeeded, but a follow-up operation failed. Error reference: `{reference}`"
+                        if action_completed
+                        else f"Failed to ban user. Error reference: `{reference}`"
+                    )
                 ),
                 ephemeral=True,
             )

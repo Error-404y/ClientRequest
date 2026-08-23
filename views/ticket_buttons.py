@@ -4,7 +4,7 @@ import discord
 import pytz
 
 import config
-from utils.database import toggle_ticket_claim
+from utils.database import get_ticket_owner, toggle_ticket_claim
 from utils.embeds import error as error_embed
 from utils.embeds import success as success_embed
 from utils.embeds import ticket_claimed_dm
@@ -140,7 +140,16 @@ class PrioritySelectionView(ReliableView):
         )
         from utils.database import set_ticket_priority
 
-        await set_ticket_priority(self.original_channel.id, priority)
+        updated = await set_ticket_priority(self.original_channel.id, priority)
+        if not updated:
+            await interaction.response.edit_message(
+                content=None,
+                embed=error_embed(
+                    "This ticket is no longer open, so its priority was not changed."
+                ),
+                view=None,
+            )
+            return
 
         await interaction.response.edit_message(
             content=None,
@@ -216,6 +225,18 @@ class TicketButtons(ReliableView):
                 owner_id = int(owner_part.replace("ticket_owner:", "").strip())
             except ValueError:
                 owner_id = None
+        if owner_id is None:
+            try:
+                owner_id = await get_ticket_owner(channel.id)
+            except Exception as error:
+                log_exception(
+                    "DATABASE",
+                    error,
+                    guild=interaction.guild,
+                    channel=channel,
+                    user=interaction.user,
+                    context="Failed to resolve ticket owner after assignment change",
+                )
 
         claimed = result["status"] == "claimed"
         updated_view = TicketButtons(claimed_by=result["claimed_by"])

@@ -212,7 +212,7 @@ async def setup_database():
 
             await db.execute("DROP TABLE old_user_stats")
 
-        await db.execute(
+        cursor = await db.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_channel_id ON tickets(channel_id)"
         )
         await db.execute(
@@ -647,14 +647,30 @@ async def get_infraction_by_uuid(
             FROM infractions
             WHERE
                 guild_id=?
-                AND (uuid=? OR uuid LIKE ? OR uuid LIKE ?)
-            ORDER BY id DESC
-            LIMIT 1
+                AND (
+                    uuid=?
+                    OR substr(uuid, 1, length(?))=?
+                    OR substr(uuid, -length(?))=?
+                )
+            ORDER BY CASE WHEN uuid=? THEN 0 ELSE 1 END, id DESC
+            LIMIT 2
         """,
-            (guild_id, uuid_str, f"{uuid_str}%", f"%{uuid_str}"),
+            (
+                guild_id,
+                uuid_str,
+                uuid_str,
+                uuid_str,
+                uuid_str,
+                uuid_str,
+                uuid_str,
+            ),
         )
 
-        row = await cursor.fetchone()
+        rows = await cursor.fetchall()
+
+    row = next((item for item in rows if item[7] == uuid_str), None)
+    if row is None and len(rows) == 1:
+        row = rows[0]
 
     if not row:
         return None
@@ -702,18 +718,35 @@ async def get_ticket_by_uuid(
                 claimed_at,
                 closed_by,
                 warned_inactive,
-                uuid
+                uuid,
+                control_message_id
             FROM tickets
             WHERE
                 guild_id=?
-                AND (uuid=? OR uuid LIKE ? OR uuid LIKE ?)
-            ORDER BY id DESC
-            LIMIT 1
+                AND (
+                    uuid=?
+                    OR substr(uuid, 1, length(?))=?
+                    OR substr(uuid, -length(?))=?
+                )
+            ORDER BY CASE WHEN uuid=? THEN 0 ELSE 1 END, id DESC
+            LIMIT 2
         """,
-            (guild_id, uuid_str, f"{uuid_str}%", f"%{uuid_str}"),
+            (
+                guild_id,
+                uuid_str,
+                uuid_str,
+                uuid_str,
+                uuid_str,
+                uuid_str,
+                uuid_str,
+            ),
         )
 
-        row = await cursor.fetchone()
+        rows = await cursor.fetchall()
+
+    row = next((item for item in rows if item[14] == uuid_str), None)
+    if row is None and len(rows) == 1:
+        row = rows[0]
 
     if not row:
         return None
@@ -734,6 +767,7 @@ async def get_ticket_by_uuid(
         "closed_by": row[12],
         "warned_inactive": row[13],
         "uuid": row[14],
+        "control_message_id": row[15],
     }
 
 
@@ -760,18 +794,41 @@ async def remove_user_warning(user_id: int, guild_id: int, warn_id=None):
                     WHERE
                         (
                             uuid=?
-                            OR uuid LIKE ?
-                            OR uuid LIKE ?
+                            OR substr(uuid, 1, length(?))=?
+                            OR substr(uuid, -length(?))=?
                             OR id=?
                         )
                         AND guild_id=?
+                        AND user_id=?
                         AND action_type='WARN'
-                    LIMIT 1
+                    ORDER BY CASE WHEN uuid=? OR id=? THEN 0 ELSE 1 END, id DESC
+                    LIMIT 2
             """,
-                (warn_str, f"{warn_str}%", f"%{warn_str}", numeric_id, guild_id),
+                (
+                    warn_str,
+                    warn_str,
+                    warn_str,
+                    warn_str,
+                    warn_str,
+                    numeric_id,
+                    guild_id,
+                    user_id,
+                    warn_str,
+                    numeric_id,
+                ),
             )
 
-            row = await cursor.fetchone()
+            rows = await cursor.fetchall()
+            row = next(
+                (
+                    item
+                    for item in rows
+                    if item[3] == warn_str or item[0] == numeric_id
+                ),
+                None,
+            )
+            if row is None and len(rows) == 1:
+                row = rows[0]
 
             if not row:
                 return 0, []
@@ -878,14 +935,29 @@ async def remove_infraction_by_uuid(
             FROM infractions
             WHERE
                 guild_id=?
-                AND (uuid=? OR uuid LIKE ? OR uuid LIKE ?)
-            ORDER BY id DESC
-            LIMIT 1
+                AND (
+                    uuid=?
+                    OR substr(uuid, 1, length(?))=?
+                    OR substr(uuid, -length(?))=?
+                )
+            ORDER BY CASE WHEN uuid=? THEN 0 ELSE 1 END, id DESC
+            LIMIT 2
         """,
-            (guild_id, uuid_str, f"{uuid_str}%", f"%{uuid_str}"),
+            (
+                guild_id,
+                uuid_str,
+                uuid_str,
+                uuid_str,
+                uuid_str,
+                uuid_str,
+                uuid_str,
+            ),
         )
 
-        row = await cursor.fetchone()
+        rows = await cursor.fetchall()
+        row = next((item for item in rows if item[5] == uuid_str), None)
+        if row is None and len(rows) == 1:
+            row = rows[0]
 
         if not row:
             return None
@@ -1066,6 +1138,18 @@ async def create_ticket_record(channel_id, guild_id, user_id, application, creat
     return ticket_uuid
 
 
+async def get_open_ticket_for_user(guild_id, user_id):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT channel_id, uuid FROM tickets WHERE guild_id=? AND user_id=? AND status='open' ORDER BY id DESC LIMIT 1",
+            (int(guild_id), int(user_id)),
+        )
+        row = await cursor.fetchone()
+    if row is None:
+        return None
+    return {"channel_id": row[0], "uuid": row[1]}
+
+
 async def close_ticket(channel_id, closed_at, closed_by=None, close_reason=None):
 
     async with aiosqlite.connect(config.DATABASE) as db:
@@ -1102,7 +1186,7 @@ async def close_ticket(channel_id, closed_at, closed_by=None, close_reason=None)
 async def reopen_ticket(channel_id):
 
     async with aiosqlite.connect(config.DATABASE) as db:
-        await db.execute(
+        cursor = await db.execute(
             """
             UPDATE tickets
             SET
@@ -1112,14 +1196,20 @@ async def reopen_ticket(channel_id):
                 close_reason=NULL,
                 warned_inactive=0,
                 warned_at=NULL
-            WHERE channel_id=?
+            WHERE channel_id=? AND status='closed'
         """,
             ("open", channel_id),
         )
 
         await db.commit()
 
-    log_db("UPDATE", "tickets", f"Reopened Channel: {channel_id}")
+    reopened = cursor.rowcount == 1
+    log_db(
+        "UPDATE",
+        "tickets",
+        f"{'Reopened' if reopened else 'Reopen skipped for'} Channel: {channel_id}",
+    )
+    return reopened
 
 
 async def mark_ticket_deleted(channel_id):
@@ -1138,7 +1228,7 @@ async def get_ticket_owner(channel_id):
             """
             SELECT user_id
             FROM tickets
-            WHERE channel_id=?
+            WHERE channel_id=? AND status='open'
         """,
             (channel_id,),
         )
@@ -1269,10 +1359,10 @@ async def set_ticket_control_message(channel_id, message_id):
         await db.commit()
 
 
-async def get_open_ticket_controls():
+async def get_ticket_controls():
     async with aiosqlite.connect(config.DATABASE) as db:
         cursor = await db.execute(
-            "SELECT channel_id, control_message_id, claimed_by, application FROM tickets WHERE status='open'"
+            "SELECT channel_id, control_message_id, claimed_by, application, status FROM tickets WHERE status IN ('open', 'closed')"
         )
         rows = await cursor.fetchall()
     return [
@@ -1281,6 +1371,7 @@ async def get_open_ticket_controls():
             "control_message_id": row[1],
             "claimed_by": row[2],
             "application": row[3],
+            "status": row[4],
         }
         for row in rows
     ]
@@ -1340,6 +1431,13 @@ async def get_afk_statuses(guild_id, user_ids):
         )
         rows = await cursor.fetchall()
     return [{"user_id": row[0], "reason": row[1], "set_at": row[2]} for row in rows]
+
+
+async def get_all_afk_user_ids():
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute("SELECT guild_id, user_id FROM afk_status")
+        rows = await cursor.fetchall()
+    return {(row[0], row[1]) for row in rows}
 
 
 async def process_afk_message(guild_id, author_id, mentioned_user_ids):
@@ -1431,20 +1529,24 @@ async def get_ticket_record(channel_id):
 async def set_ticket_priority(channel_id, priority):
 
     async with aiosqlite.connect(config.DATABASE) as db:
-        await db.execute(
+        cursor = await db.execute(
             """
             UPDATE tickets
             SET priority=?
-            WHERE channel_id=?
+            WHERE channel_id=? AND status='open'
         """,
             (priority, channel_id),
         )
 
         await db.commit()
 
+    updated = cursor.rowcount == 1
     log_db(
-        "UPDATE", "tickets", (f"Priority set to '{priority}' for Channel: {channel_id}")
+        "UPDATE",
+        "tickets",
+        f"{'Priority updated' if updated else 'Priority update skipped'} for Channel: {channel_id} | Value: {priority}",
     )
+    return updated
 
 
 async def set_staff_availability(guild_id, user_id, status, updated_at):
