@@ -262,6 +262,31 @@ class AutoModeration(commands.Cog):
                     ephemeral=True,
                 )
                 return
+        activity_alerts_enabled = False
+        activity_alert_channel = getattr(guild, "safety_alerts_channel", None)
+        activity_alert_error = None
+        try:
+            activity_alert_settings = {"raid_alerts_disabled": False}
+            if (
+                "COMMUNITY" in guild.features
+                and isinstance(selected_alert, discord.TextChannel)
+            ):
+                activity_alert_settings["safety_alerts_channel"] = selected_alert
+                activity_alert_channel = selected_alert
+            await guild.edit(
+                **activity_alert_settings,
+                reason=f"{config.BOT_NAME} security alert configuration",
+            )
+            activity_alerts_enabled = True
+        except discord.HTTPException as error:
+            activity_alert_error = log_exception(
+                "AUTOMOD",
+                error,
+                guild=guild,
+                channel=interaction.channel,
+                user=interaction.user,
+                context="Activity alert configuration failed",
+            )
         keyword_actions = build_actions(
             selected_alert.id
             if isinstance(selected_alert, discord.TextChannel)
@@ -368,6 +393,24 @@ class AutoModeration(commands.Cog):
                 f"{timeout_minutes} minutes for keyword and mention rules"
                 if timeout_minutes
                 else "Disabled"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="Activity Alerts",
+            value=(
+                "Enabled"
+                if activity_alerts_enabled
+                else f"Not changed\nError reference: `{activity_alert_error}`"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="Safety Alert Channel",
+            value=(
+                activity_alert_channel.mention
+                if isinstance(activity_alert_channel, discord.TextChannel)
+                else "Managed by Discord"
             ),
             inline=True,
         )

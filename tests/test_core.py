@@ -269,6 +269,18 @@ class ConfigurationTests(unittest.TestCase):
             [action.type for action in with_timeout],
         )
 
+    def test_automod_setup_enables_discord_activity_alerts(self):
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("cogs", "automod.py")
+            .read_text(encoding="utf-8")
+        )
+        self.assertIn('"raid_alerts_disabled": False', source)
+        self.assertIn('activity_alert_settings["safety_alerts_channel"]', source)
+        self.assertIn('name="Activity Alerts"', source)
+
     def test_setup_resource_report_detects_missing_resources(self):
         guild = SimpleNamespace(
             get_channel=lambda resource_id: None, get_role=lambda role_id: None
