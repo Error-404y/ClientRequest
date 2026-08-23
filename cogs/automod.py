@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 
 import discord
@@ -157,6 +158,45 @@ class AutoModeration(commands.Cog):
             False,
         )
 
+    async def configure_rule(self, guild, name, trigger, actions):
+        trigger_limits = {
+            discord.AutoModRuleTriggerType.keyword: 6,
+            discord.AutoModRuleTriggerType.keyword_preset: 1,
+            discord.AutoModRuleTriggerType.mention_spam: 1,
+        }
+        for attempt in range(2):
+            all_rules = await guild.fetch_automod_rules()
+            managed = [
+                rule for rule in all_rules if rule.name.startswith(RULE_PREFIX)
+            ]
+            existing_rule = discord.utils.get(managed, name=name)
+            adopt_rule = None
+            if existing_rule is None:
+                used = sum(rule.trigger.type == trigger.type for rule in all_rules)
+                if used >= trigger_limits[trigger.type]:
+                    adopt_rule = next(
+                        (
+                            rule
+                            for rule in all_rules
+                            if rule.trigger.type == trigger.type
+                        ),
+                        None,
+                    )
+            try:
+                return await self.upsert_rule(
+                    guild,
+                    managed,
+                    name,
+                    trigger,
+                    actions,
+                    adopt_rule=adopt_rule,
+                )
+            except discord.NotFound:
+                if attempt:
+                    raise
+                await asyncio.sleep(0.5)
+        raise RuntimeError(f"AutoMod rule configuration did not complete: {name}")
+
     @automodz.command(
         name="setup", description="Create or update recommended AutoMod rules"
     )
@@ -218,26 +258,6 @@ class AutoModeration(commands.Cog):
             else None,
             timeout_minutes,
         )
-        all_rules = await guild.fetch_automod_rules()
-        existing = [rule for rule in all_rules if rule.name.startswith(RULE_PREFIX)]
-        trigger_limits = {
-            discord.AutoModRuleTriggerType.keyword: 6,
-            discord.AutoModRuleTriggerType.keyword_preset: 1,
-            discord.AutoModRuleTriggerType.mention_spam: 1,
-        }
-        adoptable = {}
-        for key, trigger_type in (
-            ("keywords", discord.AutoModRuleTriggerType.keyword),
-            ("presets", discord.AutoModRuleTriggerType.keyword_preset),
-            ("mentions", discord.AutoModRuleTriggerType.mention_spam),
-        ):
-            if discord.utils.get(existing, name=RULE_NAMES[key]):
-                continue
-            used = sum(rule.trigger.type == trigger_type for rule in all_rules)
-            if used >= trigger_limits[trigger_type]:
-                adoptable[key] = next(
-                    rule for rule in all_rules if rule.trigger.type == trigger_type
-                )
         rules = []
         adopted_count = 0
         specifications = (
@@ -270,14 +290,42 @@ class AutoModeration(commands.Cog):
             ),
         )
         for key, trigger, actions in specifications:
-            rule, adopted = await self.upsert_rule(
-                guild,
-                existing,
-                RULE_NAMES[key],
-                trigger,
-                actions,
-                adopt_rule=adoptable.get(key),
-            )
+            try:
+                rule, adopted = await self.configure_rule(
+                    guild, RULE_NAMES[key], trigger, actions
+                )
+            except discord.HTTPException as error:
+                reference = log_exception(
+                    "AUTOMOD",
+                    error,
+                    guild=guild,
+                    channel=interaction.channel,
+                    user=interaction.user,
+                    context=f"AutoMod setup failed while configuring {key}",
+                )
+                embed = discord.Embed(
+                    title="AutoMod Setup Incomplete",
+                    description="Discord rejected one stage of the AutoMod configuration. Any completed stages remain valid and setup can be run again safely.",
+                    color=discord.Color.orange(),
+                    timestamp=discord.utils.utcnow(),
+                )
+                embed.add_field(
+                    name="Failed Stage", value=key.replace("_", " ").title()
+                )
+                embed.add_field(
+                    name="Completed Rules", value=str(len(rules)), inline=True
+                )
+                embed.add_field(
+                    name="Error Reference", value=f"`{reference}`", inline=True
+                )
+                embed.add_field(
+                    name="Recommended Action",
+                    value="Wait a few seconds and run `/automodz setup` again. If the same stage fails, inspect `/debugerror` with the reference above and verify that the selected alert channel still exists.",
+                    inline=False,
+                )
+                embed.set_footer(text=f"{config.BOT_NAME} | Native Discord AutoMod")
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                return
             rules.append(rule)
             adopted_count += int(adopted)
         log_interaction(
