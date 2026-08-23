@@ -740,7 +740,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             await auto_assign_ticket(105, self.guild_id, [300, 301], now), 300
         )
 
-    async def test_automod_adoption_preserves_existing_trigger(self):
+    async def test_automod_reuses_existing_rule_without_editing_it(self):
         class ExistingRule:
             def __init__(self):
                 self.received = None
@@ -765,9 +765,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIs(result, existing_rule)
         self.assertTrue(adopted)
-        self.assertEqual(existing_rule.received["name"], "Managed Rule")
-        self.assertEqual(existing_rule.received["actions"], actions)
-        self.assertNotIn("trigger", existing_rule.received)
+        self.assertIsNone(existing_rule.received)
 
     async def test_reopen_restores_database_ticket_state(self):
         guild_id = self.guild_id

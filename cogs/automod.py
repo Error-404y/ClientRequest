@@ -46,17 +46,29 @@ def build_actions(alert_channel_id=None, timeout_minutes=0):
 def status_embed(rules):
     embed = discord.Embed(
         title="Discord AutoMod Status",
-        description="Native Discord AutoMod rules managed by the bot are shown below.",
+        description="Native Discord AutoMod protection available in this server is shown below.",
         color=discord.Color.blurple(),
         timestamp=discord.utils.utcnow(),
     )
     by_name = {rule.name: rule for rule in rules}
+    trigger_types = {
+        "keywords": discord.AutoModRuleTriggerType.keyword,
+        "presets": discord.AutoModRuleTriggerType.keyword_preset,
+        "mentions": discord.AutoModRuleTriggerType.mention_spam,
+    }
     for key, label in (
         ("keywords", "Keyword Protection"),
         ("presets", "Discord Safety Presets"),
         ("mentions", "Mention Spam Protection"),
     ):
-        rule = by_name.get(RULE_NAMES[key])
+        rule = by_name.get(RULE_NAMES[key]) or next(
+            (
+                candidate
+                for candidate in rules
+                if candidate.trigger.type == trigger_types[key]
+            ),
+            None,
+        )
         embed.add_field(
             name=label,
             value=(
@@ -137,15 +149,7 @@ class AutoModeration(commands.Cog):
                 False,
             )
         if adopt_rule:
-            return (
-                await adopt_rule.edit(
-                    name=name,
-                    actions=actions,
-                    enabled=enabled,
-                    reason=f"{config.BOT_NAME} AutoMod rule adoption",
-                ),
-                True,
-            )
+            return adopt_rule, True
         return (
             await guild.create_automod_rule(
                 name=name,
@@ -192,6 +196,17 @@ class AutoModeration(commands.Cog):
                     adopt_rule=adopt_rule,
                 )
             except discord.NotFound:
+                refreshed = await guild.fetch_automod_rules()
+                matching_rule = next(
+                    (
+                        rule
+                        for rule in refreshed
+                        if rule.trigger.type == trigger.type
+                    ),
+                    None,
+                )
+                if matching_rule is not None:
+                    return matching_rule, True
                 if attempt:
                     raise
                 await asyncio.sleep(0.5)
@@ -351,14 +366,14 @@ class AutoModeration(commands.Cog):
             inline=True,
         )
         embed.add_field(
-            name="Existing Rules Adopted",
+            name="Existing Rules Reused",
             value=str(adopted_count),
             inline=True,
         )
         if adopted_count:
             embed.add_field(
                 name="Preserved Configuration",
-                value="Existing trigger thresholds, keyword selections, allow lists, regular expressions, role exemptions, and channel exemptions were retained for adopted rules.",
+                value="Existing server rules were left unchanged. Their trigger thresholds, actions, allow lists, role exemptions, and channel exemptions remain under server control.",
                 inline=False,
             )
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -371,7 +386,7 @@ class AutoModeration(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True)
         await interaction.followup.send(
-            embed=status_embed(await self.managed_rules(interaction.guild)),
+            embed=status_embed(await interaction.guild.fetch_automod_rules()),
             ephemeral=True,
         )
 
