@@ -1188,8 +1188,8 @@ class Governance(commands.Cog):
             )
             return
         await interaction.response.defer(ephemeral=True)
+        settings = config.get_guild_config(interaction.guild.id)
         if action.value == "REPAIR":
-            settings = config.get_guild_config(interaction.guild.id)
             staff_role = interaction.guild.get_role(settings["MOD_ROLE"])
             onboarding = self.bot.get_cog("Onboarding")
             if onboarding is None or staff_role is None:
@@ -1216,7 +1216,7 @@ class Governance(commands.Cog):
                 )
                 return
         diagnostics = self.bot.get_cog("Diagnostics")
-        issues = resource_report(interaction.guild)
+        issues = resource_report(interaction.guild, settings)
         permissions = setup_permission_report(interaction.guild)
         server_check = (
             diagnostics.server_checks(interaction.guild.id)[0]
@@ -1225,7 +1225,6 @@ class Governance(commands.Cog):
         )
         governance_issues = []
         governance_warnings = []
-        settings = config.get_guild_config(interaction.guild.id)
         for rule in await get_approval_rules(interaction.guild.id):
             if not rule["enabled"]:
                 continue

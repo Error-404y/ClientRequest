@@ -113,6 +113,17 @@ class GovernanceLogicTests(unittest.TestCase):
         )
         self.assertIn('"cogs.governance"', source)
 
+    def test_configuration_doctor_passes_server_settings(self):
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("cogs", "governance.py")
+            .read_text(encoding="utf-8")
+        )
+        doctor = source.split("async def doctorz", 1)[1]
+        self.assertIn("resource_report(interaction.guild, settings)", doctor)
+
 
 class GovernanceDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
