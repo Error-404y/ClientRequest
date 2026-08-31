@@ -2,6 +2,7 @@ import discord
 
 from utils.database import add_infraction, remove_infraction_by_uuid
 from utils.embeds import error as error_embed
+from utils.governance import approval_queued_embed, queue_moderation_approval
 from utils.logger import log_exception, log_interaction, log_mod
 from utils.permissions import can_ban
 from views.base import ReliableView
@@ -38,6 +39,38 @@ class UnbanConfirmView(ReliableView):
             await interaction.response.send_message(
                 embed=error_embed("Unauthorized action. Permission denied."),
                 ephemeral=True,
+            )
+            return
+
+        target_id = getattr(
+            self.target_user,
+            "id",
+            self.target_user if isinstance(self.target_user, int) else None,
+        )
+        if not target_id:
+            await interaction.response.send_message(
+                embed=error_embed("The selected unban target is no longer valid."),
+                ephemeral=True,
+            )
+            return
+        try:
+            approval = await queue_moderation_approval(
+                interaction.client,
+                interaction.guild,
+                interaction.user,
+                "UNBAN",
+                target_id,
+                self.target_name,
+                self.reason or "No reason specified",
+            )
+        except RuntimeError as error:
+            await interaction.response.send_message(
+                embed=error_embed(str(error)), ephemeral=True
+            )
+            return
+        if approval:
+            await interaction.response.edit_message(
+                embed=approval_queued_embed(approval), view=None
             )
             return
 

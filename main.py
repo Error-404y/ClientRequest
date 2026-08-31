@@ -178,6 +178,7 @@ extensions = [
     "cogs.moderation",
     "cogs.afk",
     "cogs.automod",
+    "cogs.governance",
 ]
 
 

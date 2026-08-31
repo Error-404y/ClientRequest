@@ -12,6 +12,7 @@ from utils.database import (
     get_next_ticket_number,
     get_open_ticket_for_user,
     get_staff_availability,
+    get_ticket_form,
     mark_ticket_deleted,
     set_ticket_control_message,
 )
@@ -27,10 +28,40 @@ from utils.logger import (
     ticket_report,
 )
 from utils.permissions import is_staff
-from views.base import ReliableView
+from views.base import ReliableModal, ReliableView
 from views.ticket_buttons import TicketButtons
 
 timezone = pytz.timezone(config.TIMEZONE)
+
+
+class CustomTicketModal(ReliableModal):
+    def __init__(self, dropdown, application, questions):
+        super().__init__(title=f"{application[:35]} Request")
+        self.dropdown = dropdown
+        self.application = application
+        self.inputs = []
+        for question in questions:
+            item = discord.ui.TextInput(
+                label=question["label"],
+                style=discord.TextStyle.paragraph,
+                required=bool(question["required"]),
+                max_length=1000,
+            )
+            self.inputs.append(item)
+            self.add_item(item)
+
+    async def on_submit(self, interaction):
+        await interaction.response.defer(ephemeral=True)
+        responses = [
+            {
+                "question": item.label,
+                "answer": str(item.value).strip() or "Not provided",
+            }
+            for item in self.inputs
+        ]
+        await self.dropdown.create_with_lock(
+            interaction, self.application, responses
+        )
 
 
 class ApplicationDropdown(Select):
@@ -54,29 +85,38 @@ class ApplicationDropdown(Select):
         )
 
     async def callback(self, interaction):
-        await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         if guild is None:
-            await interaction.followup.send(
+            await interaction.response.send_message(
                 embed=error_embed("Tickets can only be created inside a server."),
                 ephemeral=True,
             )
             return
+        application = self.values[0]
+        custom_form = await get_ticket_form(guild.id, application)
+        if custom_form and custom_form["questions"]:
+            await interaction.response.send_modal(
+                CustomTicketModal(self, application, custom_form["questions"])
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
+        await self.create_with_lock(interaction, application, [])
+
+    async def create_with_lock(self, interaction, application, form_response):
+        guild = interaction.guild
         locks = getattr(interaction.client, "ticket_creation_locks", None)
         if locks is None:
             locks = {}
             interaction.client.ticket_creation_locks = locks
         lock = locks.setdefault((guild.id, interaction.user.id), asyncio.Lock())
         async with lock:
-            await self.create_ticket(interaction)
+            await self.create_ticket(interaction, application, form_response)
 
-    async def create_ticket(self, interaction):
+    async def create_ticket(self, interaction, application, form_response=None):
         user = interaction.user
         guild = interaction.guild
 
         guild_id = guild.id
-
-        application = self.values[0]
 
         try:
             guild_config = config.get_guild_config(guild_id)
@@ -302,6 +342,7 @@ class ApplicationDropdown(Select):
                 user.id,
                 application,
                 datetime.now(timezone).isoformat(),
+                form_response=form_response,
             )
 
         except Exception as exc:
@@ -385,7 +426,13 @@ class ApplicationDropdown(Select):
         try:
             control_message = await channel.send(
                 content=user.mention,
-                embed=ticket_created(user, application, form, ticket_uuid),
+                embed=ticket_created(
+                    user,
+                    application,
+                    form,
+                    ticket_uuid,
+                    custom_answers=form_response,
+                ),
                 view=view,
             )
         except discord.HTTPException as exc:

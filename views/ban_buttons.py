@@ -2,6 +2,11 @@ import discord
 
 import config
 from utils.embeds import error as error_embed
+from utils.governance import (
+    appeal_view,
+    approval_queued_embed,
+    queue_moderation_approval,
+)
 from utils.logger import log_dm, log_exception, log_interaction, log_mod
 from utils.permissions import can_ban, can_moderate_target
 from views.base import ReliableView
@@ -46,6 +51,38 @@ class BanConfirmView(ReliableView):
                     "You cannot moderate yourself, the server owner, or a member with an equal or higher role."
                 ),
                 ephemeral=True,
+            )
+            return
+
+        target_id = getattr(
+            self.target_user,
+            "id",
+            self.target_user if isinstance(self.target_user, int) else None,
+        )
+        if not target_id:
+            await interaction.response.send_message(
+                embed=error_embed("The selected ban target is no longer valid."),
+                ephemeral=True,
+            )
+            return
+        try:
+            approval = await queue_moderation_approval(
+                interaction.client,
+                interaction.guild,
+                interaction.user,
+                "BAN",
+                target_id,
+                self.target_name,
+                self.reason or "No reason specified",
+            )
+        except RuntimeError as error:
+            await interaction.response.send_message(
+                embed=error_embed(str(error)), ephemeral=True
+            )
+            return
+        if approval:
+            await interaction.response.edit_message(
+                embed=approval_queued_embed(approval), view=None
             )
             return
 
@@ -139,7 +176,10 @@ class BanConfirmView(ReliableView):
                     dm_embed.set_footer(
                         text=f"{config.BOT_NAME} | Moderation Operations"
                     )
-                    await user_to_dm.send(embed=dm_embed)
+                    await user_to_dm.send(
+                        embed=dm_embed,
+                        view=appeal_view(interaction.guild.id, inf_uuid),
+                    )
                     dm_sent = True
                     log_dm(user_to_dm, "Ban Notice", success=True)
                 except discord.Forbidden as error:

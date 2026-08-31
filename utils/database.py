@@ -3,7 +3,7 @@ import json
 import os
 import shutil
 import uuid as uuid_lib
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import aiosqlite
@@ -98,6 +98,11 @@ async def setup_database():
                 ALTER TABLE tickets
                 ADD COLUMN uuid TEXT DEFAULT NULL
             """)
+
+        if "form_response" not in columns:
+            await db.execute(
+                "ALTER TABLE tickets ADD COLUMN form_response TEXT DEFAULT NULL"
+            )
 
         cursor = await db.execute("SELECT id, uuid FROM tickets ORDER BY id")
         repaired_ticket_count = 0
@@ -256,6 +261,21 @@ async def setup_database():
         await db.execute(
             "CREATE TABLE IF NOT EXISTS afk_status (guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, reason TEXT NOT NULL, set_at TEXT NOT NULL, PRIMARY KEY (guild_id, user_id))"
         )
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS ticket_forms (guild_id INTEGER NOT NULL, ticket_type TEXT NOT NULL, questions TEXT NOT NULL, updated_by INTEGER NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (guild_id, ticket_type))"
+        )
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS approval_rules (guild_id INTEGER NOT NULL, action_type TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, approver_role_id INTEGER NOT NULL DEFAULT 0, required_approvals INTEGER NOT NULL DEFAULT 1, request_channel_id INTEGER NOT NULL DEFAULT 0, expiry_minutes INTEGER NOT NULL DEFAULT 1440, senior_bypass INTEGER NOT NULL DEFAULT 1, updated_by INTEGER NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (guild_id, action_type))"
+        )
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS approval_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, request_uuid TEXT UNIQUE NOT NULL, guild_id INTEGER NOT NULL, action_type TEXT NOT NULL, requester_id INTEGER NOT NULL, target_id INTEGER NOT NULL, target_name TEXT NOT NULL, reason TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL, required_approvals INTEGER NOT NULL, request_channel_id INTEGER NOT NULL, request_message_id INTEGER, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, decided_at TEXT, result_uuid TEXT, result_message TEXT)"
+        )
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS approval_votes (request_id INTEGER NOT NULL, approver_id INTEGER NOT NULL, decision TEXT NOT NULL, reason TEXT, created_at TEXT NOT NULL, PRIMARY KEY (request_id, approver_id))"
+        )
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS moderation_appeals (id INTEGER PRIMARY KEY AUTOINCREMENT, appeal_uuid TEXT UNIQUE NOT NULL, guild_id INTEGER NOT NULL, appellant_id INTEGER NOT NULL, infraction_uuid TEXT NOT NULL, action_type TEXT NOT NULL, reason TEXT NOT NULL, status TEXT NOT NULL, staff_response TEXT, reviewer_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (guild_id, infraction_uuid, appellant_id, status))"
+        )
         guild_settings_cursor = await db.execute("PRAGMA table_info(guild_settings)")
         guild_settings_columns = [
             row[1] for row in await guild_settings_cursor.fetchall()
@@ -278,6 +298,15 @@ async def setup_database():
         )
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_performance_events_created_at ON performance_events(created_at DESC)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_approval_requests_guild_status ON approval_requests(guild_id, status, created_at DESC)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_appeals_guild_status ON moderation_appeals(guild_id, status, created_at DESC)"
+        )
+        await db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_appeals_one_per_infraction ON moderation_appeals(guild_id, infraction_uuid, appellant_id)"
         )
         cursor = await db.execute(
             "SELECT guild_id, name, ticket_category_id, ticket_panel_channel_id, ticket_archive_category_id, log_channel_id, owner_role_ids, mod_role_id, trial_mod_role_id, warn_history_role_id, allowed_ban_user_ids, ticket_options, timezone, setup_complete, welcome_sent, auto_assign_tickets FROM guild_settings"
@@ -398,6 +427,12 @@ async def reset_guild_settings(guild_id):
         await db.execute(
             "DELETE FROM escalation_events WHERE guild_id=?", (int(guild_id),)
         )
+        await db.execute("DELETE FROM ticket_forms WHERE guild_id=?", (int(guild_id),))
+        await db.execute("DELETE FROM approval_rules WHERE guild_id=?", (int(guild_id),))
+        await db.execute(
+            "UPDATE approval_requests SET status='FAILED', result_message='Server configuration was reset' WHERE guild_id=? AND status IN ('PENDING', 'NEEDS_DETAILS', 'APPROVED', 'EXECUTING')",
+            (int(guild_id),),
+        )
         await db.commit()
     return reset_settings
 
@@ -422,6 +457,11 @@ async def purge_guild_data(guild_id):
             "DELETE FROM error_events WHERE guild_id=?",
             "DELETE FROM performance_events WHERE guild_id=?",
             "DELETE FROM afk_status WHERE guild_id=?",
+            "DELETE FROM ticket_forms WHERE guild_id=?",
+            "DELETE FROM approval_rules WHERE guild_id=?",
+            "DELETE FROM approval_votes WHERE request_id IN (SELECT id FROM approval_requests WHERE guild_id=?)",
+            "DELETE FROM approval_requests WHERE guild_id=?",
+            "DELETE FROM moderation_appeals WHERE guild_id=?",
         ):
             await db.execute(statement, (int(guild_id),))
         await db.commit()
@@ -725,7 +765,8 @@ async def get_ticket_by_uuid(
                 warned_inactive,
                 uuid,
                 control_message_id,
-                label
+                label,
+                form_response
             FROM tickets
             WHERE
                 guild_id=?
@@ -775,6 +816,7 @@ async def get_ticket_by_uuid(
         "uuid": row[14],
         "control_message_id": row[15],
         "label": row[16],
+        "form_response": json.loads(row[17]) if row[17] else [],
     }
 
 
@@ -1079,7 +1121,14 @@ async def get_user_stats(user_id: int, guild_id: int):
     }
 
 
-async def create_ticket_record(channel_id, guild_id, user_id, application, created_at):
+async def create_ticket_record(
+    channel_id,
+    guild_id,
+    user_id,
+    application,
+    created_at,
+    form_response=None,
+):
 
     ticket_uuid = str(uuid_lib.uuid4()).strip()
 
@@ -1114,9 +1163,10 @@ async def create_ticket_record(channel_id, guild_id, user_id, application, creat
                 application,
                 status,
                 created_at,
-                uuid
+                uuid,
+                form_response
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 channel_id,
@@ -1126,6 +1176,9 @@ async def create_ticket_record(channel_id, guild_id, user_id, application, creat
                 "open",
                 created_at,
                 ticket_uuid,
+                json.dumps(form_response, ensure_ascii=False)
+                if form_response
+                else None,
             ),
         )
 
@@ -1457,11 +1510,17 @@ async def process_afk_message(guild_id, author_id, mentioned_user_ids):
         }
     )
     async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute("BEGIN IMMEDIATE")
         cursor = await db.execute(
-            "SELECT 1 FROM afk_status WHERE guild_id=? AND user_id=?",
+            "SELECT user_id, reason, set_at FROM afk_status WHERE guild_id=? AND user_id=?",
             (int(guild_id), int(author_id)),
         )
-        removed = await cursor.fetchone() is not None
+        row = await cursor.fetchone()
+        removed = (
+            {"user_id": row[0], "reason": row[1], "set_at": row[2]}
+            if row is not None
+            else None
+        )
         if removed:
             await db.execute(
                 "DELETE FROM afk_status WHERE guild_id=? AND user_id=?",
@@ -1478,8 +1537,7 @@ async def process_afk_message(guild_id, author_id, mentioned_user_ids):
                 {"user_id": row[0], "reason": row[1], "set_at": row[2]}
                 for row in await cursor.fetchall()
             ]
-        if removed:
-            await db.commit()
+        await db.commit()
     return removed, records
 
 
@@ -1505,7 +1563,8 @@ async def get_ticket_record(channel_id):
                 warned_inactive,
                 uuid,
                 control_message_id,
-                label
+                label,
+                form_response
             FROM tickets
             WHERE channel_id=?
         """,
@@ -1535,6 +1594,7 @@ async def get_ticket_record(channel_id):
         "uuid": row[14],
         "control_message_id": row[15],
         "label": row[16],
+        "form_response": json.loads(row[17]) if row[17] else [],
     }
 
 
@@ -1665,3 +1725,558 @@ async def clear_escalation_event(guild_id, channel_id, event_key):
             (guild_id, channel_id, event_key),
         )
         await db.commit()
+
+
+async def set_ticket_form(guild_id, ticket_type, questions, updated_by, updated_at):
+    normalized_type = " ".join(str(ticket_type).split())
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute(
+            "INSERT INTO ticket_forms(guild_id, ticket_type, questions, updated_by, updated_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(guild_id, ticket_type) DO UPDATE SET questions=excluded.questions, updated_by=excluded.updated_by, updated_at=excluded.updated_at",
+            (
+                int(guild_id),
+                normalized_type,
+                json.dumps(questions, ensure_ascii=False),
+                int(updated_by),
+                updated_at,
+            ),
+        )
+        await db.commit()
+
+
+async def get_ticket_form(guild_id, ticket_type):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT questions, updated_by, updated_at FROM ticket_forms WHERE guild_id=? AND LOWER(ticket_type)=LOWER(?)",
+            (int(guild_id), " ".join(str(ticket_type).split())),
+        )
+        row = await cursor.fetchone()
+    if row is None:
+        return None
+    return {
+        "questions": json.loads(row[0]),
+        "updated_by": row[1],
+        "updated_at": row[2],
+    }
+
+
+async def get_ticket_forms(guild_id):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT ticket_type, questions, updated_by, updated_at FROM ticket_forms WHERE guild_id=? ORDER BY LOWER(ticket_type)",
+            (int(guild_id),),
+        )
+        rows = await cursor.fetchall()
+    return [
+        {
+            "ticket_type": row[0],
+            "questions": json.loads(row[1]),
+            "updated_by": row[2],
+            "updated_at": row[3],
+        }
+        for row in rows
+    ]
+
+
+async def delete_ticket_form(guild_id, ticket_type):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "DELETE FROM ticket_forms WHERE guild_id=? AND LOWER(ticket_type)=LOWER(?)",
+            (int(guild_id), " ".join(str(ticket_type).split())),
+        )
+        await db.commit()
+    return cursor.rowcount == 1
+
+
+async def set_approval_rule(
+    guild_id,
+    action_type,
+    enabled,
+    approver_role_id,
+    required_approvals,
+    request_channel_id,
+    expiry_minutes,
+    senior_bypass,
+    updated_by,
+    updated_at,
+):
+    action = str(action_type).strip().upper()
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute(
+            "INSERT INTO approval_rules(guild_id, action_type, enabled, approver_role_id, required_approvals, request_channel_id, expiry_minutes, senior_bypass, updated_by, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(guild_id, action_type) DO UPDATE SET enabled=excluded.enabled, approver_role_id=excluded.approver_role_id, required_approvals=excluded.required_approvals, request_channel_id=excluded.request_channel_id, expiry_minutes=excluded.expiry_minutes, senior_bypass=excluded.senior_bypass, updated_by=excluded.updated_by, updated_at=excluded.updated_at",
+            (
+                int(guild_id),
+                action,
+                int(bool(enabled)),
+                int(approver_role_id or 0),
+                int(required_approvals),
+                int(request_channel_id or 0),
+                int(expiry_minutes),
+                int(bool(senior_bypass)),
+                int(updated_by),
+                updated_at,
+            ),
+        )
+        await db.commit()
+
+
+async def get_approval_rule(guild_id, action_type):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT action_type, enabled, approver_role_id, required_approvals, request_channel_id, expiry_minutes, senior_bypass, updated_by, updated_at FROM approval_rules WHERE guild_id=? AND action_type=?",
+            (int(guild_id), str(action_type).strip().upper()),
+        )
+        row = await cursor.fetchone()
+    if row is None:
+        return None
+    keys = (
+        "action_type",
+        "enabled",
+        "approver_role_id",
+        "required_approvals",
+        "request_channel_id",
+        "expiry_minutes",
+        "senior_bypass",
+        "updated_by",
+        "updated_at",
+    )
+    result = dict(zip(keys, row, strict=True))
+    result["enabled"] = bool(result["enabled"])
+    result["senior_bypass"] = bool(result["senior_bypass"])
+    return result
+
+
+async def get_approval_rules(guild_id):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT action_type FROM approval_rules WHERE guild_id=? ORDER BY action_type",
+            (int(guild_id),),
+        )
+        actions = [row[0] for row in await cursor.fetchall()]
+    return [await get_approval_rule(guild_id, action) for action in actions]
+
+
+async def create_approval_request(
+    guild_id,
+    action_type,
+    requester_id,
+    target_id,
+    target_name,
+    reason,
+    payload,
+    required_approvals,
+    request_channel_id,
+    expiry_minutes,
+    created_at,
+):
+    request_uuid = f"APR-{uuid_lib.uuid4()}"
+    expires_at = (
+        datetime.fromisoformat(created_at) + timedelta(minutes=int(expiry_minutes))
+    ).isoformat()
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "INSERT INTO approval_requests(request_uuid, guild_id, action_type, requester_id, target_id, target_name, reason, payload, status, required_approvals, request_channel_id, created_at, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)",
+            (
+                request_uuid,
+                int(guild_id),
+                str(action_type).strip().upper(),
+                int(requester_id),
+                int(target_id),
+                str(target_name)[:100],
+                str(reason)[:500],
+                json.dumps(payload, ensure_ascii=False),
+                int(required_approvals),
+                int(request_channel_id),
+                created_at,
+                expires_at,
+            ),
+        )
+        await db.commit()
+    return {
+        "id": cursor.lastrowid,
+        "request_uuid": request_uuid,
+        "expires_at": expires_at,
+    }
+
+
+async def set_approval_message(request_uuid, guild_id, message_id):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute(
+            "UPDATE approval_requests SET request_message_id=? WHERE request_uuid=? AND guild_id=?",
+            (int(message_id), request_uuid, int(guild_id)),
+        )
+        await db.commit()
+
+
+async def get_approval_request(request_uuid, guild_id):
+    columns = (
+        "id",
+        "request_uuid",
+        "guild_id",
+        "action_type",
+        "requester_id",
+        "target_id",
+        "target_name",
+        "reason",
+        "payload",
+        "status",
+        "required_approvals",
+        "request_channel_id",
+        "request_message_id",
+        "created_at",
+        "expires_at",
+        "decided_at",
+        "result_uuid",
+        "result_message",
+    )
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            f"SELECT {', '.join(columns)} FROM approval_requests WHERE request_uuid=? AND guild_id=?",
+            (str(request_uuid).strip(), int(guild_id)),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        vote_cursor = await db.execute(
+            "SELECT approver_id, decision, reason, created_at FROM approval_votes WHERE request_id=? ORDER BY created_at",
+            (row[0],),
+        )
+        votes = await vote_cursor.fetchall()
+    result = dict(zip(columns, row, strict=True))
+    result["payload"] = json.loads(result["payload"])
+    result["votes"] = [
+        {
+            "approver_id": vote[0],
+            "decision": vote[1],
+            "reason": vote[2],
+            "created_at": vote[3],
+        }
+        for vote in votes
+    ]
+    return result
+
+
+async def get_approval_requests(guild_id, statuses=None, limit=20):
+    selected = [str(status).strip().upper() for status in (statuses or [])]
+    parameters = [int(guild_id)]
+    condition = "guild_id=?"
+    if selected:
+        placeholders = ",".join("?" for _ in selected)
+        condition += f" AND status IN ({placeholders})"
+        parameters.extend(selected)
+    parameters.append(max(1, min(int(limit), 50)))
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            f"SELECT request_uuid, action_type, requester_id, target_id, target_name, status, required_approvals, created_at, expires_at FROM approval_requests WHERE {condition} ORDER BY created_at ASC LIMIT ?",
+            tuple(parameters),
+        )
+        rows = await cursor.fetchall()
+    return [
+        {
+            "request_uuid": row[0],
+            "action_type": row[1],
+            "requester_id": row[2],
+            "target_id": row[3],
+            "target_name": row[4],
+            "status": row[5],
+            "required_approvals": row[6],
+            "created_at": row[7],
+            "expires_at": row[8],
+        }
+        for row in rows
+    ]
+
+
+async def vote_approval_request(
+    request_uuid,
+    guild_id,
+    approver_id,
+    decision,
+    reason,
+    decided_at,
+):
+    normalized_decision = str(decision).strip().upper()
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cursor = await db.execute(
+            "SELECT id, requester_id, status, required_approvals, expires_at FROM approval_requests WHERE request_uuid=? AND guild_id=?",
+            (str(request_uuid).strip(), int(guild_id)),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            await db.rollback()
+            return {"status": "NOT_FOUND"}
+        request_id, requester_id, status, required_approvals, expires_at = row
+        if status not in {"PENDING", "NEEDS_DETAILS"}:
+            await db.rollback()
+            return {"status": status}
+        if datetime.fromisoformat(expires_at) <= datetime.fromisoformat(decided_at):
+            await db.execute(
+                "UPDATE approval_requests SET status='EXPIRED', decided_at=? WHERE id=?",
+                (decided_at, request_id),
+            )
+            await db.commit()
+            return {"status": "EXPIRED"}
+        if int(approver_id) == int(requester_id):
+            await db.rollback()
+            return {"status": "SELF_APPROVAL"}
+        if normalized_decision == "DENY":
+            await db.execute(
+                "INSERT OR REPLACE INTO approval_votes(request_id, approver_id, decision, reason, created_at) VALUES(?, ?, 'DENY', ?, ?)",
+                (request_id, int(approver_id), str(reason or "")[:500], decided_at),
+            )
+            await db.execute(
+                "UPDATE approval_requests SET status='DENIED', decided_at=?, result_message=? WHERE id=?",
+                (decided_at, str(reason or "Denied")[:500], request_id),
+            )
+            await db.commit()
+            return {"status": "DENIED"}
+        if normalized_decision == "DETAILS":
+            await db.execute(
+                "INSERT OR REPLACE INTO approval_votes(request_id, approver_id, decision, reason, created_at) VALUES(?, ?, 'DETAILS', ?, ?)",
+                (request_id, int(approver_id), str(reason or "")[:500], decided_at),
+            )
+            await db.execute(
+                "UPDATE approval_requests SET status='NEEDS_DETAILS', result_message=? WHERE id=?",
+                (str(reason or "More information requested")[:500], request_id),
+            )
+            await db.commit()
+            return {"status": "NEEDS_DETAILS"}
+        await db.execute(
+            "INSERT OR REPLACE INTO approval_votes(request_id, approver_id, decision, reason, created_at) VALUES(?, ?, 'APPROVE', ?, ?)",
+            (request_id, int(approver_id), str(reason or "")[:500], decided_at),
+        )
+        count_cursor = await db.execute(
+            "SELECT COUNT(*) FROM approval_votes WHERE request_id=? AND decision='APPROVE'",
+            (request_id,),
+        )
+        approval_count = (await count_cursor.fetchone())[0]
+        ready = approval_count >= required_approvals
+        if ready:
+            await db.execute(
+                "UPDATE approval_requests SET status='APPROVED', decided_at=? WHERE id=?",
+                (decided_at, request_id),
+            )
+        elif status == "NEEDS_DETAILS":
+            await db.execute(
+                "UPDATE approval_requests SET status='PENDING' WHERE id=?",
+                (request_id,),
+            )
+        await db.commit()
+    return {
+        "status": "APPROVED" if ready else "PENDING",
+        "approval_count": approval_count,
+        "required_approvals": required_approvals,
+    }
+
+
+async def complete_approval_request(
+    request_uuid, guild_id, status, result_uuid=None, result_message=None
+):
+    normalized_status = str(status).strip().upper()
+    if normalized_status not in {"EXECUTED", "FAILED"}:
+        raise ValueError("Invalid completion status")
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "UPDATE approval_requests SET status=?, result_uuid=?, result_message=? WHERE request_uuid=? AND guild_id=? AND status IN ('APPROVED', 'EXECUTING')",
+            (
+                normalized_status,
+                result_uuid,
+                str(result_message or "")[:500],
+                str(request_uuid).strip(),
+                int(guild_id),
+            ),
+        )
+        await db.commit()
+    return cursor.rowcount == 1
+
+
+async def claim_approval_execution(request_uuid, guild_id):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "UPDATE approval_requests SET status='EXECUTING' WHERE request_uuid=? AND guild_id=? AND status='APPROVED'",
+            (str(request_uuid).strip(), int(guild_id)),
+        )
+        await db.commit()
+    return cursor.rowcount == 1
+
+
+async def fail_pending_approval_request(request_uuid, guild_id, message):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "UPDATE approval_requests SET status='FAILED', result_message=? WHERE request_uuid=? AND guild_id=? AND status='PENDING'",
+            (str(message)[:500], str(request_uuid).strip(), int(guild_id)),
+        )
+        await db.commit()
+    return cursor.rowcount == 1
+
+
+async def cancel_pending_approval_requests(guild_id, action_type, message, updated_at):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "UPDATE approval_requests SET status='FAILED', result_message=?, decided_at=? WHERE guild_id=? AND action_type=? AND status IN ('PENDING', 'NEEDS_DETAILS', 'APPROVED')",
+            (
+                str(message)[:500],
+                updated_at,
+                int(guild_id),
+                str(action_type).strip().upper(),
+            ),
+        )
+        await db.commit()
+    return cursor.rowcount
+
+
+async def add_approval_details(
+    request_uuid, guild_id, requester_id, details, updated_at
+):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "UPDATE approval_requests SET reason=reason || '\n\nAdditional details:\n' || ?, status='PENDING', result_message=NULL WHERE request_uuid=? AND guild_id=? AND requester_id=? AND status='NEEDS_DETAILS' AND expires_at>?",
+            (
+                str(details)[:1000],
+                str(request_uuid).strip(),
+                int(guild_id),
+                int(requester_id),
+                updated_at,
+            ),
+        )
+        await db.commit()
+    return cursor.rowcount == 1
+
+
+async def create_moderation_appeal(
+    guild_id, appellant_id, infraction_uuid, action_type, reason, created_at
+):
+    appeal_uuid = f"APL-{uuid_lib.uuid4()}"
+    try:
+        async with aiosqlite.connect(config.DATABASE) as db:
+            cursor = await db.execute(
+                "INSERT INTO moderation_appeals(appeal_uuid, guild_id, appellant_id, infraction_uuid, action_type, reason, status, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)",
+                (
+                    appeal_uuid,
+                    int(guild_id),
+                    int(appellant_id),
+                    str(infraction_uuid).strip(),
+                    str(action_type).strip().upper(),
+                    str(reason)[:1000],
+                    created_at,
+                    created_at,
+                ),
+            )
+            await db.commit()
+    except aiosqlite.IntegrityError:
+        return None
+    return {"id": cursor.lastrowid, "appeal_uuid": appeal_uuid}
+
+
+async def get_moderation_appeal(appeal_uuid, guild_id):
+    columns = (
+        "id",
+        "appeal_uuid",
+        "guild_id",
+        "appellant_id",
+        "infraction_uuid",
+        "action_type",
+        "reason",
+        "status",
+        "staff_response",
+        "reviewer_id",
+        "created_at",
+        "updated_at",
+    )
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            f"SELECT {', '.join(columns)} FROM moderation_appeals WHERE appeal_uuid=? AND guild_id=?",
+            (str(appeal_uuid).strip(), int(guild_id)),
+        )
+        row = await cursor.fetchone()
+    return dict(zip(columns, row, strict=True)) if row else None
+
+
+async def get_moderation_appeals(guild_id, statuses=None, limit=20):
+    selected = [str(status).strip().upper() for status in (statuses or [])]
+    parameters = [int(guild_id)]
+    condition = "guild_id=?"
+    if selected:
+        placeholders = ",".join("?" for _ in selected)
+        condition += f" AND status IN ({placeholders})"
+        parameters.extend(selected)
+    parameters.append(max(1, min(int(limit), 50)))
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            f"SELECT appeal_uuid, appellant_id, infraction_uuid, action_type, status, created_at FROM moderation_appeals WHERE {condition} ORDER BY created_at ASC LIMIT ?",
+            tuple(parameters),
+        )
+        rows = await cursor.fetchall()
+    return [
+        {
+            "appeal_uuid": row[0],
+            "appellant_id": row[1],
+            "infraction_uuid": row[2],
+            "action_type": row[3],
+            "status": row[4],
+            "created_at": row[5],
+        }
+        for row in rows
+    ]
+
+
+async def update_moderation_appeal(
+    appeal_uuid, guild_id, status, staff_response, reviewer_id, updated_at
+):
+    allowed = {"PENDING", "NEEDS_DETAILS", "ACCEPTED", "DENIED", "FAILED"}
+    normalized_status = str(status).strip().upper()
+    if normalized_status not in allowed:
+        raise ValueError("Invalid appeal status")
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "UPDATE moderation_appeals SET status=?, staff_response=?, reviewer_id=?, updated_at=? WHERE appeal_uuid=? AND guild_id=? AND status IN ('PENDING', 'NEEDS_DETAILS')",
+            (
+                normalized_status,
+                str(staff_response or "")[:1000],
+                int(reviewer_id) if reviewer_id else None,
+                updated_at,
+                str(appeal_uuid).strip(),
+                int(guild_id),
+            ),
+        )
+        await db.commit()
+    return cursor.rowcount == 1
+
+
+async def add_appeal_details(appeal_uuid, guild_id, appellant_id, details, updated_at):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "UPDATE moderation_appeals SET reason=reason || '\n\nAdditional details:\n' || ?, status='PENDING', updated_at=? WHERE appeal_uuid=? AND guild_id=? AND appellant_id=? AND status='NEEDS_DETAILS'",
+            (
+                str(details)[:1000],
+                updated_at,
+                str(appeal_uuid).strip(),
+                int(guild_id),
+                int(appellant_id),
+            ),
+        )
+        await db.commit()
+    return cursor.rowcount == 1
+
+
+async def get_risk_records(guild_id, user_id=None):
+    parameters = [int(guild_id)]
+    condition = "i.guild_id=? AND NOT EXISTS (SELECT 1 FROM moderation_appeals a WHERE a.guild_id=i.guild_id AND a.infraction_uuid=i.uuid AND a.status='ACCEPTED')"
+    if user_id is not None:
+        condition += " AND i.user_id=?"
+        parameters.append(int(user_id))
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            f"SELECT i.user_id, i.action_type, i.timestamp, i.uuid FROM infractions i WHERE {condition} ORDER BY i.id DESC",
+            tuple(parameters),
+        )
+        rows = await cursor.fetchall()
+    return [
+        {
+            "user_id": row[0],
+            "action_type": row[1],
+            "timestamp": row[2],
+            "uuid": row[3],
+        }
+        for row in rows
+    ]

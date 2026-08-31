@@ -8,6 +8,11 @@ import config
 from utils.database import add_infraction
 from utils.embeds import error as error_embed
 from utils.logger import log_dm, log_exception, log_interaction, log_mod
+from utils.governance import (
+    appeal_view,
+    approval_queued_embed,
+    queue_moderation_approval,
+)
 from utils.permissions import can_moderate_target, is_staff
 
 UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
@@ -92,9 +97,33 @@ class Moderation(commands.Cog):
                 ephemeral=True,
             )
             return
-        await interaction.response.defer(ephemeral=True)
         reason_text = reason or "No reason provided"
         duration_text = f"{time} {UNIT_NAMES[unit.value]}"
+        try:
+            approval = await queue_moderation_approval(
+                self.bot,
+                guild,
+                interaction.user,
+                "TIMEOUT",
+                user.id,
+                user.display_name,
+                reason_text,
+                {
+                    "duration_seconds": seconds,
+                    "duration_text": duration_text,
+                },
+            )
+        except RuntimeError as error:
+            await interaction.response.send_message(
+                embed=error_embed(str(error)), ephemeral=True
+            )
+            return
+        if approval:
+            await interaction.response.send_message(
+                embed=approval_queued_embed(approval), ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
         audit_reason = (
             f"{reason_text} | Duration: {duration_text} | Moderator: "
             f"{interaction.user} ({interaction.user.id})"
@@ -211,7 +240,10 @@ class Moderation(commands.Cog):
         dm_embed.add_field(name="Reference", value=f"`{infraction_uuid}`", inline=False)
         dm_embed.set_footer(text=f"{config.BOT_NAME} | Moderation Notice")
         try:
-            await user.send(embed=dm_embed)
+            await user.send(
+                embed=dm_embed,
+                view=appeal_view(guild.id, infraction_uuid),
+            )
             log_dm(user, "Timeout Notice", success=True)
         except discord.Forbidden:
             log_dm(

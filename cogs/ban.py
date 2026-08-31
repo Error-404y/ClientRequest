@@ -17,6 +17,11 @@ from utils.database import (
     remove_user_warning,
 )
 from utils.embeds import error as error_embed
+from utils.governance import (
+    appeal_view,
+    approval_queued_embed,
+    queue_moderation_approval,
+)
 from utils.logger import (
     log_command,
     log_dm,
@@ -690,7 +695,10 @@ class BanCog(commands.Cog):
                 )
                 dm_embed.set_footer(text=(f"{config.BOT_NAME} | Moderation Operations"))
 
-                await target_obj.send(embed=dm_embed)
+                await target_obj.send(
+                    embed=dm_embed,
+                    view=appeal_view(guild.id, infraction_uuid),
+                )
                 dm_sent = True
 
                 log_dm(
@@ -833,6 +841,27 @@ class BanCog(commands.Cog):
             )
             return
 
+        try:
+            approval = await queue_moderation_approval(
+                self.bot,
+                interaction.guild,
+                interaction.user,
+                "WARN",
+                actual_id,
+                target_name,
+                reason,
+            )
+        except RuntimeError as error:
+            await interaction.followup.send(
+                embed=error_embed(str(error)), ephemeral=True
+            )
+            return
+        if approval:
+            await interaction.followup.send(
+                embed=approval_queued_embed(approval), ephemeral=True
+            )
+            return
+
         embed = await self._issue_warning(
             guild=interaction.guild,
             moderator=interaction.user,
@@ -907,6 +936,23 @@ class BanCog(commands.Cog):
                     "You cannot warn yourself, the server owner, or a member with an equal or higher role."
                 )
             )
+            return
+
+        try:
+            approval = await queue_moderation_approval(
+                self.bot,
+                ctx.guild,
+                ctx.author,
+                "WARN",
+                actual_id,
+                target_name,
+                reason,
+            )
+        except RuntimeError as error:
+            await ctx.send(embed=error_embed(str(error)))
+            return
+        if approval:
+            await ctx.send(embed=approval_queued_embed(approval))
             return
 
         embed = await self._issue_warning(
@@ -1128,6 +1174,29 @@ class BanCog(commands.Cog):
             )
             return
 
+
+        try:
+            approval = await queue_moderation_approval(
+                self.bot,
+                interaction.guild,
+                interaction.user,
+                "WARNING_REMOVE",
+                actual_id,
+                target_name,
+                reason,
+                {"warn_id": warn_id},
+            )
+        except RuntimeError as error:
+            await interaction.response.send_message(
+                embed=error_embed(str(error)), ephemeral=True
+            )
+            return
+        if approval:
+            await interaction.response.send_message(
+                embed=approval_queued_embed(approval), ephemeral=True
+            )
+            return
+
         result = await self._remove_warning(
             guild=interaction.guild,
             moderator=interaction.user,
@@ -1242,6 +1311,25 @@ class BanCog(commands.Cog):
             await ctx.send(
                 embed=error_embed(f"Could not find or resolve user: `{user_input}`")
             )
+            return
+
+
+        try:
+            approval = await queue_moderation_approval(
+                self.bot,
+                ctx.guild,
+                ctx.author,
+                "WARNING_REMOVE",
+                actual_id,
+                target_name,
+                reason,
+                {"warn_id": warn_id},
+            )
+        except RuntimeError as error:
+            await ctx.send(embed=error_embed(str(error)))
+            return
+        if approval:
+            await ctx.send(embed=approval_queued_embed(approval))
             return
 
         result = await self._remove_warning(
@@ -1677,6 +1765,7 @@ class BanCog(commands.Cog):
         created_at = self._ticket_value(ticket, "created_at", "Unknown")
         priority = self._ticket_value(ticket, "priority", "Not set")
         label = self._ticket_value(ticket, "label", "Not assigned")
+        form_response = self._ticket_value(ticket, "form_response", [])
 
         try:
             created_dt = datetime.fromisoformat(str(created_at))
@@ -1782,6 +1871,15 @@ class BanCog(commands.Cog):
             value=f"`{ticket_uuid}`",
             inline=False,
         )
+
+        if form_response:
+            response_text = "\n\n".join(
+                f"**{item.get('question', 'Question')}**\n{item.get('answer', 'Not provided')}"
+                for item in form_response
+            )
+            embed.add_field(
+                name="FORM RESPONSES", value=response_text[:1024], inline=False
+            )
 
         if claimed_by:
             claimed_obj, claimed_name, claimed_id = await self._resolve_ticket_user(
@@ -1904,6 +2002,27 @@ class BanCog(commands.Cog):
 
         if infraction:
             if action_value == "remove":
+                try:
+                    approval = await queue_moderation_approval(
+                        self.bot,
+                        interaction.guild,
+                        interaction.user,
+                        "INFRACTION_REMOVE",
+                        infraction["user_id"],
+                        str(infraction["user_id"]),
+                        f"Remove infraction {infraction['uuid']}",
+                        {"uuid": infraction["uuid"]},
+                    )
+                except RuntimeError as error:
+                    await interaction.response.send_message(
+                        embed=error_embed(str(error)), ephemeral=True
+                    )
+                    return
+                if approval:
+                    await interaction.response.send_message(
+                        embed=approval_queued_embed(approval), ephemeral=True
+                    )
+                    return
                 removed = await remove_infraction_by_uuid(
                     uuid_value, interaction.guild.id
                 )
@@ -2008,6 +2127,23 @@ class BanCog(commands.Cog):
 
         if infraction:
             if action_value == "remove":
+                try:
+                    approval = await queue_moderation_approval(
+                        self.bot,
+                        ctx.guild,
+                        ctx.author,
+                        "INFRACTION_REMOVE",
+                        infraction["user_id"],
+                        str(infraction["user_id"]),
+                        f"Remove infraction {infraction['uuid']}",
+                        {"uuid": infraction["uuid"]},
+                    )
+                except RuntimeError as error:
+                    await ctx.send(embed=error_embed(str(error)))
+                    return
+                if approval:
+                    await ctx.send(embed=approval_queued_embed(approval))
+                    return
                 removed = await remove_infraction_by_uuid(uuid_value, ctx.guild.id)
 
                 if not removed:

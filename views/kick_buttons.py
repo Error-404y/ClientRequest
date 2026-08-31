@@ -2,6 +2,7 @@ import discord
 
 import config
 from utils.embeds import error as error_embed
+from utils.governance import approval_queued_embed, queue_moderation_approval
 from utils.logger import log_dm, log_exception, log_interaction, log_mod
 from utils.permissions import can_kick, can_moderate_target
 from views.base import ReliableView
@@ -48,6 +49,38 @@ class KickConfirmView(ReliableView):
                     "You cannot moderate yourself, the server owner, or a member with an equal or higher role."
                 ),
                 ephemeral=True,
+            )
+            return
+
+        target_id = getattr(
+            self.target_user,
+            "id",
+            self.target_user if isinstance(self.target_user, int) else None,
+        )
+        if not target_id:
+            await interaction.response.send_message(
+                embed=error_embed("The selected kick target is no longer valid."),
+                ephemeral=True,
+            )
+            return
+        try:
+            approval = await queue_moderation_approval(
+                interaction.client,
+                interaction.guild,
+                interaction.user,
+                "KICK",
+                target_id,
+                self.target_name,
+                self.reason or "No reason specified",
+            )
+        except RuntimeError as error:
+            await interaction.response.send_message(
+                embed=error_embed(str(error)), ephemeral=True
+            )
+            return
+        if approval:
+            await interaction.response.edit_message(
+                embed=approval_queued_embed(approval), view=None
             )
             return
 

@@ -1,4 +1,5 @@
 import ast
+import asyncio
 import tempfile
 import unittest
 from datetime import datetime, timedelta
@@ -739,9 +740,30 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         await set_afk_status(self.guild_id, 210, "Away", set_at)
         await set_afk_status(self.guild_id, 211, "Working", set_at)
         removed, records = await process_afk_message(self.guild_id, 210, [211])
-        self.assertTrue(removed)
+        self.assertEqual(
+            removed, {"user_id": 210, "reason": "Away", "set_at": set_at}
+        )
         self.assertEqual(records[0]["user_id"], 211)
         self.assertEqual(await get_afk_statuses(self.guild_id, [210]), [])
+
+    async def test_afk_return_is_scoped_to_server(self):
+        set_at = datetime.now(pytz.utc).isoformat()
+        await set_afk_status(self.guild_id, 210, "Away", set_at)
+        await set_afk_status(self.guild_id + 1, 210, "Working", set_at)
+        await process_afk_message(self.guild_id, 210, [])
+        self.assertEqual(
+            await get_afk_statuses(self.guild_id + 1, [210]),
+            [{"user_id": 210, "reason": "Working", "set_at": set_at}],
+        )
+
+    async def test_concurrent_afk_messages_only_clear_status_once(self):
+        set_at = datetime.now(pytz.utc).isoformat()
+        await set_afk_status(self.guild_id, 210, "Away", set_at)
+        results = await asyncio.gather(
+            process_afk_message(self.guild_id, 210, []),
+            process_afk_message(self.guild_id, 210, []),
+        )
+        self.assertEqual(sum(removed is not None for removed, _ in results), 1)
 
     async def test_auto_assignment_uses_lowest_active_workload(self):
         now = datetime.now(pytz.utc).isoformat()

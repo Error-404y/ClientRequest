@@ -29,6 +29,16 @@ The setup command creates a public `ticket-system` category containing the `tick
 - `/setafkz` activates a persistent AFK status until the member sends a message.
 - `/automodz setup` configures native Discord keyword, safety-preset, and mention-spam protection.
 - `/automodz status` displays all AutoMod rules managed by the bot.
+- `/approvalz configure` lets the server owner set per-action senior approval rules, reviewers, approval counts, expiry and bypass behavior.
+- `/approvalz status` displays the complete moderation governance policy.
+- `/approvalz pending` lists open requests that still require senior review or execution.
+- `/approvalz details` returns requested evidence to the private approval queue.
+- `/ticketformz configure` creates a private form with up to five questions for one configured ticket type.
+- `/riskz user` reviews a member's server-scoped risk level from 1 to 5.
+- `/riskz server` lists the highest current risk levels for staff review.
+- `/appealz submit` privately appeals an eligible warning, timeout or ban.
+- `/appealz pending` and `/appealz review` manage the private staff appeal queue.
+- `/doctorz` scans or safely repairs bot-managed server configuration.
 
 The server owner, members with Discord Administrator permission, and delegated setup administrators can use setup commands. Only the server owner can add or remove delegated setup administrators.
 
@@ -39,6 +49,8 @@ Use `/setup tickets` and enter comma-separated names such as `Partnership, Issue
 Configure Guild Install in the Discord Developer Portal with the Discord-provided installation link. Request only the permissions required by enabled features. Do not grant Administrator.
 
 The bot stores each server's settings and operational records under its Discord server ID. Cross-server update broadcasts and record lookups are prohibited.
+
+Senior approval requests never execute from a browser or message alone. The bot revalidates the requesting moderator, target, server membership, role hierarchy and current permission immediately before executing an approved action. Requesters cannot approve their own actions.
 
 ## Production Requirements
 

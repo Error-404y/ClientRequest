@@ -213,6 +213,17 @@ class UUIDLookup(commands.Cog):
                     name="Ticket Label", value=str(ticket["label"]), inline=True
                 )
 
+            if ticket.get("form_response"):
+                response_text = "\n\n".join(
+                    f"**{item.get('question', 'Question')}**\n{item.get('answer', 'Not provided')}"
+                    for item in ticket["form_response"]
+                )
+                embed.add_field(
+                    name="Ticket Form Responses",
+                    value=response_text[:1024],
+                    inline=False,
+                )
+
             embed.add_field(
                 name="Ticket Database ID", value=str(ticket["id"]), inline=True
             )

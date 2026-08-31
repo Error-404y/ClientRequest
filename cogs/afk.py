@@ -11,6 +11,25 @@ from utils.embeds import error as error_embed
 from utils.logger import log_interaction
 
 
+def afk_duration(set_at, now=None):
+    now_value = now or datetime.now(timezone.utc)
+    try:
+        started = datetime.fromisoformat(set_at)
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return "an unknown duration"
+    if now_value.tzinfo is None:
+        now_value = now_value.replace(tzinfo=timezone.utc)
+    seconds = max(0, int((now_value - started).total_seconds()))
+    parts = []
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60), ("s", 1)):
+        value, seconds = divmod(seconds, size)
+        if value:
+            parts.append(f"{value}{unit}")
+    return " ".join(parts) or "0s"
+
+
 def english_elapsed(set_at, now=None):
     now_value = now or datetime.now(timezone.utc)
     try:
@@ -117,11 +136,15 @@ class AFK(commands.Cog):
         )
         if removed:
             self.afk_users.discard(author_key)
+            now = discord.utils.utcnow()
             embed = discord.Embed(
-                title="Welcome Back",
-                description=f"{message.author.mention}, your AFK status has been removed automatically.",
+                title=f"Welcome back, {message.author.name}",
+                description=(
+                    f"You were AFK for **{afk_duration(removed['set_at'], now)}**.\n"
+                    "Your AFK status has been cleared."
+                ),
                 color=discord.Color.green(),
-                timestamp=discord.utils.utcnow(),
+                timestamp=now,
             )
             embed.set_footer(text=f"{config.BOT_NAME} | Presence Status")
             await message.channel.send(

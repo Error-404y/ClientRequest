@@ -166,6 +166,16 @@ def welcome_embed(guild):
         value="Use `/mutez` for tracked timeouts, `/setafkz` for automatic AFK notices, and `/automodz setup` to configure native Discord AutoMod protection.",
         inline=False,
     )
+    embed.add_field(
+        name="Moderation Governance",
+        value="The server owner can configure independent senior approval rules with `/approvalz configure`. Staff can review server-scoped risk with `/riskz user`, while members can privately appeal eligible actions with `/appealz submit`.",
+        inline=False,
+    )
+    embed.add_field(
+        name="Ticket Forms and Configuration Doctor",
+        value="Use `/ticketformz configure` to collect structured information before creating tickets. Run `/doctorz` to scan or safely repair bot-managed configuration.",
+        inline=False,
+    )
     links = []
     if config.SUPPORT_SERVER_URL:
         links.append(f"[Support Server]({config.SUPPORT_SERVER_URL})")
@@ -1296,7 +1306,12 @@ class Onboarding(commands.Cog):
         )
         embed.add_field(
             name="Stored Data",
-            value="Server configuration, Discord IDs, ticket lifecycle records, moderation records, staff availability, and diagnostic references.",
+            value="Server configuration, Discord IDs, ticket lifecycle and custom-form records, moderation records, approval votes, private appeals, staff availability, and diagnostic references.",
+            inline=False,
+        )
+        embed.add_field(
+            name="Member Risk",
+            value="Risk levels are calculated only when requested from moderation records stored for the current server. They are review aids and never trigger automatic punishment.",
             inline=False,
         )
         embed.add_field(

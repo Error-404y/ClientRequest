@@ -61,7 +61,9 @@ def ticket_panel(
     return embed
 
 
-def ticket_created(user, application, form, ticket_uuid=None):
+def ticket_created(
+    user, application, form, ticket_uuid=None, custom_answers=None
+):
     title = "Support Ticket Created" if not form else "Application Ticket Initiated"
     desc = "Hello! Your private ticket has been successfully created. Please describe your request below."
 
@@ -82,6 +84,14 @@ def ticket_created(user, application, form, ticket_uuid=None):
     if ticket_uuid:
         embed.add_field(name="Ticket UUID", value=f"`{ticket_uuid}`", inline=False)
 
+    if custom_answers:
+        for response in custom_answers[:5]:
+            embed.add_field(
+                name=str(response.get("question") or "Question")[:256],
+                value=str(response.get("answer") or "Not provided")[:1024],
+                inline=False,
+            )
+
     if form:
         embed.add_field(
             name="Form Link", value=f"[Click Here to Open Form]({form})", inline=False
@@ -89,6 +99,12 @@ def ticket_created(user, application, form, ticket_uuid=None):
         embed.add_field(
             name="Instructions",
             value="Please click the link above to fill out your form. Once submitted, post a confirmation message in this channel so our staff team can proceed with your evaluation.",
+            inline=False,
+        )
+    elif custom_answers:
+        embed.add_field(
+            name="Instructions",
+            value="Your form responses are recorded above. Add any supporting evidence or additional context in this channel.",
             inline=False,
         )
     else:
