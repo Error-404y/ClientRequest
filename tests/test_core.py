@@ -17,10 +17,13 @@ from cogs.diagnostics import Diagnostics
 from cogs.escalations import minutes_since
 from cogs.inactivity import hours_since
 from cogs.onboarding import (
+    help_category_for,
+    help_command_sections,
     parse_ticket_options,
     public_install_permissions,
     resource_report,
     setup_permission_report,
+    welcome_embed,
 )
 from utils.database import (
     add_setup_admin,
@@ -311,7 +314,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn('name="ticket"', source)
         self.assertIn("category=panel_category", source)
 
-    def test_help_is_a_public_embed(self):
+    def test_help_is_an_interactive_public_embed(self):
         source = (
             Path(__file__)
             .resolve()
@@ -320,8 +323,47 @@ class ConfigurationTests(unittest.TestCase):
             .read_text(encoding="utf-8")
         )
         help_block = source.split('name="help"', 1)[1].split('name="invite"', 1)[0]
-        self.assertIn("send_message(embed=embed)", help_block)
+        self.assertIn("embed=embed", help_block)
+        self.assertIn("view=HelpCenterView", help_block)
         self.assertNotIn("ephemeral=True", help_block)
+
+    def test_help_categories_cover_member_staff_and_owner_workflows(self):
+        self.assertEqual(help_category_for("appealz submit"), "members")
+        self.assertEqual(help_category_for("ticketformz configure"), "tickets")
+        self.assertEqual(help_category_for("warnz"), "moderation")
+        self.assertEqual(help_category_for("approvalz pending"), "governance")
+        self.assertEqual(help_category_for("automodz setup"), "automod")
+        self.assertEqual(help_category_for("doctorz"), "setup")
+
+    def test_help_command_sections_respect_discord_field_limits(self):
+        commands = [
+            SimpleNamespace(
+                qualified_name=f"automodz command{index}",
+                description="A detailed AutoMod command description",
+            )
+            for index in range(40)
+        ]
+        bot = SimpleNamespace(
+            tree=SimpleNamespace(walk_commands=lambda: commands)
+        )
+        sections = help_command_sections(bot, "automod")
+        self.assertGreater(len(sections), 1)
+        self.assertTrue(all(len(section) <= 950 for section in sections))
+
+    def test_welcome_embed_explains_the_complete_first_run_workflow(self):
+        embed = welcome_embed(SimpleNamespace(name="Test Server", icon=None))
+        payload = embed.to_dict()
+        rendered = str(payload)
+        self.assertIn("/setup start", rendered)
+        self.assertIn("#ticket", rendered)
+        self.assertIn("/doctorz scan", rendered)
+        self.assertIn("/help", rendered)
+        self.assertIn("How Members Request Support", rendered)
+        self.assertLessEqual(len(embed), 6000)
+        self.assertLessEqual(len(payload.get("fields", [])), 25)
+        self.assertTrue(
+            all(len(field["value"]) <= 1024 for field in payload.get("fields", []))
+        )
 
     def test_public_server_isolation_guards(self):
         updates_source = (

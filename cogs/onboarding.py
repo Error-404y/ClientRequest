@@ -22,6 +22,7 @@ from utils.embeds import estimate_response_time, ticket_panel
 from utils.embeds import success as success_embed
 from utils.logger import log_exception, log_interaction
 from utils.permissions import can_manage_setup_admins, can_setup, is_staff
+from views.base import ReliableView
 from views.dropdown import TicketPanel
 
 timezone = pytz.timezone(config.TIMEZONE)
@@ -118,62 +119,98 @@ def resource_report(guild, settings):
 
 def welcome_embed(guild):
     embed = discord.Embed(
-        title=f"Welcome to {config.BOT_NAME}",
+        title=f"Welcome to {config.BOT_NAME} | Let Us Get Your Server Ready",
         description=(
-            "A professional ticket-management and staff-operations system is now available on this server. "
-            "The server owner or an authorized administrator can complete the entire configuration in less than two minutes."
+            f"Thank you for adding **{config.BOT_NAME}** to **{guild.name}**. "
+            "The bot provides private support tickets, staff workflows, moderation "
+            "tools and server protection while keeping every server's information "
+            "completely separated. This guide will help you get started."
         ),
         color=0x5865F2,
         timestamp=discord.utils.utcnow(),
     )
     embed.add_field(
-        name="Start Setup",
-        value="Run `/setup start`. You may select an existing staff role or allow the bot to create one automatically.",
+        name="Get Started in Three Steps",
+        value=(
+            "**1.** Run `/setup start` and choose your staff role.\n"
+            "**2.** Review the created ticket channels and select your ticket types.\n"
+            "**3.** Run `/doctorz scan` to confirm that the configuration is ready."
+        ),
         inline=False,
     )
     embed.add_field(
-        name="Automatic Configuration",
-        value="The setup creates a `ticket-system` category with a `ticket` panel channel, plus the private ticket category, archive category, logging channel, and initial ticket menu.",
+        name="What the Setup Creates",
+        value=(
+            "The guided setup creates a `ticket-system` category with a `#ticket` "
+            "panel, private ticket channels, an archive category and a protected "
+            "logging channel. You can use an existing staff role or let the bot "
+            "create one for you."
+        ),
         inline=False,
     )
     embed.add_field(
-        name="Setup Access",
-        value="The server owner, Discord administrators, and delegated setup administrators can use every `/setup` command.",
+        name="How Members Request Support",
+        value=(
+            "Members open `#ticket`, select a request type and complete its form. "
+            "The bot then creates a private channel visible only to the member and "
+            "authorized staff. No slash command is required to create a ticket."
+        ),
         inline=False,
     )
     embed.add_field(
-        name="Owner Administration",
-        value="Only the server owner can use `/add admin` and `/remove admin`. Select a username or enter a Discord user ID.",
+        name="How the Ticket Team Works",
+        value=(
+            "Staff can claim or unclaim tickets, apply labels, publish updates and "
+            "close requests with complete audit records and transcripts. "
+            "Availability and optional automatic assignment help distribute new "
+            "tickets fairly."
+        ),
         inline=False,
     )
     embed.add_field(
-        name="Custom Ticket Types",
-        value="Run `/setup tickets` and enter names such as `Partnership, Issues, Player Reports, Questions`. Up to ten custom types are supported.",
+        name="Moderation, Safety and Appeals",
+        value=(
+            "Moderation actions receive traceable UUIDs. Server owners can require "
+            "senior approval, staff can review server-specific risk information, "
+            "and members can privately appeal eligible warnings, timeouts or bans. "
+            "Native Discord AutoMod protection is available through `/automodz setup`."
+        ),
         inline=False,
     )
     embed.add_field(
-        name="Command Directory",
-        value="Run `/help` at any time to view every available slash command and its purpose.",
+        name="Who Can Configure the Bot",
+        value=(
+            "The server owner, Discord administrators and delegated setup "
+            "administrators can manage configuration. Only the server owner can "
+            "grant or remove delegated setup access with `/add admin` and `/remove admin`."
+        ),
         inline=False,
     )
     embed.add_field(
-        name="Staff Operations",
-        value="Tickets support Claim and Unclaim controls with audit records. `/setup autoassign` can distribute new tickets to available staff automatically.",
+        name="Customize Everything Later",
+        value=(
+            "Use `/setup tickets` for custom request types, `/ticketformz configure` "
+            "for intake questions, `/setup autoassign` for ticket distribution and "
+            "`/approvalz configure` for senior-review policies. Existing ticket "
+            "types and approval rules can be changed whenever your server needs evolve."
+        ),
         inline=False,
     )
     embed.add_field(
-        name="Safety and Availability",
-        value="Use `/mutez` for tracked timeouts, `/setafkz` for automatic AFK notices, and `/automodz setup` to configure native Discord AutoMod protection.",
+        name="Privacy and Server Isolation",
+        value=(
+            "Tickets, moderation records, forms, approvals and appeals are always "
+            "scoped to this server. Information from one server is never displayed "
+            "or used inside another server."
+        ),
         inline=False,
     )
     embed.add_field(
-        name="Moderation Governance",
-        value="The server owner can configure independent senior approval rules with `/approvalz configure`. Staff can review server-scoped risk with `/riskz user`, while members can privately appeal eligible actions with `/appealz submit`.",
-        inline=False,
-    )
-    embed.add_field(
-        name="Ticket Forms and Configuration Doctor",
-        value="Use `/ticketformz configure` to collect structured information before creating tickets. Run `/doctorz` to scan or safely repair bot-managed configuration.",
+        name="Need Guidance",
+        value=(
+            "Run `/help` to open the interactive Help Center. It separates member, "
+            "ticket, moderation, approval, AutoMod and setup commands into clear categories."
+        ),
         inline=False,
     )
     links = []
@@ -185,10 +222,244 @@ def welcome_embed(guild):
         links.append(f"[Terms of Service]({config.TERMS_OF_SERVICE_URL})")
     if links:
         embed.add_field(name="Resources", value=" | ".join(links), inline=False)
-    embed.set_footer(text=f"{config.BOT_NAME} | Server Onboarding")
+    embed.set_footer(
+        text=f"{config.BOT_NAME} | Start with /setup start | Help is always available with /help"
+    )
     if guild.icon:
         embed.set_thumbnail(url=guild.icon.url)
     return embed
+
+
+HELP_CATEGORIES = (
+    ("overview", "Overview", "How members, staff and owners use the bot"),
+    ("members", "Member Commands", "Tickets, AFK status and private appeals"),
+    ("tickets", "Ticket Operations", "Ticket handling, forms and availability"),
+    ("moderation", "Moderation", "Warnings, timeouts, kicks, bans and history"),
+    ("governance", "Approvals and Appeals", "Senior review, appeals and risk tools"),
+    ("automod", "AutoMod", "Native Discord AutoMod configuration"),
+    ("setup", "Setup and System", "Server setup, diagnostics and administration"),
+)
+
+
+def help_category_for(command_name):
+    qualified = str(command_name).strip().casefold()
+    if qualified in {
+        "help",
+        "invite",
+        "privacy",
+        "setafkz",
+        "appealz submit",
+        "appealz view",
+        "appealz details",
+    }:
+        return "members"
+    root = qualified.split(" ", 1)[0]
+    if root in {
+        "availability",
+        "availabilitylist",
+        "labelz",
+        "ticketformz",
+        "updatez",
+    }:
+        return "tickets"
+    if root in {
+        "banz",
+        "unbanz",
+        "kickz",
+        "warnz",
+        "warnremovez",
+        "historyz",
+        "infraction",
+        "mutez",
+        "findz",
+    }:
+        return "moderation"
+    if root in {"approvalz", "appealz", "riskz"}:
+        return "governance"
+    if root == "automodz":
+        return "automod"
+    return "setup"
+
+
+def help_command_sections(bot, category, maximum=950):
+    lines = []
+    for command in bot.tree.walk_commands():
+        if isinstance(command, app_commands.Group):
+            continue
+        if help_category_for(command.qualified_name) != category:
+            continue
+        lines.append(f"`/{command.qualified_name}`\n{command.description}")
+    lines.sort(key=str.casefold)
+    sections = []
+    current = []
+    current_length = 0
+    for line in lines:
+        added = len(line) + (2 if current else 0)
+        if current and current_length + added > maximum:
+            sections.append("\n\n".join(current))
+            current = []
+            current_length = 0
+        current.append(line)
+        current_length += added
+    if current:
+        sections.append("\n\n".join(current))
+    return sections
+
+
+def help_center_embed(bot, category, guild=None):
+    category_details = {
+        key: (title, description)
+        for key, title, description in HELP_CATEGORIES
+    }
+    title, description = category_details.get(
+        category, category_details["overview"]
+    )
+    leaf_commands = [
+        command
+        for command in bot.tree.walk_commands()
+        if not isinstance(command, app_commands.Group)
+    ]
+    embed = discord.Embed(
+        title=f"{config.BOT_NAME} Help Center | {title}",
+        description=description,
+        color=0x5865F2,
+        timestamp=discord.utils.utcnow(),
+    )
+    if category == "overview":
+        embed.add_field(
+            name="For Members",
+            value=(
+                "Create a private request from the dropdown in the `#ticket` "
+                "channel. Use `/setafkz` for an AFK status. Eligible warnings, "
+                "timeouts and bans can be reviewed with `/appealz submit`."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="For Ticket Staff",
+            value=(
+                "Use the ticket buttons to claim or unclaim requests. Staff can "
+                "set `/availability`, classify tickets with `/labelz`, and use "
+                "authorized moderation and risk-review commands."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="For Server Owners",
+            value=(
+                "Begin with `/setup start`. Configure ticket types, custom forms, "
+                "AutoMod and senior approvals, then use `/doctorz` to verify or "
+                "safely repair the server configuration."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Access Control",
+            value=(
+                "Discord permissions, configured staff roles and delegated setup "
+                "access determine which actions each member can use. Restricted "
+                "commands never grant access merely because they appear here."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Browse Commands",
+            value="Use the menu below to open a command category and read what every command does.",
+            inline=False,
+        )
+    else:
+        sections = help_command_sections(bot, category)
+        for index, section in enumerate(sections, 1):
+            field_name = "Commands" if index == 1 else f"Commands Continued {index}"
+            embed.add_field(name=field_name, value=section, inline=False)
+        if not sections:
+            embed.add_field(
+                name="Commands",
+                value="No commands are currently registered in this category.",
+                inline=False,
+            )
+        if category == "members":
+            embed.add_field(
+                name="Creating a Ticket",
+                value=(
+                    "Ticket creation uses the panel dropdown rather than a slash "
+                    "command. Select a request type, complete its form and continue "
+                    "inside the private channel created for you."
+                ),
+                inline=False,
+            )
+        elif category == "governance":
+            embed.add_field(
+                name="Review Safety",
+                value=(
+                    "Approval and risk tools are server-specific. Risk scores are "
+                    "review aids and never issue automatic punishments."
+                ),
+                inline=False,
+            )
+        elif category == "setup":
+            embed.add_field(
+                name="Setup Authority",
+                value=(
+                    "The server owner, Discord administrators and delegated setup "
+                    "administrators can manage setup. Only the server owner can add "
+                    "or remove delegated setup administrators."
+                ),
+                inline=False,
+            )
+    if config.SUPPORT_SERVER_URL:
+        embed.add_field(
+            name="Support",
+            value=f"[Open the official support server]({config.SUPPORT_SERVER_URL})",
+            inline=False,
+        )
+    embed.set_footer(
+        text=f"{config.BOT_NAME} | {len(leaf_commands)} Slash Commands | Select a category below"
+    )
+    if guild and guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    return embed
+
+
+class HelpCategorySelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(
+                label=title,
+                value=key,
+                description=description[:100],
+            )
+            for key, title, description in HELP_CATEGORIES
+        ]
+        super().__init__(
+            placeholder="Choose a help category",
+            options=options,
+            custom_id="maja_help_category",
+        )
+
+    async def callback(self, interaction):
+        await interaction.response.edit_message(
+            embed=help_center_embed(
+                interaction.client, self.values[0], interaction.guild
+            ),
+            view=self.view,
+        )
+
+
+class HelpCenterView(ReliableView):
+    def __init__(self, requester_id):
+        super().__init__(timeout=600)
+        self.requester_id = int(requester_id)
+        self.add_item(HelpCategorySelect())
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id == self.requester_id:
+            return True
+        await interaction.response.send_message(
+            embed=error_embed("Run `/help` to open your own Help Center."),
+            ephemeral=True,
+        )
+        return False
 
 
 class ResetSetupView(discord.ui.View):
@@ -1209,56 +1480,14 @@ class Onboarding(commands.Cog):
         )
 
     @app_commands.command(
-        name="help", description="Learn how to configure and use the ticket system"
+        name="help", description="Open the interactive command and workflow guide"
     )
     async def help_command(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title=f"{config.BOT_NAME} Slash Command Directory",
-            description="Every available slash command is listed below. Discord will enforce the required access when a command is used.",
-            color=0x5865F2,
+        embed = help_center_embed(self.bot, "overview", interaction.guild)
+        await interaction.response.send_message(
+            embed=embed,
+            view=HelpCenterView(interaction.user.id),
         )
-        lines = []
-        for command in self.bot.tree.walk_commands():
-            if isinstance(command, app_commands.Group):
-                continue
-            lines.append(f"`/{command.qualified_name}` — {command.description}")
-        lines.sort(key=str.casefold)
-        sections = []
-        current = []
-        current_length = 0
-        for line in lines:
-            added_length = len(line) + (1 if current else 0)
-            if current and current_length + added_length > 1000:
-                sections.append("\n".join(current))
-                current = []
-                current_length = 0
-            current.append(line)
-            current_length += added_length
-        if current:
-            sections.append("\n".join(current))
-        for index, section in enumerate(sections, start=1):
-            title = (
-                "Available Commands" if index == 1 else f"Available Commands {index}"
-            )
-            embed.add_field(name=title, value=section, inline=False)
-        embed.add_field(
-            name="Setup Access",
-            value="The server owner, Discord administrators, and delegated setup administrators can configure the bot. Only the server owner can add or remove delegated administrators.",
-            inline=False,
-        )
-        embed.add_field(
-            name="Ticket Creation",
-            value="Members create private tickets through the configured ticket-panel dropdown.",
-            inline=False,
-        )
-        if config.SUPPORT_SERVER_URL:
-            embed.add_field(
-                name="Support",
-                value=f"[Open the official support server]({config.SUPPORT_SERVER_URL})",
-                inline=False,
-            )
-        embed.set_footer(text=f"{config.BOT_NAME} | {len(lines)} Slash Commands")
-        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(
         name="invite",
