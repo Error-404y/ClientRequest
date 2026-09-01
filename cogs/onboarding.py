@@ -231,14 +231,140 @@ def welcome_embed(guild):
 
 
 HELP_CATEGORIES = (
-    ("overview", "Overview", "How members, staff and owners use the bot"),
-    ("members", "Member Commands", "Tickets, AFK status and private appeals"),
-    ("tickets", "Ticket Operations", "Ticket handling, forms and availability"),
-    ("moderation", "Moderation", "Warnings, timeouts, kicks, bans and history"),
-    ("governance", "Approvals and Appeals", "Senior review, appeals and risk tools"),
-    ("automod", "AutoMod", "Native Discord AutoMod configuration"),
-    ("setup", "Setup and System", "Server setup, diagnostics and administration"),
+    ("overview", "Start Here", "Choose what you want the bot to do"),
+    ("members", "Member Features", "Create requests, use AFK and submit appeals"),
+    ("tickets", "Ticket Workflow", "Configure, claim, organize and close tickets"),
+    ("moderation", "Moderation Workflow", "Apply and track moderation actions"),
+    ("governance", "Reviews and Appeals", "Use approvals, risk review and appeals"),
+    ("automod", "AutoMod Workflow", "Configure and maintain AutoMod through the bot"),
+    ("setup", "Configure the Bot", "Set up, customize, repair and inspect the bot"),
 )
+
+
+HELP_WORKFLOWS = {
+    "overview": (
+        (
+            "Send a Support Request",
+            "Open the bot's `#ticket` panel, select a request type, complete the displayed form and submit it. The bot creates a private ticket and notifies the support team.",
+        ),
+        (
+            "Handle a Ticket",
+            "Open the ticket and use **Claim** to take responsibility. Use `/labelz` when a classification is needed, publish progress with `/updatez`, then use the ticket controls to close and archive it.",
+        ),
+        (
+            "Moderate a Member",
+            "Run the required moderation command, select the member and provide a reason. The bot validates access, records the action with a UUID and either executes it or sends it for senior approval.",
+        ),
+        (
+            "Review or Appeal an Action",
+            "Senior reviewers use the approval controls sent by the bot. Affected members use `/appealz submit` with their infraction UUID and receive the final decision privately.",
+        ),
+        (
+            "Configure the Bot",
+            "Run `/setup start` for the first configuration. Use the setup, ticket-form, approval and AutoMod categories below whenever you want to change how the bot operates.",
+        ),
+        (
+            "Open a Detailed Guide",
+            "Select a category below. Each page explains the workflow first and then lists the exact commands available for it.",
+        ),
+    ),
+    "members": (
+        (
+            "Create a Ticket",
+            "Use the dropdown in the bot's `#ticket` panel. Select the closest request type, answer the custom questions and continue the conversation inside the private channel the bot creates.",
+        ),
+        (
+            "Set an AFK Status",
+            "Run `/setafkz` and enter a reason. When someone mentions you, the bot explains that you are away. Sending your next message automatically removes the status and shows how long you were AFK.",
+        ),
+        (
+            "Submit an Appeal",
+            "Copy the UUID from your warning, timeout or ban notice. Run `/appealz submit`, enter the UUID and explain the request. Use `/appealz view` to check the result or `/appealz details` when staff request more information.",
+        ),
+    ),
+    "tickets": (
+        (
+            "Prepare Ticket Intake",
+            "Set the panel choices with `/setup tickets`. Use `/ticketformz configure` when one ticket type should ask questions before creating its private channel.",
+        ),
+        (
+            "Process a Ticket",
+            "Use **Claim** when you begin handling a ticket. Any authorized staff member can use **Unclaim** when reassignment is needed. Use `/labelz` to show the ticket's current classification without renaming its channel.",
+        ),
+        (
+            "Manage Workload and Updates",
+            "Set your assignment state with `/availability`. Owners can enable `/setup autoassign`. Use `/updatez` to publish a structured service update through the configured ticket panel.",
+        ),
+        (
+            "Finish a Ticket",
+            "Use the ticket controls to close it with a reason. The bot records who closed it, generates the transcript, notifies the member and preserves the configured archive workflow.",
+        ),
+    ),
+    "moderation": (
+        (
+            "Apply an Action",
+            "Use `/warnz`, `/mutez`, `/kickz`, `/banz` or `/unbanz`. Select the target and enter a clear reason. For `/mutez`, provide the duration and choose seconds, minutes or hours.",
+        ),
+        (
+            "Track the Result",
+            "The bot creates a UUID for recorded actions. Use `/findz` for a specific UUID, `/historyz` for a member's history and `/infraction` for a detailed record.",
+        ),
+        (
+            "Remove a Record",
+            "Use `/warnremovez` to remove a warning or the protected infraction-removal workflow for another eligible record. If senior approval is enabled, the bot waits for review before changing the record.",
+        ),
+    ),
+    "governance": (
+        (
+            "Configure Senior Approval",
+            "The server owner runs `/approvalz configure`, selects an action, enables review, chooses the senior role and private channel, then sets the required independent approvals and expiration time.",
+        ),
+        (
+            "Review a Pending Action",
+            "Open the approval message and choose **Approve**, **Request Details** or **Deny**. Use `/approvalz pending` for the open queue. Requesters return missing information with `/approvalz details`.",
+        ),
+        (
+            "Review Member Risk",
+            "Use `/riskz user` for one member or `/riskz server` for the current ranking. The result is a review aid from level 1 to 5 and never applies a punishment automatically.",
+        ),
+        (
+            "Process an Appeal",
+            "Members submit eligible actions with `/appealz submit`. Staff use `/appealz pending`, inspect the UUID and complete `/appealz review` to accept, deny or request details. Accepted actions are reversed when supported.",
+        ),
+    ),
+    "automod": (
+        (
+            "Create or Adopt Protection",
+            "Run `/automodz setup` and choose the private alert channel. The bot creates missing managed rules and safely reuses compatible rules that already exist.",
+        ),
+        (
+            "Inspect and Control Rules",
+            "Use `/automodz status` to see the managed protection. `/automodz enable` and `/automodz disable` control all managed rules without deleting their configuration.",
+        ),
+        (
+            "Maintain Keywords and Exemptions",
+            "Use `/automodz addword` or `/automodz removeword` for the protected keyword list. Use `/automodz exemptrole` and `/automodz exemptchannel` when trusted locations need an exception.",
+        ),
+    ),
+    "setup": (
+        (
+            "First Configuration",
+            "Run `/setup start`, select the staff role and provide the initial ticket types. The bot creates or reuses its categories, panel, archive and logging resources, then publishes the ticket panel.",
+        ),
+        (
+            "Change the Configuration",
+            "Use `/setup staff`, `/setup tickets` and `/setup autoassign` for normal changes. Only the server owner can delegate setup access with `/add admin` or remove it with `/remove admin`.",
+        ),
+        (
+            "Verify or Repair",
+            "Use `/setup status` for a quick configuration view. Run `/doctorz scan` for a deeper inspection or `/doctorz repair` to safely restore bot-managed resources without deleting tickets or moderation records.",
+        ),
+        (
+            "Inspect Bot Health",
+            "Use `/healthz` for the current operational summary, `/debugz` for a complete diagnostic and `/debugerror` with an error reference when one operation needs investigation.",
+        ),
+    ),
+}
 
 
 def help_category_for(command_name):
@@ -325,86 +451,24 @@ def help_center_embed(bot, category, guild=None):
         color=0x5865F2,
         timestamp=discord.utils.utcnow(),
     )
-    if category == "overview":
-        embed.add_field(
-            name="For Members",
-            value=(
-                "Create a private request from the dropdown in the `#ticket` "
-                "channel. Use `/setafkz` for an AFK status. Eligible warnings, "
-                "timeouts and bans can be reviewed with `/appealz submit`."
-            ),
-            inline=False,
-        )
-        embed.add_field(
-            name="For Ticket Staff",
-            value=(
-                "Use the ticket buttons to claim or unclaim requests. Staff can "
-                "set `/availability`, classify tickets with `/labelz`, and use "
-                "authorized moderation and risk-review commands."
-            ),
-            inline=False,
-        )
-        embed.add_field(
-            name="For Server Owners",
-            value=(
-                "Begin with `/setup start`. Configure ticket types, custom forms, "
-                "AutoMod and senior approvals, then use `/doctorz` to verify or "
-                "safely repair the server configuration."
-            ),
-            inline=False,
-        )
-        embed.add_field(
-            name="Access Control",
-            value=(
-                "Discord permissions, configured staff roles and delegated setup "
-                "access determine which actions each member can use. Restricted "
-                "commands never grant access merely because they appear here."
-            ),
-            inline=False,
-        )
-        embed.add_field(
-            name="Browse Commands",
-            value="Use the menu below to open a command category and read what every command does.",
-            inline=False,
-        )
-    else:
+    selected_category = (
+        category if category in HELP_WORKFLOWS else "overview"
+    )
+    for field_name, field_value in HELP_WORKFLOWS[selected_category]:
+        embed.add_field(name=field_name, value=field_value, inline=False)
+    if selected_category != "overview":
         sections = help_command_sections(bot, category)
         for index, section in enumerate(sections, 1):
-            field_name = "Commands" if index == 1 else f"Commands Continued {index}"
+            field_name = (
+                "Commands Used in This Workflow"
+                if index == 1
+                else f"Additional Commands {index}"
+            )
             embed.add_field(name=field_name, value=section, inline=False)
         if not sections:
             embed.add_field(
                 name="Commands",
                 value="No commands are currently registered in this category.",
-                inline=False,
-            )
-        if category == "members":
-            embed.add_field(
-                name="Creating a Ticket",
-                value=(
-                    "Ticket creation uses the panel dropdown rather than a slash "
-                    "command. Select a request type, complete its form and continue "
-                    "inside the private channel created for you."
-                ),
-                inline=False,
-            )
-        elif category == "governance":
-            embed.add_field(
-                name="Review Safety",
-                value=(
-                    "Approval and risk tools are server-specific. Risk scores are "
-                    "review aids and never issue automatic punishments."
-                ),
-                inline=False,
-            )
-        elif category == "setup":
-            embed.add_field(
-                name="Setup Authority",
-                value=(
-                    "The server owner, Discord administrators and delegated setup "
-                    "administrators can manage setup. Only the server owner can add "
-                    "or remove delegated setup administrators."
-                ),
                 inline=False,
             )
     if config.SUPPORT_SERVER_URL:

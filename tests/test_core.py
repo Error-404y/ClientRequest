@@ -18,6 +18,7 @@ from cogs.escalations import minutes_since
 from cogs.inactivity import hours_since
 from cogs.onboarding import (
     help_category_for,
+    help_center_embed,
     help_command_sections,
     parse_ticket_options,
     public_install_permissions,
@@ -349,6 +350,24 @@ class ConfigurationTests(unittest.TestCase):
         sections = help_command_sections(bot, "automod")
         self.assertGreater(len(sections), 1)
         self.assertTrue(all(len(section) <= 950 for section in sections))
+
+    def test_help_center_explains_bot_workflows_instead_of_discord_usage(self):
+        commands = [
+            SimpleNamespace(
+                qualified_name="warnz",
+                description="Warn a member with a tracked infraction",
+            )
+        ]
+        bot = SimpleNamespace(
+            tree=SimpleNamespace(walk_commands=lambda: commands)
+        )
+        overview = str(help_center_embed(bot, "overview").to_dict())
+        moderation = str(help_center_embed(bot, "moderation").to_dict())
+        self.assertIn("Send a Support Request", overview)
+        self.assertIn("Configure the Bot", overview)
+        self.assertNotIn("Discord permissions", overview)
+        self.assertIn("Apply an Action", moderation)
+        self.assertIn("/warnz", moderation)
 
     def test_welcome_embed_explains_the_complete_first_run_workflow(self):
         embed = welcome_embed(SimpleNamespace(name="Test Server", icon=None))
