@@ -649,7 +649,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn("discord.InteractionType.component", source)
         self.assertIn("discord.InteractionType.modal_submit", source)
 
-    def test_operations_console_uses_active_server_count(self):
+    def test_operations_console_is_compact_and_shard_aware(self):
         source = (
             Path(__file__)
             .resolve()
@@ -657,7 +657,12 @@ class ConfigurationTests(unittest.TestCase):
             .joinpath("main.py")
             .read_text(encoding="utf-8")
         )
-        self.assertIn('console_row("ACTIVE SERVERS", str(len(bot.guilds)))', source)
+        self.assertIn('console_row("CONNECTED SERVERS"', source)
+        self.assertIn('console_row("CONNECTED SHARDS"', source)
+        self.assertIn("commands.AutoShardedBot", source)
+        self.assertIn("database_health(deep=False)", source)
+        self.assertNotIn("Connected to Server:", source)
+        self.assertNotIn("for gid, gcfg in config.GUILDS.items()", source)
         self.assertNotIn("PRIMARY SERVER", source)
 
     def test_runtime_uses_one_configured_timezone(self):
@@ -977,6 +982,16 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         record = next(item for item in controls if item["channel_id"] == 110)
         self.assertEqual(record["guild_id"], self.guild_id)
         self.assertEqual(record["status"], "closed")
+
+    async def test_ticket_recovery_records_are_keyset_paginated(self):
+        now = datetime.now().isoformat()
+        await create_ticket_record(113, self.guild_id, 213, "Support", now)
+        await create_ticket_record(114, self.guild_id, 214, "Support", now)
+        first_page = await get_ticket_controls(limit=1)
+        self.assertEqual(len(first_page), 1)
+        second_page = await get_ticket_controls(after_id=first_page[0]["id"], limit=1)
+        self.assertEqual(len(second_page), 1)
+        self.assertGreater(second_page[0]["id"], first_page[0]["id"])
 
     async def test_staff_metrics_never_cross_servers(self):
         now = datetime.now().isoformat()

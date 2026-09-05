@@ -47,27 +47,29 @@ class TicketControlRecovery(commands.Cog):
     async def on_ready(self):
         if self.recovered:
             return
-        for record in await get_ticket_controls():
-            channel = self.bot.get_channel(record["channel_id"])
-            if not isinstance(channel, discord.TextChannel):
-                guild = self.bot.get_guild(record["guild_id"])
-                if guild is not None:
-                    await mark_ticket_deleted(record["channel_id"])
-                    log_ticket(
-                        "Missing Ticket Channel Reconciled",
-                        record["channel_id"],
-                        details=f"Guild ID: {record['guild_id']}",
-                    )
-                continue
-            message = None
-            message_id = record["control_message_id"]
-            if message_id:
+        after_id = 0
+        while True:
+            records = await get_ticket_controls(after_id=after_id, limit=500)
+            if not records:
+                break
+            for record in records:
+                after_id = record["id"]
+                channel = self.bot.get_channel(record["channel_id"])
+                if not isinstance(channel, discord.TextChannel):
+                    guild = self.bot.get_guild(record["guild_id"])
+                    if guild is not None:
+                        await mark_ticket_deleted(record["channel_id"])
+                        log_ticket(
+                            "Missing Ticket Channel Reconciled",
+                            record["channel_id"],
+                            details=f"Guild ID: {record['guild_id']}",
+                        )
+                    continue
+                message_id = record["control_message_id"]
+                if message_id:
+                    continue
                 try:
-                    message = await channel.fetch_message(message_id)
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                     message = None
-            if message is None:
-                try:
                     async for candidate in channel.history(
                         limit=100, oldest_first=record["status"] == "open"
                     ):
@@ -94,7 +96,8 @@ class TicketControlRecovery(commands.Cog):
                         context="Ticket control recovery failed",
                     )
                     continue
-            if message is None:
+                if message is not None:
+                    continue
                 try:
                     recovered_embed = discord.Embed(
                         title=(
@@ -135,25 +138,6 @@ class TicketControlRecovery(commands.Cog):
                         context="Missing ticket control recreation failed",
                     )
                     continue
-            if message:
-                try:
-                    if message.embeds:
-                        embed = discord.Embed.from_dict(message.embeds[0].to_dict())
-                        apply_ticket_label(embed, record["label"])
-                    else:
-                        embed = None
-                    await message.edit(
-                        embed=embed,
-                        view=self.control_view(record),
-                    )
-                except discord.HTTPException as error:
-                    log_exception(
-                        "TICKET",
-                        error,
-                        guild=channel.guild,
-                        channel=channel,
-                        context="Ticket control state restoration failed",
-                    )
         self.recovered = True
 
     @app_commands.command(

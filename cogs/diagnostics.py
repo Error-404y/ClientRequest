@@ -12,7 +12,7 @@ from discord.ext import commands, tasks
 
 import config
 from utils.embeds import error as error_embed
-from utils.logger import emit, log_exception, log_performance, redact
+from utils.logger import log_exception, log_performance, redact
 from utils.permissions import can_setup
 
 timezone = pytz.timezone(config.TIMEZONE)
@@ -41,7 +41,6 @@ def clean_label(value):
 class Diagnostics(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.ready_reported = False
         self.reported_worker_failures = set()
         if not hasattr(bot, "started_at_monotonic"):
             bot.started_at_monotonic = time.monotonic()
@@ -51,11 +50,13 @@ class Diagnostics(commands.Cog):
     def cog_unload(self):
         self.watch_workers.cancel()
 
-    async def database_health(self, guild_id=None):
+    async def database_health(self, guild_id=None, deep=True):
         started = time.perf_counter()
         try:
             async with aiosqlite.connect(config.DATABASE) as database:
-                integrity_cursor = await database.execute("PRAGMA integrity_check")
+                integrity_cursor = await database.execute(
+                    "PRAGMA integrity_check" if deep else "PRAGMA quick_check"
+                )
                 integrity = (await integrity_cursor.fetchone())[0]
                 if guild_id is None:
                     ticket_cursor = await database.execute(
@@ -360,18 +361,6 @@ class Diagnostics(commands.Cog):
     @watch_workers.error
     async def watch_workers_error(self, error):
         log_exception("WORKER", error, context="Diagnostic watchdog stopped")
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        if self.ready_reported:
-            return
-        self.ready_reported = True
-        report = await self.snapshot()
-        emit(
-            "SUCCESS" if report["status"] == "Healthy" else "WARNING",
-            "HEALTH",
-            f"Startup status: {report['status']} | issues={len(report['issues'])} | warnings={len(report['warnings'])}",
-        )
 
     async def require_owner(self, interaction, message):
         if (

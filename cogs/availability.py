@@ -35,7 +35,6 @@ class Availability(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.presence_refresh_tasks = {}
-        self.ready_refreshed = False
 
     def cog_unload(self):
         for task in self.presence_refresh_tasks.values():
@@ -74,23 +73,6 @@ class Availability(commands.Cog):
             self.presence_refresh_tasks[after.guild.id] = asyncio.create_task(
                 self.delayed_presence_refresh(after.guild)
             )
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        if self.ready_refreshed:
-            return
-        self.ready_refreshed = True
-        for guild in self.bot.guilds:
-            if config.is_guild_configured(guild.id):
-                try:
-                    await self.refresh_ticket_panels(guild)
-                except Exception as error:
-                    log_exception(
-                        "AVAILABILITY",
-                        error,
-                        guild=guild,
-                        context="Startup ticket panel availability refresh failed",
-                    )
 
     def is_ticket_panel_message(self, message):
         for row in message.components:

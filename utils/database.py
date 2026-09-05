@@ -230,6 +230,9 @@ async def setup_database():
             "CREATE INDEX IF NOT EXISTS idx_tickets_guild_status ON tickets(guild_id, status)"
         )
         await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)"
+        )
+        await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_tickets_guild_user_status ON tickets(guild_id, user_id, status)"
         )
         await db.execute(
@@ -1439,21 +1442,25 @@ async def set_ticket_control_message(channel_id, message_id):
         await db.commit()
 
 
-async def get_ticket_controls():
+async def get_ticket_controls(after_id=0, limit=None):
     async with aiosqlite.connect(config.DATABASE) as db:
-        cursor = await db.execute(
-            "SELECT channel_id, guild_id, control_message_id, claimed_by, application, status, label FROM tickets WHERE status IN ('open', 'closed')"
-        )
+        parameters = [int(after_id)]
+        query = "SELECT id, channel_id, guild_id, control_message_id, claimed_by, application, status, label FROM tickets WHERE status IN ('open', 'closed') AND id>? ORDER BY id"
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters.append(max(1, int(limit)))
+        cursor = await db.execute(query, tuple(parameters))
         rows = await cursor.fetchall()
     return [
         {
-            "channel_id": row[0],
-            "guild_id": row[1],
-            "control_message_id": row[2],
-            "claimed_by": row[3],
-            "application": row[4],
-            "status": row[5],
-            "label": row[6],
+            "id": row[0],
+            "channel_id": row[1],
+            "guild_id": row[2],
+            "control_message_id": row[3],
+            "claimed_by": row[4],
+            "application": row[5],
+            "status": row[6],
+            "label": row[7],
         }
         for row in rows
     ]

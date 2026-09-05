@@ -1,5 +1,6 @@
 import asyncio
 import fcntl
+import logging
 import os
 import sys
 
@@ -11,7 +12,6 @@ from utils.database import setup_database
 from utils.embeds import error as error_embed
 from utils.logger import (
     emit,
-    log,
     log_exception,
     log_interaction,
     setup_logs,
@@ -28,7 +28,7 @@ intents.presences = True
 intents.auto_moderation_configuration = True
 intents.auto_moderation_execution = True
 
-bot = commands.Bot(
+bot = commands.AutoShardedBot(
     command_prefix="!",
     intents=intents,
     help_command=None,
@@ -196,17 +196,14 @@ async def setup_hook():
         )
 
     loop.set_exception_handler(handle_async_exception)
-    log("Bot Setup starting...")
+    emit("INFO", "STARTUP", "Initializing core services")
 
     await setup_database()
-    log("Database loaded")
-    log("Loading extensions...")
 
     failed_extensions = []
     for extension in extensions:
         try:
             await bot.load_extension(extension)
-            log(f"Loaded module: {extension}")
         except Exception as error:
             failed_extensions.append(extension)
             log_exception(
@@ -220,14 +217,28 @@ async def setup_hook():
             f"Required extensions failed to load: {', '.join(failed_extensions)}"
         )
 
+    emit(
+        "SUCCESS",
+        "STARTUP",
+        f"Required modules loaded | count={len(bot.extensions)}/{len(extensions)}",
+    )
+
     sync_error = None
     for attempt, delay in enumerate((0, 2, 5), 1):
         if delay:
             await asyncio.sleep(delay)
         try:
             global_synced = await bot.tree.sync()
-            log(
-                f"Synced {len(global_synced)} global slash command(s) for connected servers"
+            bot.synced_command_count = len(global_synced)
+            bot.slash_command_count = sum(
+                1
+                for command in bot.tree.walk_commands()
+                if not isinstance(command, discord.app_commands.Group)
+            )
+            emit(
+                "SUCCESS",
+                "STARTUP",
+                f"Application commands synchronized | commands={bot.slash_command_count} | groups={bot.synced_command_count}",
             )
             sync_error = None
             break
@@ -255,7 +266,6 @@ async def on_ready():
                 name="Ticket Operations | ! maja !",
             )
         )
-        log("Activity status set to: Ticket Operations | ! maja !")
     except Exception as error:
         log_exception("DISCORD", error, context="Failed to set bot activity status")
 
@@ -263,77 +273,28 @@ async def on_ready():
         return
     bot.operations_console_ready = True
 
-    for gid, gcfg in config.GUILDS.items():
-        current_guild = bot.get_guild(gid)
-
-        if current_guild:
-            log(
-                f"Connected to Server: {current_guild.id} - Name: {current_guild.name}",
-                guild=current_guild,
-            )
-
-            category = current_guild.get_channel(gcfg["TICKET_CATEGORY_ID"])
-            log(
-                f"Ticket category ({gcfg['TICKET_CATEGORY_ID']}): "
-                f"{'OK' if category else 'WARNING: Missing'}",
-                guild=current_guild,
-            )
-
-            archive_category = current_guild.get_channel(
-                gcfg["TICKET_ARCHIVE_CATEGORY_ID"]
-            )
-            log(
-                f"Archive category "
-                f"({gcfg['TICKET_ARCHIVE_CATEGORY_ID']}): "
-                f"{'OK' if archive_category else 'WARNING: Missing'}",
-                guild=current_guild,
-            )
-
-            panel = current_guild.get_channel(gcfg["TICKET_PANEL_CHANNEL_ID"])
-            log(
-                f"Panel channel ({gcfg['TICKET_PANEL_CHANNEL_ID']}): "
-                f"{'OK' if panel else 'WARNING: Missing'}",
-                guild=current_guild,
-            )
-
-            loaded = sum(
-                1 for rid in gcfg["OWNER_ROLES"] if current_guild.get_role(rid)
-            )
-            missing_owner_roles = [
-                rid
-                for rid in gcfg["OWNER_ROLES"]
-                if current_guild.get_role(rid) is None
-            ]
-            if missing_owner_roles:
-                emit(
-                    "WARNING",
-                    "CONFIGURATION",
-                    f"Resolved {loaded}/{len(gcfg['OWNER_ROLES'])} owner roles | stale IDs: {', '.join(str(rid) for rid in missing_owner_roles)}",
-                    guild=current_guild,
-                )
-            else:
-                emit(
-                    "SUCCESS",
-                    "CONFIGURATION",
-                    f"Resolved all {loaded} configured owner roles",
-                    guild=current_guild,
-                )
-        else:
-            log(
-                f"Server {gid} ({gcfg.get('NAME', 'Unknown')}) not found",
-                guild=gid,
-            )
-
     diagnostics = bot.get_cog("Diagnostics")
     workers = diagnostics.workers() if diagnostics else []
     running_workers = sum(1 for worker in workers if worker["status"] == "Running")
+    database = await diagnostics.database_health(deep=False) if diagnostics else None
     gateway_latency = round(bot.latency * 1000)
+    connected_shards = len(getattr(bot, "shards", {})) or 1
+    configured_servers = sum(
+        1 for settings in config.GUILDS.values() if settings.get("SETUP_COMPLETE")
+    )
+    database_ready = bool(database and database["ok"])
+    operational = (
+        database_ready
+        and running_workers == len(workers)
+        and len(bot.extensions) == len(extensions)
+        and getattr(bot, "slash_command_count", 0) > 0
+    )
 
-    console_width = 66
+    console_width = 72
 
     def console_row(label, value):
-        safe_value = str(value)[:40]
-        content = f"  {label:<22}{safe_value}"
+        safe_value = str(value)[:45]
+        content = f"  {label:<24}{safe_value}"
         return f"║{content:<{console_width}}║"
 
     title = f"{config.BOT_NAME}  OPERATIONS CONTROL CENTER"
@@ -341,20 +302,46 @@ async def on_ready():
     print(f"╔{'═' * console_width}╗")
     print(f"║{title:^{console_width}}║")
     print(f"╠{'═' * console_width}╣")
-    print(console_row("SYSTEM STATUS", "ONLINE / READY"))
-    print(console_row("ACTIVE SERVERS", str(len(bot.guilds))))
+    print(console_row("SYSTEM STATUS", "READY" if operational else "ATTENTION"))
+    print(console_row("CONNECTED SERVERS", f"{len(bot.guilds):,}"))
+    print(console_row("CONFIGURED SERVERS", f"{configured_servers:,}"))
+    print(console_row("CONNECTED SHARDS", f"{connected_shards:,}"))
+    print(
+        console_row(
+            "SLASH COMMANDS", f"{getattr(bot, 'slash_command_count', 0):,} synchronized"
+        )
+    )
     print(console_row("LOADED MODULES", f"{len(bot.extensions)}/{len(extensions)}"))
     print(
         console_row("BACKGROUND WORKERS", f"{running_workers}/{len(workers)} RUNNING")
     )
+    print(
+        console_row(
+            "DATABASE",
+            "HEALTHY" if database_ready else "ATTENTION REQUIRED",
+        )
+    )
+    print(
+        console_row(
+            "OPEN TICKETS",
+            f"{database['open_tickets']:,}" if database else "Unavailable",
+        )
+    )
+    print(
+        console_row(
+            "ERRORS / 24 HOURS",
+            f"{database['errors_24h']:,}" if database else "Unavailable",
+        )
+    )
     print(console_row("GATEWAY LATENCY", f"{gateway_latency} ms"))
-    print(f"╠{'─' * console_width}╣")
-    print(console_row("CORE SERVICES", "TICKETS | TRANSCRIPTS | MODERATION"))
-    print(console_row("OPERATIONS", "AVAILABILITY | ESCALATIONS | DIAGNOSTICS"))
     print(f"╚{'═' * console_width}╝")
     print()
 
-    log("Operations console ready")
+    emit(
+        "SUCCESS" if operational else "WARNING",
+        "HEALTH",
+        f"Startup verification complete | status={'ready' if operational else 'attention'} | servers={len(bot.guilds)} | shards={connected_shards} | commands={getattr(bot, 'slash_command_count', 0)} | workers={running_workers}/{len(workers)}",
+    )
 
 
 @bot.event
@@ -399,4 +386,4 @@ if __name__ == "__main__":
         exist_ok=True,
     )
 
-    bot.run(config.TOKEN)
+    bot.run(config.TOKEN, log_level=logging.WARNING)

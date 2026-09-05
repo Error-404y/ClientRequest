@@ -1,8 +1,9 @@
 import re
 import unittest
+from unittest.mock import patch
 
 from cogs.diagnostics import format_uptime
-from utils.logger import create_error_fingerprint, create_error_reference, redact
+from utils.logger import create_error_fingerprint, create_error_reference, log, redact
 
 
 def generated_failure():
@@ -46,6 +47,13 @@ class LoggingTests(unittest.TestCase):
             first = create_error_fingerprint("TEST", error, "same context", 1001)
             second = create_error_fingerprint("TEST", error, "same context", 1002)
         self.assertNotEqual(first, second)
+
+    def test_message_content_cannot_change_log_severity(self):
+        with patch("utils.logger.emit") as emitted:
+            log("Connected to Server von Error - 404")
+        emitted.assert_called_once_with(
+            "INFO", "SYSTEM", "Connected to Server von Error - 404", guild=None
+        )
 
 
 if __name__ == "__main__":

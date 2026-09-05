@@ -376,20 +376,12 @@ def format_channel(channel):
 
 def log(message, guild=None):
     text = str(message)
-    match = re.match(r"\[(?:DEBUG|INFO|WARNING|ERROR)/([^]]+)]\s*(.*)", text, re.DOTALL)
-    category, text = match.groups() if match else ("SYSTEM", text)
-    upper = text.upper()
-    if "FAILED" in upper or "ERROR" in upper:
-        level = "ERROR"
-    elif "WARNING" in upper or "MISSING" in upper:
-        level = "WARNING"
-    elif any(
-        value in upper
-        for value in ("SUCCESS", "LOADED", "ONLINE", "COMPLETED", "CONNECTED")
-    ):
-        level = "SUCCESS"
-    else:
-        level = "INFO"
+    match = re.match(
+        r"\[(DEBUG|INFO|SUCCESS|WARNING|ERROR|CRITICAL)/([^]]+)]\s*(.*)",
+        text,
+        re.DOTALL,
+    )
+    level, category, text = match.groups() if match else ("INFO", "SYSTEM", text)
     emit(level, category, text, guild=guild)
 
 
