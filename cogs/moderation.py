@@ -7,12 +7,12 @@ from discord.ext import commands
 import config
 from utils.database import add_infraction
 from utils.embeds import error as error_embed
-from utils.logger import log_dm, log_exception, log_interaction, log_mod
 from utils.governance import (
     appeal_view,
     approval_queued_embed,
     queue_moderation_approval,
 )
+from utils.logger import log_dm, log_exception, log_interaction, log_mod
 from utils.permissions import can_moderate_target, is_staff
 
 UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}

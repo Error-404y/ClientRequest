@@ -97,10 +97,7 @@ async def resolve_user(
         search_term = clean_input.lstrip("@").lower()
 
         for member in guild.members:
-            if (
-                member.name.lower() == search_term
-                or str(member).lower() == search_term
-            ):
+            if member.name.lower() == search_term or str(member).lower() == search_term:
                 return member, member.name, member.id
 
         display_matches = [
@@ -1174,7 +1171,6 @@ class BanCog(commands.Cog):
             )
             return
 
-
         try:
             approval = await queue_moderation_approval(
                 self.bot,
@@ -1312,7 +1308,6 @@ class BanCog(commands.Cog):
                 embed=error_embed(f"Could not find or resolve user: `{user_input}`")
             )
             return
-
 
         try:
             approval = await queue_moderation_approval(

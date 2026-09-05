@@ -1,8 +1,8 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 import config
 from cogs.onboarding import resource_report, setup_permission_report
@@ -11,8 +11,13 @@ from utils.database import (
     add_approval_details,
     add_infraction,
     cancel_pending_approval_requests,
+    claim_moderation_appeal,
+    complete_moderation_appeal,
     create_moderation_appeal,
     delete_ticket_form,
+    expire_approval_requests,
+    fail_stale_appeal_reviews,
+    fail_stale_approval_executions,
     get_approval_request,
     get_approval_requests,
     get_approval_rule,
@@ -25,7 +30,6 @@ from utils.database import (
     remove_infraction_by_uuid,
     set_approval_rule,
     set_ticket_form,
-    update_moderation_appeal,
     vote_approval_request,
 )
 from utils.embeds import error as error_embed
@@ -133,18 +137,39 @@ class Governance(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        self.maintain_workflows.start()
+
+    def cog_unload(self):
+        self.maintain_workflows.cancel()
+
+    @tasks.loop(minutes=5)
+    async def maintain_workflows(self):
+        now = datetime.now(timezone.utc)
+        await expire_approval_requests(now.isoformat())
+        await fail_stale_approval_executions(
+            (now - timedelta(minutes=15)).isoformat(), now.isoformat()
+        )
+        await fail_stale_appeal_reviews(
+            (now - timedelta(minutes=15)).isoformat(), now.isoformat()
+        )
+
+    @maintain_workflows.before_loop
+    async def before_maintain_workflows(self):
+        await self.bot.wait_until_ready()
+
+    @maintain_workflows.error
+    async def maintain_workflows_error(self, error):
+        log_exception(
+            "WORKER", error, context="Governance lifecycle maintenance stopped"
+        )
 
     def is_server_owner(self, interaction):
         return bool(
-            interaction.guild
-            and interaction.user.id == interaction.guild.owner_id
+            interaction.guild and interaction.user.id == interaction.guild.owner_id
         )
 
     async def owner_only(self, interaction):
-        if (
-            self.is_server_owner(interaction)
-            and interaction.guild.id in config.GUILDS
-        ):
+        if self.is_server_owner(interaction) and interaction.guild.id in config.GUILDS:
             return True
         if interaction.guild and interaction.guild.id not in config.GUILDS:
             await interaction.response.send_message(
@@ -199,7 +224,9 @@ class Governance(commands.Cog):
             return
         if senior_role and senior_role.is_default():
             await interaction.response.send_message(
-                embed=error_embed("The Everyone role cannot approve moderation actions."),
+                embed=error_embed(
+                    "The Everyone role cannot approve moderation actions."
+                ),
                 ephemeral=True,
             )
             return
@@ -230,13 +257,13 @@ class Governance(commands.Cog):
                 guild.id,
                 configured_action,
                 enabled,
-                senior_role.id if senior_role else (current or {}).get(
-                    "approver_role_id", 0
-                ),
+                senior_role.id
+                if senior_role
+                else (current or {}).get("approver_role_id", 0),
                 required_approvals,
-                review_channel.id if review_channel else (current or {}).get(
-                    "request_channel_id", 0
-                ),
+                review_channel.id
+                if review_channel
+                else (current or {}).get("request_channel_id", 0),
                 expiry_minutes,
                 senior_bypass,
                 interaction.user.id,
@@ -326,9 +353,7 @@ class Governance(commands.Cog):
         embed.set_footer(text=f"{config.BOT_NAME} | Moderation Governance")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @approvalz.command(
-        name="pending", description="List open senior approval requests"
-    )
+    @approvalz.command(name="pending", description="List open senior approval requests")
     async def approval_pending(self, interaction: discord.Interaction):
         if not interaction.guild or not is_staff(interaction.user):
             await interaction.response.send_message(
@@ -338,6 +363,9 @@ class Governance(commands.Cog):
                 ephemeral=True,
             )
             return
+        await expire_approval_requests(
+            datetime.now(timezone.utc).isoformat(), interaction.guild.id
+        )
         requests = await get_approval_requests(
             interaction.guild.id,
             {"PENDING", "NEEDS_DETAILS", "APPROVED", "EXECUTING"},
@@ -480,18 +508,51 @@ class Governance(commands.Cog):
             return
         if status in {"NOT_FOUND", "EXPIRED", "EXECUTED", "FAILED", "DENIED"}:
             if status != "DENIED" or decision != "DENY":
+                if status == "EXPIRED" and interaction.message:
+                    expired_embed = discord.Embed(
+                        title="Moderation Approval Expired",
+                        description="The review window ended before this request received a final decision.",
+                        color=discord.Color.dark_grey(),
+                        timestamp=discord.utils.utcnow(),
+                    )
+                    expired_embed.add_field(
+                        name="Request UUID", value=f"`{request_uuid}`", inline=False
+                    )
+                    expired_embed.add_field(name="Status", value="Expired")
+                    expired_embed.set_footer(
+                        text=f"{config.BOT_NAME} | Moderation Governance"
+                    )
+                    try:
+                        await interaction.message.edit(embed=expired_embed, view=None)
+                    except discord.HTTPException as error:
+                        log_exception(
+                            "VIEW",
+                            error,
+                            guild=interaction.guild,
+                            channel=interaction.channel,
+                            user=interaction.user,
+                            context=f"Expired approval message update failed for {request_uuid}",
+                        )
                 await interaction.followup.send(
                     embed=error_embed(f"This request is already {status.lower()}."),
                     ephemeral=True,
                 )
                 return
         requester = interaction.guild.get_member(request["requester_id"])
+        if requester is None:
+            try:
+                requester = await self.bot.fetch_user(request["requester_id"])
+            except discord.HTTPException as error:
+                log_exception(
+                    "DM",
+                    error,
+                    guild=interaction.guild,
+                    context=f"Approval requester lookup failed for {request_uuid}",
+                )
         if status == "APPROVED" and "approval_count" in result:
             from utils.database import claim_approval_execution
 
-            claimed = await claim_approval_execution(
-                request_uuid, interaction.guild.id
-            )
+            claimed = await claim_approval_execution(request_uuid, interaction.guild.id)
             if not claimed:
                 await interaction.followup.send(
                     embed=error_embed(
@@ -512,7 +573,9 @@ class Governance(commands.Cog):
             except Exception as error:
                 await self._mark_approval_failed(request, error, interaction)
                 status = "FAILED"
-                result_text = "The approved action failed safely. Inspect the error reference."
+                result_text = (
+                    "The approved action failed safely. Inspect the error reference."
+                )
         elif status == "PENDING":
             result_text = (
                 f"Approval recorded: {result['approval_count']}/"
@@ -757,10 +820,13 @@ class Governance(commands.Cog):
         embed.add_field(name="Member", value=f"{user.mention}\n`{user.id}`")
         embed.add_field(name="Weighted Score", value=str(risk["score"]))
         embed.add_field(name="Records Considered", value=str(len(records)))
-        breakdown = "\n".join(
-            f"{action.replace('_', ' ').title()}: {count}"
-            for action, count in sorted(risk["counts"].items())
-        ) or "No weighted moderation records."
+        breakdown = (
+            "\n".join(
+                f"{action.replace('_', ' ').title()}: {count}"
+                for action, count in sorted(risk["counts"].items())
+            )
+            or "No weighted moderation records."
+        )
         embed.add_field(name="Risk Factors", value=breakdown, inline=False)
         embed.add_field(
             name="Important",
@@ -802,9 +868,7 @@ class Governance(commands.Cog):
             member = interaction.guild.get_member(user_id)
             if member is None or member.bot:
                 continue
-            rankings.append(
-                (calculate_risk(user_records), member, len(user_records))
-            )
+            rankings.append((calculate_risk(user_records), member, len(user_records)))
         rankings.sort(
             key=lambda item: (-item[0]["level"], -item[0]["score"], item[1].id)
         )
@@ -841,9 +905,7 @@ class Governance(commands.Cog):
                 ephemeral=True,
             )
             return
-        infraction = await get_infraction_by_uuid(
-            infraction_uuid, interaction.guild.id
-        )
+        infraction = await get_infraction_by_uuid(infraction_uuid, interaction.guild.id)
         if not infraction or infraction["user_id"] != interaction.user.id:
             await interaction.response.send_message(
                 embed=error_embed(
@@ -1005,6 +1067,21 @@ class Governance(commands.Cog):
             )
             return
         await interaction.response.defer(ephemeral=True)
+        reviewed_at = datetime.now(timezone.utc).isoformat()
+        claimed = await claim_moderation_appeal(
+            appeal_uuid,
+            interaction.guild.id,
+            interaction.user.id,
+            reviewed_at,
+        )
+        if not claimed:
+            await interaction.followup.send(
+                embed=error_embed(
+                    "Another staff member already started or completed this appeal review."
+                ),
+                ephemeral=True,
+            )
+            return
         final_status = decision.value
         if decision.value == "ACCEPTED":
             try:
@@ -1020,7 +1097,7 @@ class Governance(commands.Cog):
                 )
                 final_status = "FAILED"
                 response = f"The reversal failed safely. Error reference: {reference}"
-        updated = await update_moderation_appeal(
+        updated = await complete_moderation_appeal(
             appeal_uuid,
             interaction.guild.id,
             final_status,
@@ -1034,9 +1111,7 @@ class Governance(commands.Cog):
                 ephemeral=True,
             )
             return
-        updated_appeal = await get_moderation_appeal(
-            appeal_uuid, interaction.guild.id
-        )
+        updated_appeal = await get_moderation_appeal(appeal_uuid, interaction.guild.id)
         embed = self.appeal_embed(updated_appeal)
         await interaction.followup.send(embed=embed, ephemeral=True)
         appellant = interaction.guild.get_member(appeal["appellant_id"])
@@ -1147,11 +1222,11 @@ class Governance(commands.Cog):
             timestamp=discord.utils.utcnow(),
         )
         embed.add_field(name="Appeal UUID", value=f"`{appeal['appeal_uuid']}`")
-        embed.add_field(
-            name="Infraction UUID", value=f"`{appeal['infraction_uuid']}`"
-        )
+        embed.add_field(name="Infraction UUID", value=f"`{appeal['infraction_uuid']}`")
         embed.add_field(name="Action", value=appeal["action_type"])
-        embed.add_field(name="Appeal Reason", value=appeal["reason"][:1024], inline=False)
+        embed.add_field(
+            name="Appeal Reason", value=appeal["reason"][:1024], inline=False
+        )
         if appeal["staff_response"]:
             embed.add_field(
                 name="Staff Response",
@@ -1175,7 +1250,9 @@ class Governance(commands.Cog):
     ):
         if not interaction.guild or not can_setup(interaction.user):
             await interaction.response.send_message(
-                embed=error_embed("You do not have permission to run Configuration Doctor."),
+                embed=error_embed(
+                    "You do not have permission to run Configuration Doctor."
+                ),
                 ephemeral=True,
             )
             return
@@ -1247,9 +1324,7 @@ class Governance(commands.Cog):
                     governance_issues.append(
                         f"Bot cannot publish {ACTION_LABELS[rule['action_type']]} approval requests"
                     )
-        valid_ticket_types = {
-            value.casefold() for value in settings["TICKET_OPTIONS"]
-        }
+        valid_ticket_types = {value.casefold() for value in settings["TICKET_OPTIONS"]}
         for form in await get_ticket_forms(interaction.guild.id):
             if form["ticket_type"].casefold() not in valid_ticket_types:
                 governance_warnings.append(
@@ -1267,9 +1342,7 @@ class Governance(commands.Cog):
                 issues + permissions + server_check["issues"] + governance_issues
             )
         )
-        warnings = list(
-            dict.fromkeys(server_check["warnings"] + governance_warnings)
-        )
+        warnings = list(dict.fromkeys(server_check["warnings"] + governance_warnings))
         healthy = not all_issues
         embed = discord.Embed(
             title="Configuration Doctor",
@@ -1283,9 +1356,13 @@ class Governance(commands.Cog):
         )
         embed.add_field(
             name="Operation",
-            value="Safe Repair and Verification" if action.value == "REPAIR" else "Read-Only Scan",
+            value="Safe Repair and Verification"
+            if action.value == "REPAIR"
+            else "Read-Only Scan",
         )
-        embed.add_field(name="Status", value="Ready" if healthy else "Attention Required")
+        embed.add_field(
+            name="Status", value="Ready" if healthy else "Attention Required"
+        )
         embed.add_field(name="Issues", value=str(len(all_issues)))
         embed.add_field(
             name="Action Required",

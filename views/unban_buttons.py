@@ -105,9 +105,7 @@ class UnbanConfirmView(ReliableView):
             elif hasattr(self.target_user, "id"):
                 unban_target = discord.Object(id=self.target_user.id)
             else:
-                await remove_infraction_by_uuid(
-                    infraction_uuid, interaction.guild.id
-                )
+                await remove_infraction_by_uuid(infraction_uuid, interaction.guild.id)
                 return
             try:
                 await interaction.guild.unban(
@@ -115,9 +113,7 @@ class UnbanConfirmView(ReliableView):
                 )
                 action_completed = True
             except Exception:
-                await remove_infraction_by_uuid(
-                    infraction_uuid, interaction.guild.id
-                )
+                await remove_infraction_by_uuid(infraction_uuid, interaction.guild.id)
                 raise
 
             log_mod(

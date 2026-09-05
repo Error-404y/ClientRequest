@@ -296,7 +296,9 @@ async def _resolve_request_members(bot, request):
         try:
             requester = await guild.fetch_member(int(request["requester_id"]))
         except discord.HTTPException as error:
-            raise RuntimeError("The requesting moderator is no longer available") from error
+            raise RuntimeError(
+                "The requesting moderator is no longer available"
+            ) from error
     target = guild.get_member(int(request["target_id"]))
     return guild, requester, target
 
@@ -385,7 +387,9 @@ async def execute_approved_action(bot, request):
             target_id, requester.id, "KICK", reason, guild.id
         )
         try:
-            await _send_action_dm(target, guild, "Kick Notification", reason, result_uuid)
+            await _send_action_dm(
+                target, guild, "Kick Notification", reason, result_uuid
+            )
             await target.kick(
                 reason=f"Approved request {request['request_uuid']} | {reason}"
             )

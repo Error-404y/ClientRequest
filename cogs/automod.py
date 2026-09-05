@@ -170,9 +170,7 @@ class AutoModeration(commands.Cog):
         }
         for attempt in range(2):
             all_rules = await guild.fetch_automod_rules()
-            managed = [
-                rule for rule in all_rules if rule.name.startswith(RULE_PREFIX)
-            ]
+            managed = [rule for rule in all_rules if rule.name.startswith(RULE_PREFIX)]
             matching_rules = [
                 rule for rule in all_rules if rule.trigger.type == trigger.type
             ]
@@ -204,11 +202,7 @@ class AutoModeration(commands.Cog):
             except discord.NotFound:
                 refreshed = await guild.fetch_automod_rules()
                 matching_rule = next(
-                    (
-                        rule
-                        for rule in refreshed
-                        if rule.trigger.type == trigger.type
-                    ),
+                    (rule for rule in refreshed if rule.trigger.type == trigger.type),
                     None,
                 )
                 if matching_rule is not None:
@@ -267,9 +261,8 @@ class AutoModeration(commands.Cog):
         activity_alert_error = None
         try:
             activity_alert_settings = {"raid_alerts_disabled": False}
-            if (
-                "COMMUNITY" in guild.features
-                and isinstance(selected_alert, discord.TextChannel)
+            if "COMMUNITY" in guild.features and isinstance(
+                selected_alert, discord.TextChannel
             ):
                 activity_alert_settings["safety_alerts_channel"] = selected_alert
                 activity_alert_channel = selected_alert

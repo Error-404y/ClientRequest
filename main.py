@@ -220,15 +220,28 @@ async def setup_hook():
             f"Required extensions failed to load: {', '.join(failed_extensions)}"
         )
 
-    try:
-        global_synced = await bot.tree.sync()
-        log(
-            f"Synced {len(global_synced)} global slash command(s) for connected servers"
-        )
-    except Exception as error:
-        log_exception(
-            "APPLICATION", error, context="Global slash command synchronization failed"
-        )
+    sync_error = None
+    for attempt, delay in enumerate((0, 2, 5), 1):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            global_synced = await bot.tree.sync()
+            log(
+                f"Synced {len(global_synced)} global slash command(s) for connected servers"
+            )
+            sync_error = None
+            break
+        except Exception as error:
+            sync_error = error
+            log_exception(
+                "APPLICATION",
+                error,
+                context=f"Global slash command synchronization attempt {attempt} failed",
+            )
+    if sync_error is not None:
+        raise RuntimeError(
+            "Global slash commands could not be synchronized after three attempts"
+        ) from sync_error
 
 
 @bot.event

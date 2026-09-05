@@ -126,9 +126,13 @@ class AFK(commands.Cog):
             if member.id != message.author.id and not member.bot
         }
         author_key = (message.guild.id, message.author.id)
-        if self.afk_cache_loaded and author_key not in self.afk_users and not any(
-            (message.guild.id, user_id) in self.afk_users
-            for user_id in mentioned_ids
+        if (
+            self.afk_cache_loaded
+            and author_key not in self.afk_users
+            and not any(
+                (message.guild.id, user_id) in self.afk_users
+                for user_id in mentioned_ids
+            )
         ):
             return
         removed, records = await process_afk_message(

@@ -11,11 +11,16 @@ from utils.database import (
     add_infraction,
     cancel_pending_approval_requests,
     claim_approval_execution,
+    claim_moderation_appeal,
     complete_approval_request,
+    complete_moderation_appeal,
     create_approval_request,
     create_moderation_appeal,
     create_ticket_record,
     delete_ticket_form,
+    expire_approval_requests,
+    fail_stale_appeal_reviews,
+    fail_stale_approval_executions,
     get_approval_request,
     get_approval_requests,
     get_approval_rule,
@@ -102,6 +107,21 @@ class GovernanceLogicTests(unittest.TestCase):
         )[0]
         self.assertLess(callback.index("get_ticket_form"), callback.index("defer"))
         self.assertIn("send_modal", callback)
+
+    def test_ticket_creation_locks_are_released_after_use(self):
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("views", "dropdown.py")
+            .read_text(encoding="utf-8")
+        )
+        lock_flow = source.split("async def create_with_lock", 1)[1].split(
+            "async def create_ticket", 1
+        )[0]
+        self.assertIn('entry["users"] += 1', lock_flow)
+        self.assertIn('entry["users"] -= 1', lock_flow)
+        self.assertIn("locks.pop(key, None)", lock_flow)
 
     def test_governance_module_is_loaded(self):
         source = (
@@ -336,6 +356,44 @@ class GovernanceDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored["status"], "PENDING")
         self.assertIn("Additional details", stored["reason"])
 
+    async def test_interrupted_approval_execution_is_failed_safely(self):
+        created_at = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        request = await create_approval_request(
+            self.guild_id,
+            "BAN",
+            100,
+            200,
+            "Target",
+            "Reason",
+            {},
+            1,
+            300,
+            60,
+            created_at,
+        )
+        approved = await vote_approval_request(
+            request["request_uuid"],
+            self.guild_id,
+            101,
+            "APPROVE",
+            "Approved",
+            (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat(),
+        )
+        self.assertEqual(approved["status"], "APPROVED")
+        self.assertTrue(
+            await claim_approval_execution(request["request_uuid"], self.guild_id)
+        )
+        now = datetime.now(timezone.utc)
+        self.assertEqual(
+            await fail_stale_approval_executions(
+                (now - timedelta(minutes=15)).isoformat(), now.isoformat()
+            ),
+            1,
+        )
+        stored = await get_approval_request(request["request_uuid"], self.guild_id)
+        self.assertEqual(stored["status"], "FAILED")
+        self.assertIn("interrupted", stored["result_message"].lower())
+
     async def test_open_approval_queue_is_server_scoped(self):
         now = datetime.now(timezone.utc).isoformat()
         first = await create_approval_request(
@@ -367,7 +425,54 @@ class GovernanceDatabaseTests(unittest.IsolatedAsyncioTestCase):
         requests = await get_approval_requests(
             self.guild_id, {"PENDING", "NEEDS_DETAILS"}
         )
-        self.assertEqual([item["request_uuid"] for item in requests], [first["request_uuid"]])
+        self.assertEqual(
+            [item["request_uuid"] for item in requests], [first["request_uuid"]]
+        )
+
+    async def test_expired_approval_cleanup_is_server_scoped(self):
+        created_at = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+        first = await create_approval_request(
+            self.guild_id,
+            "WARN",
+            100,
+            200,
+            "Target",
+            "Reason",
+            {},
+            1,
+            300,
+            5,
+            created_at,
+        )
+        second = await create_approval_request(
+            self.other_guild_id,
+            "WARN",
+            101,
+            201,
+            "Other Target",
+            "Reason",
+            {},
+            1,
+            301,
+            5,
+            created_at,
+        )
+        expired = await expire_approval_requests(
+            datetime.now(timezone.utc).isoformat(), self.guild_id
+        )
+        self.assertEqual(expired, 1)
+        self.assertEqual(
+            (await get_approval_request(first["request_uuid"], self.guild_id))[
+                "status"
+            ],
+            "EXPIRED",
+        )
+        self.assertEqual(
+            (await get_approval_request(second["request_uuid"], self.other_guild_id))[
+                "status"
+            ],
+            "PENDING",
+        )
 
     async def test_disabling_rule_cancels_open_requests(self):
         now = datetime.now(timezone.utc).isoformat()
@@ -419,9 +524,7 @@ class GovernanceDatabaseTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsNone(duplicate)
         self.assertIsNone(
-            await get_moderation_appeal(
-                appeal["appeal_uuid"], self.other_guild_id
-            )
+            await get_moderation_appeal(appeal["appeal_uuid"], self.other_guild_id)
         )
         self.assertTrue(
             await update_moderation_appeal(
@@ -451,11 +554,79 @@ class GovernanceDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 now,
             )
         )
-        stored = await get_moderation_appeal(
-            appeal["appeal_uuid"], self.guild_id
-        )
+        stored = await get_moderation_appeal(appeal["appeal_uuid"], self.guild_id)
         self.assertEqual(stored["status"], "PENDING")
         self.assertIn("Requested context", stored["reason"])
+
+    async def test_appeal_review_can_only_be_claimed_once(self):
+        infraction_uuid = await add_infraction(
+            200, 100, "WARN", "Concurrent review", self.guild_id
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        appeal = await create_moderation_appeal(
+            self.guild_id,
+            200,
+            infraction_uuid,
+            "WARN",
+            "This warning requires a concurrent review safety test.",
+            now,
+        )
+        claims = await asyncio.gather(
+            claim_moderation_appeal(appeal["appeal_uuid"], self.guild_id, 300, now),
+            claim_moderation_appeal(appeal["appeal_uuid"], self.guild_id, 301, now),
+        )
+        self.assertEqual(sum(claims), 1)
+        reviewer_id = 300 if claims[0] else 301
+        other_reviewer = 301 if reviewer_id == 300 else 300
+        self.assertFalse(
+            await complete_moderation_appeal(
+                appeal["appeal_uuid"],
+                self.guild_id,
+                "DENIED",
+                "Wrong reviewer",
+                other_reviewer,
+                now,
+            )
+        )
+        self.assertTrue(
+            await complete_moderation_appeal(
+                appeal["appeal_uuid"],
+                self.guild_id,
+                "DENIED",
+                "Reviewed safely",
+                reviewer_id,
+                now,
+            )
+        )
+
+    async def test_interrupted_appeal_review_is_failed_safely(self):
+        infraction_uuid = await add_infraction(
+            200, 100, "TIMEOUT", "Interrupted review", self.guild_id
+        )
+        started = datetime.now(timezone.utc) - timedelta(minutes=20)
+        appeal = await create_moderation_appeal(
+            self.guild_id,
+            200,
+            infraction_uuid,
+            "TIMEOUT",
+            "This timeout review should recover after interruption.",
+            started.isoformat(),
+        )
+        self.assertTrue(
+            await claim_moderation_appeal(
+                appeal["appeal_uuid"], self.guild_id, 300, started.isoformat()
+            )
+        )
+        now = datetime.now(timezone.utc)
+        self.assertEqual(
+            await fail_stale_appeal_reviews(
+                (now - timedelta(minutes=15)).isoformat(), now.isoformat()
+            ),
+            1,
+        )
+        stored = await get_moderation_appeal(appeal["appeal_uuid"], self.guild_id)
+        self.assertEqual(stored["status"], "FAILED")
+        self.assertIn("interrupted", stored["staff_response"].lower())
 
     async def test_accepted_appeals_are_excluded_from_risk(self):
         infraction_uuid = await add_infraction(

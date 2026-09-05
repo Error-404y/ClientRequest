@@ -6,6 +6,7 @@ import config
 from utils.database import (
     get_ticket_controls,
     get_ticket_record,
+    mark_ticket_deleted,
     set_ticket_control_message,
     set_ticket_label,
 )
@@ -23,6 +24,25 @@ class TicketControlRecovery(commands.Cog):
         self.bot = bot
         self.recovered = False
 
+    def control_view(self, record):
+        if record["status"] == "closed":
+            return ClosedTicketButtons()
+        view = TicketButtons(record["claimed_by"])
+        form = None
+        if record["application"] == "Moderator Application":
+            form = config.MODERATOR_FORM
+        elif record["application"] == "Uploader Application":
+            form = config.UPLOADER_FORM
+        if form:
+            view.add_item(
+                discord.ui.Button(
+                    label="Application Form",
+                    style=discord.ButtonStyle.link,
+                    url=form,
+                )
+            )
+        return view
+
     @commands.Cog.listener()
     async def on_ready(self):
         if self.recovered:
@@ -30,6 +50,14 @@ class TicketControlRecovery(commands.Cog):
         for record in await get_ticket_controls():
             channel = self.bot.get_channel(record["channel_id"])
             if not isinstance(channel, discord.TextChannel):
+                guild = self.bot.get_guild(record["guild_id"])
+                if guild is not None:
+                    await mark_ticket_deleted(record["channel_id"])
+                    log_ticket(
+                        "Missing Ticket Channel Reconciled",
+                        record["channel_id"],
+                        details=f"Guild ID: {record['guild_id']}",
+                    )
                 continue
             message = None
             message_id = record["control_message_id"]
@@ -66,6 +94,47 @@ class TicketControlRecovery(commands.Cog):
                         context="Ticket control recovery failed",
                     )
                     continue
+            if message is None:
+                try:
+                    recovered_embed = discord.Embed(
+                        title=(
+                            "Archived Ticket Controls Recovered"
+                            if record["status"] == "closed"
+                            else "Active Ticket Controls Recovered"
+                        ),
+                        description=(
+                            "The ticket controls were restored after an interrupted lifecycle operation. Authorized staff can continue managing this ticket."
+                        ),
+                        color=(
+                            discord.Color.orange()
+                            if record["status"] == "closed"
+                            else discord.Color.blurple()
+                        ),
+                        timestamp=discord.utils.utcnow(),
+                    )
+                    apply_ticket_label(recovered_embed, record["label"])
+                    recovered_embed.set_footer(
+                        text=f"{config.BOT_NAME} | Ticket Recovery"
+                    )
+                    message = await channel.send(
+                        embed=recovered_embed,
+                        view=self.control_view(record),
+                    )
+                    await set_ticket_control_message(channel.id, message.id)
+                    log_ticket(
+                        "Missing Ticket Controls Recreated",
+                        channel,
+                        details=f"Status: {record['status']}",
+                    )
+                except Exception as error:
+                    log_exception(
+                        "TICKET",
+                        error,
+                        guild=channel.guild,
+                        channel=channel,
+                        context="Missing ticket control recreation failed",
+                    )
+                    continue
             if message:
                 try:
                     if message.embeds:
@@ -73,24 +142,10 @@ class TicketControlRecovery(commands.Cog):
                         apply_ticket_label(embed, record["label"])
                     else:
                         embed = None
-                    if record["status"] == "closed":
-                        await message.edit(embed=embed, view=ClosedTicketButtons())
-                        continue
-                    view = TicketButtons(record["claimed_by"])
-                    form = None
-                    if record["application"] == "Moderator Application":
-                        form = config.MODERATOR_FORM
-                    elif record["application"] == "Uploader Application":
-                        form = config.UPLOADER_FORM
-                    if form:
-                        view.add_item(
-                            discord.ui.Button(
-                                label="Application Form",
-                                style=discord.ButtonStyle.link,
-                                url=form,
-                            )
-                        )
-                    await message.edit(embed=embed, view=view)
+                    await message.edit(
+                        embed=embed,
+                        view=self.control_view(record),
+                    )
                 except discord.HTTPException as error:
                     log_exception(
                         "TICKET",
@@ -124,9 +179,7 @@ class TicketControlRecovery(commands.Cog):
     ):
         if not is_staff(interaction.user):
             await interaction.response.send_message(
-                embed=error_embed(
-                    "Only authorized staff can change ticket labels."
-                ),
+                embed=error_embed("Only authorized staff can change ticket labels."),
                 ephemeral=True,
             )
             return
@@ -233,12 +286,8 @@ class TicketControlRecovery(commands.Cog):
             value=selected_label or "Not assigned",
             inline=True,
         )
-        result.add_field(
-            name="Updated By", value=interaction.user.mention, inline=True
-        )
-        result.add_field(
-            name="Ticket UUID", value=f"`{ticket['uuid']}`", inline=False
-        )
+        result.add_field(name="Updated By", value=interaction.user.mention, inline=True)
+        result.add_field(name="Ticket UUID", value=f"`{ticket['uuid']}`", inline=False)
         result.set_footer(text=f"{config.BOT_NAME} | Ticket Classification")
         await interaction.followup.send(embed=result)
 

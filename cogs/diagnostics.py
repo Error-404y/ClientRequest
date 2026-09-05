@@ -195,6 +195,7 @@ class Diagnostics(commands.Cog):
         definitions = (
             ("Ticket inactivity audit", "Inactivity", "check_inactivity"),
             ("Ticket escalation audit", "Escalations", "audit_escalations"),
+            ("Governance lifecycle maintenance", "Governance", "maintain_workflows"),
             ("Diagnostic watchdog", "Diagnostics", "watch_workers"),
         )
         results = []

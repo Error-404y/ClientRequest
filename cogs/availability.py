@@ -65,9 +65,7 @@ class Availability(commands.Cog):
             return
         records = await get_staff_availability(after.guild.id)
         available_ids = {
-            record["user_id"]
-            for record in records
-            if record["status"] == "Available"
+            record["user_id"] for record in records if record["status"] == "Available"
         }
         if after.id not in available_ids or not is_staff(after):
             return
@@ -136,8 +134,7 @@ class Availability(commands.Cog):
             if record["status"] == "Available"
             and (member := guild.get_member(record["user_id"])) is not None
             and is_staff(member)
-            and member.status
-            not in {discord.Status.offline, discord.Status.invisible}
+            and member.status not in {discord.Status.offline, discord.Status.invisible}
         )
         response_time = estimate_response_time(available_staff)
         panels = await get_ticket_panels(guild.id)
@@ -281,11 +278,9 @@ class Availability(commands.Cog):
             1
             for record in records
             if record["status"] == "Available"
-            and (member := interaction.guild.get_member(record["user_id"]))
-            is not None
+            and (member := interaction.guild.get_member(record["user_id"])) is not None
             and is_staff(member)
-            and member.status
-            not in {discord.Status.offline, discord.Status.invisible}
+            and member.status not in {discord.Status.offline, discord.Status.invisible}
         )
         embed = discord.Embed(
             title=f"{config.BOT_NAME} Staff Availability",

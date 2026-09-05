@@ -87,7 +87,7 @@ class Inactivity(commands.Cog):
 
             last_activity = None
             try:
-                async for message in channel.history(limit=None):
+                async for message in channel.history(limit=250):
                     if not message.author.bot:
                         last_activity = message.created_at.astimezone(timezone)
                         break

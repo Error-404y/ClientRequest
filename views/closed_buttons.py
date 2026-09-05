@@ -5,6 +5,7 @@ import discord
 import config
 from cogs.transcript import create_transcript
 from utils.database import (
+    close_ticket,
     get_ticket_owner,
     get_ticket_record,
     mark_ticket_deleted,
@@ -75,46 +76,29 @@ class ClosedTicketButtons(ReliableView):
             )
 
         channel = interaction.channel
-
-        user_id = None
+        ticket_record = await get_ticket_record(channel.id)
+        reopened = await reopen_ticket(channel.id)
+        if not reopened:
+            await self.restore_controls(interaction)
+            await interaction.followup.send(
+                embed=error_embed(
+                    "This ticket is already open or is no longer available."
+                ),
+                ephemeral=True,
+            )
+            return
+        user_id = ticket_record["user_id"] if ticket_record else None
         member = None
-        if channel.topic and "ticket_owner:" in channel.topic:
-            try:
-                topic_part = channel.topic.split("|")[0].strip()
-                user_id = int(topic_part.replace("ticket_owner:", "").strip())
-            except ValueError:
-                user_id = None
-
-        if user_id is None:
-            try:
-                user_id = await get_ticket_owner(channel.id)
-            except Exception as error:
-                log_exception(
-                    "DATABASE",
-                    error,
-                    guild=interaction.guild,
-                    channel=channel,
-                    user=interaction.user,
-                    context="Failed to resolve ticket owner during reopen",
-                )
-
-        if user_id:
-            member = interaction.guild.get_member(user_id)
-            if member is None:
-                try:
-                    member = await interaction.guild.fetch_member(user_id)
-                except discord.HTTPException as error:
-                    log_exception(
-                        "DISCORD",
-                        error,
-                        guild=interaction.guild,
-                        channel=channel,
-                        user=user_id,
-                        context="Failed to fetch ticket owner during reopen",
-                    )
-
-            if member:
-                try:
+        control_message = None
+        try:
+            if user_id:
+                member = interaction.guild.get_member(user_id)
+                if member is None:
+                    try:
+                        member = await interaction.guild.fetch_member(user_id)
+                    except discord.NotFound:
+                        member = None
+                if member:
                     await channel.set_permissions(
                         member,
                         view_channel=True,
@@ -126,52 +110,116 @@ class ClosedTicketButtons(ReliableView):
                         member,
                         "Restored view_channel=True, send_messages=True, read_message_history=True",
                     )
-                except discord.HTTPException as error:
-                    log_exception(
-                        "PERMISSION",
-                        error,
-                        guild=interaction.guild,
-                        channel=channel,
-                        user=member,
-                        context="Failed to restore ticket owner permissions",
-                    )
-                    raise
 
-        async def perform_background_reopen():
-            edit_kwargs = {}
             category = interaction.guild.get_channel(
                 config.get_ticket_category_id(interaction.guild.id)
             )
             if category:
-                edit_kwargs["category"] = category
+                await channel.edit(category=category)
+                log_ticket(
+                    "Restored Channel Properties",
+                    channel,
+                    interaction.user,
+                    details=f"Moved to category {category.name}",
+                )
 
-            if edit_kwargs:
-                try:
-                    await channel.edit(**edit_kwargs)
-                    log_ticket(
-                        "Restored Channel Properties",
-                        channel,
-                        interaction.user,
-                        details=f"Moved to category {category.name if category else 'Default'}",
+            from views.ticket_buttons import TicketButtons
+
+            current_record = await get_ticket_record(channel.id)
+            claimed_by = current_record.get("claimed_by") if current_record else None
+            view = TicketButtons(claimed_by=claimed_by)
+            application = current_record.get("application") if current_record else None
+            form_url = None
+            if application == "Moderator Application":
+                form_url = config.MODERATOR_FORM
+            elif application == "Uploader Application":
+                form_url = config.UPLOADER_FORM
+            if form_url:
+                view.add_item(
+                    discord.ui.Button(
+                        label="Application Form",
+                        style=discord.ButtonStyle.link,
+                        url=form_url,
                     )
-                except discord.HTTPException as error:
+                )
+
+            controls_embed = discord.Embed(
+                title="Ticket Controls Restored",
+                description="This ticket is active again. Authorized staff can manage its assignment, priority, and lifecycle using the controls below.",
+                color=discord.Color.green(),
+                timestamp=discord.utils.utcnow(),
+            )
+            controls_embed.set_footer(
+                text=f"{config.BOT_NAME} | Active Ticket Controls"
+            )
+            control_message = await channel.send(embed=controls_embed, view=view)
+            await set_ticket_control_message(channel.id, control_message.id)
+        except Exception as error:
+            if control_message:
+                try:
+                    await control_message.delete()
+                except discord.HTTPException as cleanup_error:
                     log_exception(
                         "TICKET",
-                        error,
+                        cleanup_error,
                         guild=interaction.guild,
                         channel=channel,
                         user=interaction.user,
-                        context="Failed to restore reopened ticket channel properties",
+                        context="Failed to remove incomplete reopened ticket controls",
                     )
-                    raise
-
-        await perform_background_reopen()
-        reopened = await reopen_ticket(channel.id)
-        if not reopened:
+            await close_ticket(
+                channel.id,
+                ticket_record.get("closed_at")
+                if ticket_record
+                else discord.utils.utcnow().isoformat(),
+                ticket_record.get("closed_by") if ticket_record else None,
+                ticket_record.get("close_reason")
+                if ticket_record
+                else "Reopen recovery",
+            )
+            if member:
+                try:
+                    await channel.set_permissions(
+                        member,
+                        view_channel=False,
+                        send_messages=False,
+                    )
+                except discord.HTTPException as cleanup_error:
+                    log_exception(
+                        "PERMISSION",
+                        cleanup_error,
+                        guild=interaction.guild,
+                        channel=channel,
+                        user=member,
+                        context="Failed to restore closed ticket permissions after reopen rollback",
+                    )
+            archive = interaction.guild.get_channel(
+                config.get_archive_category_id(interaction.guild.id)
+            )
+            if archive:
+                try:
+                    await channel.edit(category=archive)
+                except discord.HTTPException as cleanup_error:
+                    log_exception(
+                        "TICKET",
+                        cleanup_error,
+                        guild=interaction.guild,
+                        channel=channel,
+                        user=interaction.user,
+                        context="Failed to restore archive category after reopen rollback",
+                    )
             await self.restore_controls(interaction)
+            reference = log_exception(
+                "TICKET",
+                error,
+                guild=interaction.guild,
+                channel=channel,
+                user=interaction.user,
+                context="Ticket reopen rolled back",
+            )
             await interaction.followup.send(
                 embed=error_embed(
-                    "This ticket is already open or is no longer available."
+                    f"The ticket could not be reopened and was safely restored to its closed state. Error reference: `{reference}`"
                 ),
                 ephemeral=True,
             )
@@ -182,37 +230,6 @@ class ClosedTicketButtons(ReliableView):
         from utils.logger import ticket_reopen_report
 
         ticket_reopen_report(channel, interaction.user, user_id, interaction.client)
-
-        ticket_record = await get_ticket_record(channel.id)
-        from views.ticket_buttons import TicketButtons
-
-        claimed_by = ticket_record.get("claimed_by") if ticket_record else None
-        view = TicketButtons(claimed_by=claimed_by)
-
-        if ticket_record:
-            application = ticket_record.get("application")
-            form_url = None
-            if application == "Moderator Application":
-                form_url = config.MODERATOR_FORM
-            elif application == "Uploader Application":
-                form_url = config.UPLOADER_FORM
-            if form_url:
-                form_button = discord.ui.Button(
-                    label="Application Form",
-                    style=discord.ButtonStyle.link,
-                    url=form_url,
-                )
-                view.add_item(form_button)
-
-        controls_embed = discord.Embed(
-            title="Ticket Controls Restored",
-            description="This ticket is active again. Authorized staff can manage its assignment, priority, and lifecycle using the controls below.",
-            color=discord.Color.green(),
-            timestamp=discord.utils.utcnow(),
-        )
-        controls_embed.set_footer(text=f"{config.BOT_NAME} | Active Ticket Controls")
-        control_message = await channel.send(embed=controls_embed, view=view)
-        await set_ticket_control_message(channel.id, control_message.id)
 
         try:
             await interaction.message.delete()

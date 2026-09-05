@@ -67,9 +67,7 @@ async def setup_database():
             """)
 
         if "label" not in columns:
-            await db.execute(
-                "ALTER TABLE tickets ADD COLUMN label TEXT DEFAULT NULL"
-            )
+            await db.execute("ALTER TABLE tickets ADD COLUMN label TEXT DEFAULT NULL")
 
         if "closed_by" not in columns:
             await db.execute("""
@@ -428,7 +426,9 @@ async def reset_guild_settings(guild_id):
             "DELETE FROM escalation_events WHERE guild_id=?", (int(guild_id),)
         )
         await db.execute("DELETE FROM ticket_forms WHERE guild_id=?", (int(guild_id),))
-        await db.execute("DELETE FROM approval_rules WHERE guild_id=?", (int(guild_id),))
+        await db.execute(
+            "DELETE FROM approval_rules WHERE guild_id=?", (int(guild_id),)
+        )
         await db.execute(
             "UPDATE approval_requests SET status='FAILED', result_message='Server configuration was reset' WHERE guild_id=? AND status IN ('PENDING', 'NEEDS_DETAILS', 'APPROVED', 'EXECUTING')",
             (int(guild_id),),
@@ -869,11 +869,7 @@ async def remove_user_warning(user_id: int, guild_id: int, warn_id=None):
 
             rows = await cursor.fetchall()
             row = next(
-                (
-                    item
-                    for item in rows
-                    if item[3] == warn_str or item[0] == numeric_id
-                ),
+                (item for item in rows if item[3] == warn_str or item[0] == numeric_id),
                 None,
             )
             if row is None and len(rows) == 1:
@@ -903,6 +899,8 @@ async def remove_user_warning(user_id: int, guild_id: int, warn_id=None):
                     f"for User ID {row[4]}"
                 ),
             )
+
+            await remove_infraction_mirrors([row[3]])
 
             return 1, [
                 {
@@ -948,6 +946,8 @@ async def remove_user_warning(user_id: int, guild_id: int, warn_id=None):
             "infractions",
             (f"Cleared {len(rows)} warnings for User ID {user_id}"),
         )
+
+        await remove_infraction_mirrors([row[3] for row in rows])
 
         return len(rows), [
             {
@@ -1027,6 +1027,8 @@ async def remove_infraction_by_uuid(
         (f"Removed infraction UUID: {row[5]} ({row[2]}) for User ID {row[1]}"),
     )
 
+    await remove_infraction_mirrors([row[5]])
+
     return {
         "id": row[0],
         "user_id": row[1],
@@ -1035,6 +1037,24 @@ async def remove_infraction_by_uuid(
         "timestamp": row[4],
         "uuid": row[5],
     }
+
+
+async def remove_infraction_mirrors(infraction_uuids):
+    monitor_directory = os.path.join(config.BASE_DIR, "MonitorUUID")
+    for infraction_uuid in infraction_uuids:
+        if not infraction_uuid:
+            continue
+        record_path = os.path.join(monitor_directory, f"{infraction_uuid}.txt")
+        if not os.path.isfile(record_path):
+            continue
+        try:
+            await asyncio.to_thread(os.remove, record_path)
+        except OSError as error:
+            log_exception(
+                "DATABASE",
+                error,
+                context=f"Infraction mirror could not be removed for {infraction_uuid}",
+            )
 
 
 async def increment_user_activity(
@@ -1288,7 +1308,7 @@ async def get_ticket_owner(channel_id):
             """
             SELECT user_id
             FROM tickets
-            WHERE channel_id=? AND status='open'
+            WHERE channel_id=?
         """,
             (channel_id,),
         )
@@ -1422,17 +1442,18 @@ async def set_ticket_control_message(channel_id, message_id):
 async def get_ticket_controls():
     async with aiosqlite.connect(config.DATABASE) as db:
         cursor = await db.execute(
-            "SELECT channel_id, control_message_id, claimed_by, application, status, label FROM tickets WHERE status IN ('open', 'closed')"
+            "SELECT channel_id, guild_id, control_message_id, claimed_by, application, status, label FROM tickets WHERE status IN ('open', 'closed')"
         )
         rows = await cursor.fetchall()
     return [
         {
             "channel_id": row[0],
-            "control_message_id": row[1],
-            "claimed_by": row[2],
-            "application": row[3],
-            "status": row[4],
-            "label": row[5],
+            "guild_id": row[1],
+            "control_message_id": row[2],
+            "claimed_by": row[3],
+            "application": row[4],
+            "status": row[5],
+            "label": row[6],
         }
         for row in rows
     ]
@@ -1986,6 +2007,21 @@ async def get_approval_requests(guild_id, statuses=None, limit=20):
     ]
 
 
+async def expire_approval_requests(expired_at, guild_id=None):
+    parameters = [expired_at, expired_at]
+    condition = "status IN ('PENDING', 'NEEDS_DETAILS') AND expires_at<=?"
+    if guild_id is not None:
+        condition += " AND guild_id=?"
+        parameters.append(int(guild_id))
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            f"UPDATE approval_requests SET status='EXPIRED', decided_at=? WHERE {condition}",
+            tuple(parameters),
+        )
+        await db.commit()
+    return cursor.rowcount
+
+
 async def vote_approval_request(
     request_uuid,
     guild_id,
@@ -2098,6 +2134,20 @@ async def claim_approval_execution(request_uuid, guild_id):
         )
         await db.commit()
     return cursor.rowcount == 1
+
+
+async def fail_stale_approval_executions(cutoff, updated_at):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "UPDATE approval_requests SET status='FAILED', result_message=?, decided_at=? WHERE status IN ('APPROVED', 'EXECUTING') AND decided_at IS NOT NULL AND decided_at<=?",
+            (
+                "The approved action was interrupted before completion. Staff must verify the moderation state before submitting a replacement request.",
+                updated_at,
+                cutoff,
+            ),
+        )
+        await db.commit()
+    return cursor.rowcount
 
 
 async def fail_pending_approval_request(request_uuid, guild_id, message):
@@ -2241,6 +2291,58 @@ async def update_moderation_appeal(
         )
         await db.commit()
     return cursor.rowcount == 1
+
+
+async def claim_moderation_appeal(appeal_uuid, guild_id, reviewer_id, updated_at):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "UPDATE moderation_appeals SET status='REVIEWING', reviewer_id=?, updated_at=? WHERE appeal_uuid=? AND guild_id=? AND status IN ('PENDING', 'NEEDS_DETAILS')",
+            (
+                int(reviewer_id),
+                updated_at,
+                str(appeal_uuid).strip(),
+                int(guild_id),
+            ),
+        )
+        await db.commit()
+    return cursor.rowcount == 1
+
+
+async def complete_moderation_appeal(
+    appeal_uuid, guild_id, status, staff_response, reviewer_id, updated_at
+):
+    normalized_status = str(status).strip().upper()
+    if normalized_status not in {"NEEDS_DETAILS", "ACCEPTED", "DENIED", "FAILED"}:
+        raise ValueError("Invalid appeal completion status")
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "UPDATE moderation_appeals SET status=?, staff_response=?, reviewer_id=?, updated_at=? WHERE appeal_uuid=? AND guild_id=? AND status='REVIEWING' AND reviewer_id=?",
+            (
+                normalized_status,
+                str(staff_response or "")[:1000],
+                int(reviewer_id),
+                updated_at,
+                str(appeal_uuid).strip(),
+                int(guild_id),
+                int(reviewer_id),
+            ),
+        )
+        await db.commit()
+    return cursor.rowcount == 1
+
+
+async def fail_stale_appeal_reviews(cutoff, updated_at):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "UPDATE moderation_appeals SET status='FAILED', staff_response=?, updated_at=? WHERE status='REVIEWING' AND updated_at<=?",
+            (
+                "The review was interrupted before completion. Staff must verify the moderation state before a new appeal is created.",
+                updated_at,
+                cutoff,
+            ),
+        )
+        await db.commit()
+    return cursor.rowcount
 
 
 async def add_appeal_details(appeal_uuid, guild_id, appellant_id, details, updated_at):

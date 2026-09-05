@@ -26,7 +26,9 @@ from cogs.onboarding import (
     setup_permission_report,
     welcome_embed,
 )
+from cogs.stats import average_interval, staff_metrics
 from utils.database import (
+    add_infraction,
     add_setup_admin,
     auto_assign_ticket,
     claim_ticket,
@@ -42,6 +44,8 @@ from utils.database import (
     get_open_ticket_for_user,
     get_staff_availability,
     get_ticket_by_uuid,
+    get_ticket_controls,
+    get_ticket_owner,
     get_ticket_panels,
     process_afk_message,
     register_escalation_event,
@@ -139,6 +143,13 @@ class ConfigurationTests(unittest.TestCase):
     def test_ticket_coverage_timing(self):
         self.assertEqual(config.TICKET_REVIEW_ESCALATION_HOURS, 6)
         self.assertEqual(config.NO_RESPONSE_ESCALATION_HOURS, 24)
+
+    def test_background_ticket_audits_use_bounded_history(self):
+        root = Path(__file__).resolve().parents[1]
+        for filename in ("inactivity.py", "escalations.py"):
+            source = root.joinpath("cogs", filename).read_text(encoding="utf-8")
+            self.assertNotIn("channel.history(limit=None)", source)
+            self.assertIn("channel.history(limit=250)", source)
         source = (
             Path(__file__)
             .resolve()
@@ -334,6 +345,28 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(help_category_for("warnz"), "moderation")
         self.assertEqual(help_category_for("approvalz pending"), "governance")
         self.assertEqual(help_category_for("automodz setup"), "automod")
+        self.assertEqual(help_category_for("stats"), "tickets")
+        self.assertEqual(help_category_for("leaderboard"), "tickets")
+
+    def test_staff_duration_metrics_ignore_invalid_intervals(self):
+        rows = [
+            ("2026-09-05T10:00:00+00:00", "2026-09-05T10:05:30+00:00"),
+            ("invalid", "2026-09-05T10:10:00+00:00"),
+            ("2026-09-05T11:00:00+00:00", "2026-09-05T10:00:00+00:00"),
+        ]
+        self.assertEqual(average_interval(rows), "5m 30s")
+
+    def test_staff_statistics_are_registered_as_slash_commands(self):
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("cogs", "stats.py")
+            .read_text(encoding="utf-8")
+        )
+        self.assertIn('@app_commands.command(\n        name="stats"', source)
+        self.assertIn('name="leaderboard"', source)
+        self.assertNotIn("@commands.group", source)
         self.assertEqual(help_category_for("doctorz"), "setup")
 
     def test_help_command_sections_respect_discord_field_limits(self):
@@ -344,9 +377,7 @@ class ConfigurationTests(unittest.TestCase):
             )
             for index in range(40)
         ]
-        bot = SimpleNamespace(
-            tree=SimpleNamespace(walk_commands=lambda: commands)
-        )
+        bot = SimpleNamespace(tree=SimpleNamespace(walk_commands=lambda: commands))
         sections = help_command_sections(bot, "automod")
         self.assertGreater(len(sections), 1)
         self.assertTrue(all(len(section) <= 950 for section in sections))
@@ -358,9 +389,7 @@ class ConfigurationTests(unittest.TestCase):
                 description="Warn a member with a tracked infraction",
             )
         ]
-        bot = SimpleNamespace(
-            tree=SimpleNamespace(walk_commands=lambda: commands)
-        )
+        bot = SimpleNamespace(tree=SimpleNamespace(walk_commands=lambda: commands))
         overview = str(help_center_embed(bot, "overview").to_dict())
         moderation = str(help_center_embed(bot, "moderation").to_dict())
         self.assertIn("Send a Support Request", overview)
@@ -548,6 +577,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertNotIn("copy_global_to", source)
         self.assertNotIn("clear_commands", source)
         self.assertIn("global_synced = await bot.tree.sync()", source)
+        self.assertIn("after three attempts", source)
 
     def test_ticket_workflows_avoid_channel_name_and_topic_rate_limits(self):
         source = (
@@ -577,6 +607,36 @@ class ConfigurationTests(unittest.TestCase):
                 if keyword_names.intersection({"name", "topic"}):
                     invalid.append(f"{node.name}:{call.lineno}")
         self.assertEqual(invalid, [])
+
+    def test_ticket_close_notifies_user_only_after_critical_commit(self):
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("utils", "ticket_actions.py")
+            .read_text(encoding="utf-8")
+        )
+        workflow = source.split("async def close_ticket_channel", 1)[1]
+        self.assertLess(
+            workflow.index("await set_ticket_control_message"),
+            workflow.index("await member.send"),
+        )
+        self.assertIn("created_messages", workflow)
+        self.assertIn("await rollback_close()", workflow)
+
+    def test_startup_recreates_missing_ticket_controls(self):
+        source = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("cogs", "tickets.py")
+            .read_text(encoding="utf-8")
+        )
+        self.assertIn("Missing Ticket Controls Recreated", source)
+        self.assertIn("view=self.control_view(record)", source)
+        self.assertIn(
+            "await set_ticket_control_message(channel.id, message.id)", source
+        )
 
     def test_component_interactions_are_not_logged_twice(self):
         source = (
@@ -801,9 +861,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         await set_afk_status(self.guild_id, 210, "Away", set_at)
         await set_afk_status(self.guild_id, 211, "Working", set_at)
         removed, records = await process_afk_message(self.guild_id, 210, [211])
-        self.assertEqual(
-            removed, {"user_id": 210, "reason": "Away", "set_at": set_at}
-        )
+        self.assertEqual(removed, {"user_id": 210, "reason": "Away", "set_at": set_at})
         self.assertEqual(records[0]["user_id"], 211)
         self.assertEqual(await get_afk_statuses(self.guild_id, [210]), [])
 
@@ -906,6 +964,30 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(record["closed_at"])
         self.assertIsNone(record["closed_by"])
         self.assertIsNone(record["close_reason"])
+
+    async def test_closed_ticket_keeps_owner_and_recovery_scope(self):
+        await create_ticket_record(
+            110, self.guild_id, 210, "Support", datetime.now().isoformat()
+        )
+        self.assertTrue(
+            await close_ticket(110, datetime.now().isoformat(), 310, "Resolved")
+        )
+        self.assertEqual(await get_ticket_owner(110), 210)
+        controls = await get_ticket_controls()
+        record = next(item for item in controls if item["channel_id"] == 110)
+        self.assertEqual(record["guild_id"], self.guild_id)
+        self.assertEqual(record["status"], "closed")
+
+    async def test_staff_metrics_never_cross_servers(self):
+        now = datetime.now().isoformat()
+        await create_ticket_record(111, self.guild_id, 211, "Support", now)
+        await create_ticket_record(112, self.guild_id + 1, 212, "Support", now)
+        self.assertTrue(await claim_ticket(111, 311, now))
+        self.assertTrue(await claim_ticket(112, 311, now))
+        self.assertTrue(await close_ticket(111, now, 311, "Resolved"))
+        metrics = await staff_metrics(self.guild_id, 311)
+        self.assertEqual(metrics["assigned"], 1)
+        self.assertEqual(metrics["closed"], 1)
 
     async def test_warning_timestamp_column_exists(self):
         async with aiosqlite.connect(config.DATABASE) as database:
@@ -1115,6 +1197,17 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual((count, records), (0, []))
         self.assertIsNotNone(await get_infraction_by_uuid("G2002-warning", 2002))
+
+    async def test_infraction_removal_deletes_local_mirror(self):
+        infraction_uuid = await add_infraction(
+            501, 601, "WARN", "Mirror cleanup", self.guild_id
+        )
+        mirror = Path(config.BASE_DIR, "MonitorUUID", f"{infraction_uuid}.txt")
+        self.assertTrue(mirror.exists())
+        self.assertIsNotNone(
+            await remove_infraction_by_uuid(infraction_uuid, self.guild_id)
+        )
+        self.assertFalse(mirror.exists())
 
     async def test_repeated_errors_share_reference(self):
         references = []

@@ -59,9 +59,7 @@ class CustomTicketModal(ReliableModal):
             }
             for item in self.inputs
         ]
-        await self.dropdown.create_with_lock(
-            interaction, self.application, responses
-        )
+        await self.dropdown.create_with_lock(interaction, self.application, responses)
 
 
 class ApplicationDropdown(Select):
@@ -108,9 +106,19 @@ class ApplicationDropdown(Select):
         if locks is None:
             locks = {}
             interaction.client.ticket_creation_locks = locks
-        lock = locks.setdefault((guild.id, interaction.user.id), asyncio.Lock())
-        async with lock:
-            await self.create_ticket(interaction, application, form_response)
+        key = (guild.id, interaction.user.id)
+        entry = locks.get(key)
+        if entry is None:
+            entry = {"lock": asyncio.Lock(), "users": 0}
+            locks[key] = entry
+        entry["users"] += 1
+        try:
+            async with entry["lock"]:
+                await self.create_ticket(interaction, application, form_response)
+        finally:
+            entry["users"] -= 1
+            if entry["users"] == 0 and locks.get(key) is entry:
+                locks.pop(key, None)
 
     async def create_ticket(self, interaction, application, form_response=None):
         user = interaction.user

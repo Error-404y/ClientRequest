@@ -27,6 +27,8 @@ The setup command creates a public `ticket-system` category containing the `tick
 - `/invite` creates the official installation link without requesting Administrator.
 - `/mutez` applies a tracked Discord timeout with an infraction UUID.
 - `/setafkz` activates a persistent AFK status until the member sends a message.
+- `/stats` displays server-scoped ticket performance for one staff member.
+- `/leaderboard` compares current or final ticket assignments and closures.
 - `/automodz setup` configures native Discord keyword, safety-preset, and mention-spam protection.
 - `/automodz status` displays all AutoMod rules managed by the bot.
 - `/approvalz configure` lets the server owner set per-action senior approval rules, reviewers, approval counts, expiry and bypass behavior.
@@ -51,6 +53,8 @@ Configure Guild Install in the Discord Developer Portal with the Discord-provide
 The bot stores each server's settings and operational records under its Discord server ID. Cross-server update broadcasts and record lookups are prohibited.
 
 Senior approval requests never execute from a browser or message alone. The bot revalidates the requesting moderator, target, server membership, role hierarchy and current permission immediately before executing an approved action. Requesters cannot approve their own actions.
+
+Expired approvals are closed automatically. Interrupted approval executions and appeal reviews are moved into a safe failed state for manual verification instead of being repeated automatically.
 
 ## Production Requirements
 

@@ -61,9 +61,7 @@ def ticket_panel(
     return embed
 
 
-def ticket_created(
-    user, application, form, ticket_uuid=None, custom_answers=None
-):
+def ticket_created(user, application, form, ticket_uuid=None, custom_answers=None):
     title = "Support Ticket Created" if not form else "Application Ticket Initiated"
     desc = "Hello! Your private ticket has been successfully created. Please describe your request below."
 

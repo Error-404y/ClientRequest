@@ -383,7 +383,9 @@ def help_category_for(command_name):
     if root in {
         "availability",
         "availabilitylist",
+        "leaderboard",
         "labelz",
+        "stats",
         "ticketformz",
         "updatez",
     }:
@@ -434,12 +436,9 @@ def help_command_sections(bot, category, maximum=950):
 
 def help_center_embed(bot, category, guild=None):
     category_details = {
-        key: (title, description)
-        for key, title, description in HELP_CATEGORIES
+        key: (title, description) for key, title, description in HELP_CATEGORIES
     }
-    title, description = category_details.get(
-        category, category_details["overview"]
-    )
+    title, description = category_details.get(category, category_details["overview"])
     leaf_commands = [
         command
         for command in bot.tree.walk_commands()
@@ -451,9 +450,7 @@ def help_center_embed(bot, category, guild=None):
         color=0x5865F2,
         timestamp=discord.utils.utcnow(),
     )
-    selected_category = (
-        category if category in HELP_WORKFLOWS else "overview"
-    )
+    selected_category = category if category in HELP_WORKFLOWS else "overview"
     for field_name, field_value in HELP_WORKFLOWS[selected_category]:
         embed.add_field(name=field_name, value=field_value, inline=False)
     if selected_category != "overview":
@@ -814,8 +811,7 @@ class Onboarding(commands.Cog):
             if record["status"] == "Available"
             and (member := guild.get_member(record["user_id"])) is not None
             and is_staff(member)
-            and member.status
-            not in {discord.Status.offline, discord.Status.invisible}
+            and member.status not in {discord.Status.offline, discord.Status.invisible}
         )
         panel_embed = ticket_panel(
             self.bot,

@@ -139,7 +139,7 @@ class Escalations(commands.Cog):
         return True
 
     async def has_human_response(self, channel):
-        async for message in channel.history(limit=None):
+        async for message in channel.history(limit=250):
             if not message.author.bot:
                 return True
         return False
@@ -162,8 +162,7 @@ class Escalations(commands.Cog):
 
                 if (
                     ticket_age_minutes >= config.TICKET_REVIEW_ESCALATION_HOURS * 60
-                    and ticket_age_minutes
-                    < config.NO_RESPONSE_ESCALATION_HOURS * 60
+                    and ticket_age_minutes < config.NO_RESPONSE_ESCALATION_HOURS * 60
                 ):
                     await self.send_escalation(
                         guild,
