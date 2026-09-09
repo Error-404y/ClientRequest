@@ -19,6 +19,9 @@ async def setup_database():
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA synchronous=NORMAL")
         await db.execute("PRAGMA busy_timeout=5000")
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS bot_bans (user_id INTEGER PRIMARY KEY, banned_by INTEGER NOT NULL, created_at TEXT NOT NULL)"
+        )
         await db.execute("""
             CREATE TABLE IF NOT EXISTS tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

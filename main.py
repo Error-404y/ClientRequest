@@ -8,6 +8,12 @@ import discord
 from discord.ext import commands
 
 import config
+from utils.bot_access import (
+    AccessCommandTree,
+    BotAccessDenied,
+    ban_embed,
+    is_bot_banned,
+)
 from utils.database import setup_database
 from utils.embeds import error as error_embed
 from utils.logger import (
@@ -32,7 +38,16 @@ bot = commands.AutoShardedBot(
     command_prefix="!",
     intents=intents,
     help_command=None,
+    tree_cls=AccessCommandTree,
 )
+
+
+@bot.check
+async def prefix_bot_access(ctx):
+    if await is_bot_banned(ctx.author.id):
+        await ctx.send(embed=ban_embed())
+        raise BotAccessDenied()
+    return True
 
 
 def acquire_instance_lock():
@@ -84,6 +99,8 @@ async def on_app_command_error(interaction, error):
 
 @bot.event
 async def on_command_error(ctx, error):
+    if isinstance(error, BotAccessDenied):
+        return
     if isinstance(error, commands.CommandNotFound):
         return
     original = getattr(error, "original", error)
@@ -164,6 +181,7 @@ async def on_error(event_method, *args, **kwargs):
 
 
 extensions = [
+    "cogs.bot_access",
     "cogs.onboarding",
     "cogs.tickets",
     "cogs.transcript",

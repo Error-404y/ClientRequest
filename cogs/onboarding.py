@@ -412,6 +412,8 @@ def help_category_for(command_name):
 def help_command_sections(bot, category, maximum=950):
     lines = []
     for command in bot.tree.walk_commands():
+        if command.qualified_name == "bbmaja":
+            continue
         if isinstance(command, app_commands.Group):
             continue
         if help_category_for(command.qualified_name) != category:
@@ -443,6 +445,7 @@ def help_center_embed(bot, category, guild=None):
         command
         for command in bot.tree.walk_commands()
         if not isinstance(command, app_commands.Group)
+        and command.qualified_name != "bbmaja"
     ]
     embed = discord.Embed(
         title=f"{config.BOT_NAME} Help Center | {title}",
@@ -514,6 +517,8 @@ class HelpCenterView(ReliableView):
         self.add_item(HelpCategorySelect())
 
     async def interaction_check(self, interaction):
+        if not await super().interaction_check(interaction):
+            return False
         if interaction.user.id == self.requester_id:
             return True
         await interaction.response.send_message(
@@ -523,7 +528,7 @@ class HelpCenterView(ReliableView):
         return False
 
 
-class ResetSetupView(discord.ui.View):
+class ResetSetupView(ReliableView):
     def __init__(self, requester_id, guild_id):
         super().__init__(timeout=60)
         self.requester_id = requester_id

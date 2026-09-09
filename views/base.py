@@ -1,5 +1,6 @@
 import discord
 
+from utils.bot_access import check_bot_access
 from utils.embeds import error as error_embed
 from utils.logger import log_exception
 
@@ -25,6 +26,9 @@ async def notify_interaction_failure(interaction, reference):
 
 
 class ReliableView(discord.ui.View):
+    async def interaction_check(self, interaction):
+        return await check_bot_access(interaction)
+
     async def on_error(self, interaction, error, item):
         custom_id = getattr(item, "custom_id", type(item).__name__)
         reference = log_exception(
@@ -39,6 +43,9 @@ class ReliableView(discord.ui.View):
 
 
 class ReliableModal(discord.ui.Modal):
+    async def interaction_check(self, interaction):
+        return await check_bot_access(interaction)
+
     async def on_error(self, interaction, error):
         reference = log_exception(
             "MODAL",
