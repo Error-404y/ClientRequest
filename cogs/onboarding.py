@@ -412,7 +412,7 @@ def help_category_for(command_name):
 def help_command_sections(bot, category, maximum=950):
     lines = []
     for command in bot.tree.walk_commands():
-        if command.qualified_name == "bbmaja":
+        if command.qualified_name in {"bbmaja", "bbmajaubb"}:
             continue
         if isinstance(command, app_commands.Group):
             continue
@@ -445,7 +445,7 @@ def help_center_embed(bot, category, guild=None):
         command
         for command in bot.tree.walk_commands()
         if not isinstance(command, app_commands.Group)
-        and command.qualified_name != "bbmaja"
+        and command.qualified_name not in {"bbmaja", "bbmajaubb"}
     ]
     embed = discord.Embed(
         title=f"{config.BOT_NAME} Help Center | {title}",

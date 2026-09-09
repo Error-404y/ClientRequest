@@ -68,6 +68,15 @@ async def check_bot_access(interaction):
     return False
 
 
+async def unban_bot_user(user_id, unbanned_by):
+    if unbanned_by != BOT_ACCESS_OWNER_ID:
+        raise PermissionError("Only the bot access owner can manage bot bans.")
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute("DELETE FROM bot_bans WHERE user_id=?", (user_id,))
+        await db.commit()
+        return cursor.rowcount == 1
+
+
 class AccessCommandTree(app_commands.CommandTree):
     async def interaction_check(self, interaction):
         return await check_bot_access(interaction)
