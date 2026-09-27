@@ -43,9 +43,11 @@ async def download_file(url, destination):
                 and response.content_length > MAX_TRANSCRIPT_ASSET_BYTES
             ):
                 return False
-            payload = await response.content.read(MAX_TRANSCRIPT_ASSET_BYTES + 1)
-            if len(payload) > MAX_TRANSCRIPT_ASSET_BYTES:
-                return False
+            payload = bytearray()
+            async for chunk in response.content.iter_chunked(65536):
+                if len(payload) + len(chunk) > MAX_TRANSCRIPT_ASSET_BYTES:
+                    return False
+                payload.extend(chunk)
             await asyncio.to_thread(Path(destination).write_bytes, payload)
             return True
     except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as error:

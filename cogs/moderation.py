@@ -99,6 +99,7 @@ class Moderation(commands.Cog):
             return
         reason_text = reason or "No reason provided"
         duration_text = f"{time} {UNIT_NAMES[unit.value]}"
+        await interaction.response.defer(ephemeral=True)
         try:
             approval = await queue_moderation_approval(
                 self.bot,
@@ -114,16 +115,15 @@ class Moderation(commands.Cog):
                 },
             )
         except RuntimeError as error:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=error_embed(str(error)), ephemeral=True
             )
             return
         if approval:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=approval_queued_embed(approval), ephemeral=True
             )
             return
-        await interaction.response.defer(ephemeral=True)
         audit_reason = (
             f"{reason_text} | Duration: {duration_text} | Moderator: "
             f"{interaction.user} ({interaction.user.id})"

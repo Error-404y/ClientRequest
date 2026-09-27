@@ -1,3 +1,5 @@
+import asyncio
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -67,7 +69,26 @@ class TicketControlRecovery(commands.Cog):
                     continue
                 message_id = record["control_message_id"]
                 if message_id:
-                    continue
+                    await asyncio.sleep(0.25)
+                    try:
+                        await channel.fetch_message(message_id)
+                    except discord.NotFound:
+                        log_ticket(
+                            "Stored Ticket Controls Missing",
+                            channel,
+                            details=f"Recreating controls for message {message_id}",
+                        )
+                    except discord.HTTPException as error:
+                        log_exception(
+                            "TICKET",
+                            error,
+                            guild=channel.guild,
+                            channel=channel,
+                            context="Stored ticket control verification failed",
+                        )
+                        continue
+                    else:
+                        continue
                 try:
                     message = None
                     async for candidate in channel.history(
@@ -233,11 +254,13 @@ class TicketControlRecovery(commands.Cog):
                     user=interaction.user,
                     context="Ticket label control message lookup failed",
                 )
+        synchronized = False
         if control_message and control_message.embeds:
             embed = discord.Embed.from_dict(control_message.embeds[0].to_dict())
             apply_ticket_label(embed, selected_label)
             try:
                 await control_message.edit(embed=embed)
+                synchronized = True
             except discord.HTTPException as error:
                 log_exception(
                     "TICKET",
@@ -261,7 +284,11 @@ class TicketControlRecovery(commands.Cog):
         )
         result = discord.Embed(
             title="Ticket Classification Updated",
-            description="The ticket label has been saved and synchronized with the main ticket panel.",
+            description=(
+                "The ticket label has been saved and synchronized with the main ticket panel."
+                if synchronized
+                else "The ticket label was saved, but the main ticket panel could not be updated."
+            ),
             color=discord.Color.blurple(),
             timestamp=discord.utils.utcnow(),
         )

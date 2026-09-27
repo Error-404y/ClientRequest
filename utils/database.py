@@ -20,6 +20,13 @@ async def setup_database():
         await db.execute("PRAGMA synchronous=NORMAL")
         await db.execute("PRAGMA busy_timeout=5000")
         await db.execute(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY)"
+        )
+        cursor = await db.execute(
+            "SELECT 1 FROM schema_migrations WHERE name='uuid_repair_v1'"
+        )
+        repair_uuids = await cursor.fetchone() is None
+        await db.execute(
             "CREATE TABLE IF NOT EXISTS bot_bans (user_id INTEGER PRIMARY KEY, banned_by INTEGER NOT NULL, created_at TEXT NOT NULL)"
         )
         await db.execute("""
@@ -105,21 +112,22 @@ async def setup_database():
                 "ALTER TABLE tickets ADD COLUMN form_response TEXT DEFAULT NULL"
             )
 
-        cursor = await db.execute("SELECT id, uuid FROM tickets ORDER BY id")
         repaired_ticket_count = 0
-        seen_ticket_uuids = set()
-        for row_id, current_uuid in await cursor.fetchall():
-            normalized_uuid = str(current_uuid or "").strip()
-            if not normalized_uuid or normalized_uuid in seen_ticket_uuids:
-                normalized_uuid = str(uuid_lib.uuid4())
-                while normalized_uuid in seen_ticket_uuids:
+        if repair_uuids:
+            cursor = await db.execute("SELECT id, uuid FROM tickets ORDER BY id")
+            seen_ticket_uuids = set()
+            for row_id, current_uuid in await cursor.fetchall():
+                normalized_uuid = str(current_uuid or "").strip()
+                if not normalized_uuid or normalized_uuid in seen_ticket_uuids:
                     normalized_uuid = str(uuid_lib.uuid4())
-                await db.execute(
-                    "UPDATE tickets SET uuid=? WHERE id=?",
-                    (normalized_uuid, row_id),
-                )
-                repaired_ticket_count += 1
-            seen_ticket_uuids.add(normalized_uuid)
+                    while normalized_uuid in seen_ticket_uuids:
+                        normalized_uuid = str(uuid_lib.uuid4())
+                    await db.execute(
+                        "UPDATE tickets SET uuid=? WHERE id=?",
+                        (normalized_uuid, row_id),
+                    )
+                    repaired_ticket_count += 1
+                seen_ticket_uuids.add(normalized_uuid)
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS infractions (
@@ -150,23 +158,27 @@ async def setup_database():
                 ADD COLUMN uuid TEXT DEFAULT NULL
             """)
 
-        cursor = await db.execute(
-            "SELECT id, guild_id, uuid FROM infractions ORDER BY id"
-        )
         repaired_infraction_count = 0
-        seen_infraction_uuids = set()
-        for row_id, guild_id, current_uuid in await cursor.fetchall():
-            normalized_uuid = str(current_uuid or "").strip()
-            if not normalized_uuid or normalized_uuid in seen_infraction_uuids:
-                normalized_uuid = generate_infraction_uuid(guild_id or 0)
-                while normalized_uuid in seen_infraction_uuids:
+        if repair_uuids:
+            cursor = await db.execute(
+                "SELECT id, guild_id, uuid FROM infractions ORDER BY id"
+            )
+            seen_infraction_uuids = set()
+            for row_id, guild_id, current_uuid in await cursor.fetchall():
+                normalized_uuid = str(current_uuid or "").strip()
+                if not normalized_uuid or normalized_uuid in seen_infraction_uuids:
                     normalized_uuid = generate_infraction_uuid(guild_id or 0)
-                await db.execute(
-                    "UPDATE infractions SET uuid=? WHERE id=?",
-                    (normalized_uuid, row_id),
-                )
-                repaired_infraction_count += 1
-            seen_infraction_uuids.add(normalized_uuid)
+                    while normalized_uuid in seen_infraction_uuids:
+                        normalized_uuid = generate_infraction_uuid(guild_id or 0)
+                    await db.execute(
+                        "UPDATE infractions SET uuid=? WHERE id=?",
+                        (normalized_uuid, row_id),
+                    )
+                    repaired_infraction_count += 1
+                seen_infraction_uuids.add(normalized_uuid)
+            await db.execute(
+                "INSERT INTO schema_migrations(name) VALUES('uuid_repair_v1')"
+            )
 
         cursor = await db.execute("PRAGMA table_info(user_stats)")
 
@@ -1236,7 +1248,9 @@ async def get_open_ticket_for_user(guild_id, user_id):
     return {"channel_id": row[0], "uuid": row[1]}
 
 
-async def close_ticket(channel_id, closed_at, closed_by=None, close_reason=None):
+async def close_ticket(
+    channel_id, closed_at, closed_by=None, close_reason=None, expected_warned_at=None
+):
 
     async with aiosqlite.connect(config.DATABASE) as db:
         cursor = await db.execute(
@@ -1248,8 +1262,17 @@ async def close_ticket(channel_id, closed_at, closed_by=None, close_reason=None)
                 closed_by=?,
                 close_reason=?
             WHERE channel_id=? AND status='open'
+                AND (? IS NULL OR (warned_inactive=1 AND warned_at=?))
         """,
-            ("closed", closed_at, closed_by, close_reason, channel_id),
+            (
+                "closed",
+                closed_at,
+                closed_by,
+                close_reason,
+                channel_id,
+                expected_warned_at,
+                expected_warned_at,
+            ),
         )
 
         await db.commit()

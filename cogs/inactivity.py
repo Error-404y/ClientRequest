@@ -69,11 +69,30 @@ class Inactivity(commands.Cog):
                     warning_age = 0.0
                 if warning_age >= config.INACTIVITY_CLOSE_HOURS:
                     try:
+                        warning_time = datetime.fromisoformat(warned_at)
+                        if warning_time.tzinfo is None:
+                            warning_time = timezone.localize(warning_time)
+                        responded = False
+                        async for message in channel.history(
+                            limit=None, after=warning_time, oldest_first=True
+                        ):
+                            if not message.author.bot:
+                                responded = True
+                                break
+                        if responded:
+                            async with aiosqlite.connect(config.DATABASE) as db:
+                                await db.execute(
+                                    "UPDATE tickets SET warned_inactive=0, warned_at=NULL WHERE channel_id=? AND guild_id=? AND status='open' AND warned_at=?",
+                                    (channel_id, guild_id, warned_at),
+                                )
+                                await db.commit()
+                            continue
                         await close_ticket_channel(
                             channel=channel,
                             moderator=self.bot.user,
                             reason="Closed automatically due to inactivity.",
                             bot=self.bot,
+                            expected_warned_at=warned_at,
                         )
                     except Exception as error:
                         log_exception(
@@ -99,6 +118,7 @@ class Inactivity(commands.Cog):
                     channel=channel,
                     context="Inactivity history lookup failed",
                 )
+                continue
 
             if last_activity is None:
                 try:

@@ -36,6 +36,14 @@ class CloseTicketModal(ReliableModal, title="Close Ticket"):
         self.original_view = original_view
 
     async def on_submit(self, interaction: discord.Interaction):
+        if not is_staff(interaction.user):
+            await interaction.response.send_message(
+                embed=error_embed(
+                    "You no longer have permission to close this ticket."
+                ),
+                ephemeral=True,
+            )
+            return
         log_interaction(
             interaction.user,
             "CloseTicketModal",
@@ -132,6 +140,14 @@ class PrioritySelectionView(ReliableView):
         await self.update_priority(interaction, "High")
 
     async def update_priority(self, interaction: discord.Interaction, priority: str):
+        if not is_staff(interaction.user):
+            await interaction.response.send_message(
+                embed=error_embed(
+                    "You no longer have permission to change ticket priority."
+                ),
+                ephemeral=True,
+            )
+            return
         log_interaction(
             interaction.user,
             f"priority_{priority.lower()}",

@@ -1035,6 +1035,9 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_legacy_infraction_uuid_is_repaired(self):
         async with aiosqlite.connect(config.DATABASE) as database:
+            await database.execute(
+                "DELETE FROM schema_migrations WHERE name='uuid_repair_v1'"
+            )
             cursor = await database.execute(
                 "INSERT INTO infractions(uuid, guild_id, user_id, moderator_id, action_type, reason, timestamp) VALUES(NULL, ?, ?, ?, ?, ?, ?)",
                 (

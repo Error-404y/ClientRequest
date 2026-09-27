@@ -6,6 +6,7 @@ from discord.ext import commands, tasks
 
 import config
 from cogs.onboarding import resource_report, setup_permission_report
+from utils.bot_access import check_bot_access
 from utils.database import (
     add_appeal_details,
     add_approval_details,
@@ -430,6 +431,9 @@ class Governance(commands.Cog):
     async def on_interaction(self, interaction: discord.Interaction):
         data = interaction.data or {}
         custom_id = str(data.get("custom_id") or "")
+        if custom_id.startswith(("approval:", "appeal:start:")):
+            if not await check_bot_access(interaction):
+                return
         if not custom_id.startswith("approval:"):
             if custom_id.startswith("appeal:start:"):
                 parts = custom_id.split(":", 3)

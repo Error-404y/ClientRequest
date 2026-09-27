@@ -8,6 +8,7 @@ import sys
 import time
 import traceback
 import uuid
+from contextlib import closing
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -185,7 +186,7 @@ def _store_error(
 ):
     timestamp = datetime.now(timezone).isoformat()
     try:
-        with sqlite3.connect(config.DATABASE, timeout=2) as database:
+        with closing(sqlite3.connect(config.DATABASE, timeout=2)) as database, database:
             row = database.execute(
                 "SELECT reference FROM error_events WHERE fingerprint=?", (fingerprint,)
             ).fetchone()
@@ -327,7 +328,7 @@ def log_performance(operation, started_at, threshold_ms=500, guild=None):
     if duration < threshold_ms:
         return duration
     try:
-        with sqlite3.connect(config.DATABASE, timeout=2) as database:
+        with closing(sqlite3.connect(config.DATABASE, timeout=2)) as database, database:
             database.execute(
                 "INSERT INTO performance_events(operation, duration_ms, threshold_ms, guild_id, created_at) VALUES(?, ?, ?, ?, ?)",
                 (

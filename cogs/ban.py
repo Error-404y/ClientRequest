@@ -1149,6 +1149,8 @@ class BanCog(commands.Cog):
             )
             return
 
+        await interaction.response.defer(ephemeral=True)
+
         if user and ("-" in user or (user.isdigit() and len(user) < 15)):
             found_inf = await get_infraction_by_uuid(user.strip(), interaction.guild.id)
 
@@ -1165,7 +1167,7 @@ class BanCog(commands.Cog):
         actual_id = target_id or getattr(target_obj, "id", None)
 
         if not actual_id:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=error_embed(f"Could not find or resolve user: `{user}`"),
                 ephemeral=True,
             )
@@ -1183,12 +1185,12 @@ class BanCog(commands.Cog):
                 {"warn_id": warn_id},
             )
         except RuntimeError as error:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=error_embed(str(error)), ephemeral=True
             )
             return
         if approval:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=approval_queued_embed(approval), ephemeral=True
             )
             return
@@ -1216,13 +1218,13 @@ class BanCog(commands.Cog):
                     f"**{target_name}** (`{actual_id}`)."
                 )
 
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=error_embed(message),
                 ephemeral=True,
             )
             return
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @commands.command(
         name="warnremoveZ",
@@ -1967,18 +1969,20 @@ class BanCog(commands.Cog):
             )
             return
 
+        await interaction.response.defer(ephemeral=True)
+
         uuid_value = self._normalize_uuid(uuid)
         action_value = str(action).strip().lower()
 
         if not uuid_value:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=error_embed("Please specify an Infraction UUID or Ticket UUID."),
                 ephemeral=True,
             )
             return
 
         if action_value not in ("view", "remove"):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=error_embed("Invalid action. Please use `view` or `remove`."),
                 ephemeral=True,
             )
@@ -2009,12 +2013,12 @@ class BanCog(commands.Cog):
                         {"uuid": infraction["uuid"]},
                     )
                 except RuntimeError as error:
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         embed=error_embed(str(error)), ephemeral=True
                     )
                     return
                 if approval:
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         embed=approval_queued_embed(approval), ephemeral=True
                     )
                     return
@@ -2023,7 +2027,7 @@ class BanCog(commands.Cog):
                 )
 
                 if not removed:
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         embed=error_embed(f"Could not remove UUID: `{uuid_value}`"),
                         ephemeral=True,
                     )
@@ -2037,12 +2041,12 @@ class BanCog(commands.Cog):
                     extra=(f"Infraction UUID: {removed['uuid']}"),
                 )
 
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     embed=self._build_removed_infraction_embed(removed)
                 )
                 return
 
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=self._build_infraction_embed(infraction)
             )
             return
@@ -2060,7 +2064,7 @@ class BanCog(commands.Cog):
 
         if ticket:
             if action_value == "remove":
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     embed=error_embed(
                         "This UUID belongs to a support ticket.\n\n"
                         "`/infraction remove` can only remove "
@@ -2071,12 +2075,12 @@ class BanCog(commands.Cog):
                 )
                 return
 
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=await self._build_ticket_embed(ticket, interaction.guild),
             )
             return
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=error_embed(
                 f"No ticket or infraction found matching UUID: `{uuid_value}`"
             ),

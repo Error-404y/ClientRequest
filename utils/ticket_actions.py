@@ -70,11 +70,19 @@ async def create_close_transcript(channel):
         return None
 
 
-async def close_ticket_channel(channel, moderator, reason, bot):
+async def close_ticket_channel(
+    channel, moderator, reason, bot, expected_warned_at=None
+):
     log_ticket("Closing Initiated", channel, moderator, details=f"Reason: {reason}")
     original_category = channel.category
     closed_at = datetime.now(timezone).isoformat()
-    if not await close_ticket(channel.id, closed_at, moderator.id, reason):
+    if not await close_ticket(
+        channel.id,
+        closed_at,
+        moderator.id,
+        reason,
+        expected_warned_at=expected_warned_at,
+    ):
         return False
 
     try:

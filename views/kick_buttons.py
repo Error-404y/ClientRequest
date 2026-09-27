@@ -63,6 +63,7 @@ class KickConfirmView(ReliableView):
                 ephemeral=True,
             )
             return
+        await interaction.response.defer()
         try:
             approval = await queue_moderation_approval(
                 interaction.client,
@@ -74,17 +75,15 @@ class KickConfirmView(ReliableView):
                 self.reason or "No reason specified",
             )
         except RuntimeError as error:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=error_embed(str(error)), ephemeral=True
             )
             return
         if approval:
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 embed=approval_queued_embed(approval), view=None
             )
             return
-
-        await interaction.response.defer()
 
         user_to_dm = None
         if isinstance(self.target_user, (discord.Member, discord.User)):
