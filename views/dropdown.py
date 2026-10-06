@@ -212,6 +212,7 @@ class ApplicationDropdown(Select):
                         datetime.now(timezone).isoformat(),
                     )
                     if reopened:
+                        control_message = None
                         try:
                             await previous_channel.set_permissions(
                                 user,
@@ -225,6 +226,19 @@ class ApplicationDropdown(Select):
                             view = TicketButtons(
                                 claimed_by=recent_record.get("claimed_by")
                             )
+                            form_url = None
+                            if application == "Moderator Application":
+                                form_url = config.MODERATOR_FORM
+                            elif application == "Uploader Application":
+                                form_url = config.UPLOADER_FORM
+                            if form_url:
+                                view.add_item(
+                                    discord.ui.Button(
+                                        label="Application Form",
+                                        style=discord.ButtonStyle.link,
+                                        url=form_url,
+                                    )
+                                )
                             control_message = await previous_channel.send(
                                 content=user.mention,
                                 embed=ticket_reopened(applicant=user),
@@ -233,6 +247,20 @@ class ApplicationDropdown(Select):
                             await set_ticket_control_message(
                                 previous_channel.id, control_message.id
                             )
+                            archived_control_id = recent_record.get(
+                                "control_message_id"
+                            )
+                            if (
+                                archived_control_id
+                                and archived_control_id != control_message.id
+                            ):
+                                try:
+                                    archived_control = await previous_channel.fetch_message(
+                                        archived_control_id
+                                    )
+                                    await archived_control.delete()
+                                except discord.HTTPException:
+                                    pass
                             log_ticket(
                                 "Recent Ticket Reopened",
                                 previous_channel,
@@ -252,6 +280,11 @@ class ApplicationDropdown(Select):
                             )
                             return
                         except Exception as reopen_error:
+                            if control_message is not None:
+                                try:
+                                    await control_message.delete()
+                                except discord.HTTPException:
+                                    pass
                             try:
                                 await close_ticket(
                                     previous_channel.id,
@@ -269,6 +302,14 @@ class ApplicationDropdown(Select):
                                 )
                                 if archive:
                                     await previous_channel.edit(category=archive)
+                                archived_control_id = recent_record.get(
+                                    "control_message_id"
+                                )
+                                if archived_control_id:
+                                    await set_ticket_control_message(
+                                        previous_channel.id,
+                                        archived_control_id,
+                                    )
                             except Exception as rollback_error:
                                 log_exception(
                                     "TICKET",
