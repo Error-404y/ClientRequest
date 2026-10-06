@@ -12,7 +12,7 @@ Professional multi-server ticket operations and staff-support system.
 
 The setup command creates a public `ticket-system` category containing the `ticket` panel channel, a separate private ticket category, archive category, logging channel, staff role when required, and a working ticket menu.
 
-## Setup Commands
+## Commands
 
 - `/setup start` configures the complete system.
 - `/setup status` checks configuration and permissions.
@@ -29,6 +29,14 @@ The setup command creates a public `ticket-system` category containing the `tick
 - `/setafkz` activates a persistent AFK status until the member sends a message.
 - `/stats` displays server-scoped ticket performance for one staff member.
 - `/leaderboard` compares current or final ticket assignments and closures.
+- `/availability` sets a staff member's current ticket-assignment availability.
+- `/availabilitylist` shows the current ticket-support availability team.
+- `/labelz` applies or clears a classification label on an open ticket.
+- `/waitingz` sets whether an open ticket is waiting for the user or for staff.
+- `/transferz` transfers a claimed ticket to another authorized staff member.
+- `/updatez` publishes a structured support/service update through the ticket panel.
+- `/healthz` shows the current operational health summary.
+- `/debugz`, `/debugerror`, and `/debugexport` provide owner/setup diagnostics.
 - `/automodz setup` configures native Discord keyword, safety-preset, and mention-spam protection.
 - `/automodz status` displays all AutoMod rules managed by the bot.
 - `/approvalz configure` lets the server owner set per-action senior approval rules, reviewers, approval counts, expiry and bypass behavior.
@@ -45,6 +53,12 @@ The setup command creates a public `ticket-system` category containing the `tick
 The server owner, members with Discord Administrator permission, and delegated setup administrators can use setup commands. Only the server owner can add or remove delegated setup administrators.
 
 Use `/setup tickets` and enter comma-separated names such as `Partnership, Issues, Player Reports, Questions` to replace the ticket menu with custom categories.
+
+## Ticket Workflow
+
+The first staff reply automatically claims an unassigned ticket. Member replies switch the response state to **Waiting for Staff** and staff replies switch it to **Waiting for User**. Staff can correct the state with `/waitingz`, transfer an assignment with `/transferz`, or use the existing Claim/Unclaim controls manually.
+
+Only tickets waiting for the user are subject to inactivity warnings and inactivity closure. Staff response escalations only run while a ticket is waiting for staff. Recent same-type tickets may be reopened instead of creating another channel, and duplicate open tickets of the same type are blocked.
 
 ## Public Installation
 

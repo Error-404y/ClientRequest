@@ -25,8 +25,6 @@ from utils.permissions import can_manage_setup_admins, can_setup, is_staff
 from views.base import ReliableView
 from views.dropdown import TicketPanel
 
-timezone = pytz.timezone(config.TIMEZONE)
-
 
 def parse_ticket_options(value):
     if not value:
@@ -249,7 +247,7 @@ HELP_WORKFLOWS = {
         ),
         (
             "Handle a Ticket",
-            "Open the ticket and use **Claim** to take responsibility. Use `/labelz` when a classification is needed, publish progress with `/updatez`, then use the ticket controls to close and archive it.",
+            "The first staff reply automatically claims an unassigned ticket. Use `/waitingz` to confirm who should reply next, `/transferz` when another staff member should take over, `/labelz` for classification, and the ticket controls to close and archive it.",
         ),
         (
             "Moderate a Member",
@@ -289,7 +287,11 @@ HELP_WORKFLOWS = {
         ),
         (
             "Process a Ticket",
-            "Use **Claim** when you begin handling a ticket. Any authorized staff member can use **Unclaim** when reassignment is needed. Use `/labelz` to show the ticket's current classification without renaming its channel.",
+            "The first staff reply automatically claims an unassigned ticket. Staff can still use **Claim** or **Unclaim** manually, use `/transferz` to hand an assigned ticket to another staff member, and use `/labelz` to classify the request.",
+        ),
+        (
+            "Manage Response State",
+            "The bot automatically switches between **Waiting for Staff** after a member reply and **Waiting for User** after a staff reply. Staff can correct the state at any time with `/waitingz`. Inactivity warnings only apply while waiting for the user, while staff escalations only apply while waiting for staff.",
         ),
         (
             "Manage Workload and Updates",
@@ -386,6 +388,8 @@ def help_category_for(command_name):
         "leaderboard",
         "labelz",
         "stats",
+        "transferz",
+        "waitingz",
         "ticketformz",
         "updatez",
     }:
@@ -805,7 +809,7 @@ class Onboarding(commands.Cog):
                         guild.id,
                         panel_channel.id,
                         message.id,
-                        message.created_at.astimezone(timezone).isoformat(),
+                        message.created_at.astimezone(pytz.timezone(config.get_timezone(guild.id))).isoformat(),
                     )
             panels = await get_ticket_panels(guild.id)
 
@@ -852,7 +856,7 @@ class Onboarding(commands.Cog):
             guild.id,
             panel_channel.id,
             panel_message.id,
-            datetime.now(timezone).isoformat(),
+            datetime.now(pytz.timezone(config.get_timezone(guild.id))).isoformat(),
         )
         return 1
 

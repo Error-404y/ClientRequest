@@ -295,7 +295,7 @@ async def setup_hook():
             await asyncio.sleep(delay)
         try:
             global_synced = await bot.tree.sync()
-            bot.synced_command_count = len(global_synced)
+            bot.synced_top_level_count = len(global_synced)
             bot.slash_command_count = sum(
                 1
                 for command in bot.tree.walk_commands()
@@ -304,7 +304,7 @@ async def setup_hook():
             emit(
                 "SUCCESS",
                 "STARTUP",
-                f"Application commands synchronized | commands={bot.slash_command_count} | groups={bot.synced_command_count}",
+                f"Application commands synchronized | leaf_commands={bot.slash_command_count} | top_level={bot.synced_top_level_count}",
             )
             sync_error = None
             break

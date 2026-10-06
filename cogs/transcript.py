@@ -15,7 +15,6 @@ from discord.ext import commands
 import config
 from utils.logger import log_exception, log_transcript
 
-timezone = pytz.timezone(config.TIMEZONE)
 MAX_TRANSCRIPT_ASSET_BYTES = 8_000_000
 TRANSCRIPT_LOCKS = weakref.WeakValueDictionary()
 
@@ -114,6 +113,7 @@ async def create_transcript(channel, lightweight=False):
 
 
 async def _create_transcript(channel, lightweight=False):
+    timezone = pytz.timezone(config.get_timezone(channel.guild.id))
     log_transcript("Initiated creation", channel, details=f"Lightweight: {lightweight}")
 
     guild_transcript_dir = os.path.join(config.TRANSCRIPT_FOLDER, str(channel.guild.id))

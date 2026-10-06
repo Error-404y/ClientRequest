@@ -23,8 +23,6 @@ from utils.logger import (
 )
 from views.closed_buttons import ClosedTicketButtons
 
-timezone = pytz.timezone(config.TIMEZONE)
-
 
 async def resolve_ticket_member(channel):
     user_id = await get_ticket_owner(channel.id)
@@ -75,7 +73,7 @@ async def close_ticket_channel(
 ):
     log_ticket("Closing Initiated", channel, moderator, details=f"Reason: {reason}")
     original_category = channel.category
-    closed_at = datetime.now(timezone).isoformat()
+    closed_at = datetime.now(pytz.timezone(config.get_timezone(channel.guild.id))).isoformat()
     if not await close_ticket(
         channel.id,
         closed_at,

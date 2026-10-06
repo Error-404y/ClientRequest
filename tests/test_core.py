@@ -31,13 +31,11 @@ from utils.database import (
     add_infraction,
     add_setup_admin,
     auto_assign_ticket,
-    claim_ticket,
     clear_afk_status,
     close_ticket,
     create_ticket_record,
     escalation_event_exists,
     get_afk_statuses,
-    get_available_staff_count,
     get_guild_settings,
     get_infraction_by_uuid,
     get_latest_closed_ticket_for_user_type,
@@ -149,6 +147,31 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(config.TICKET_REVIEW_ESCALATION_HOURS, 6)
         self.assertEqual(config.NO_RESPONSE_ESCALATION_HOURS, 24)
 
+    def test_guild_facing_ticket_timestamps_do_not_use_global_timezone(self):
+        root = Path(__file__).resolve().parents[1]
+        paths = (
+            root / "cogs" / "availability.py",
+            root / "cogs" / "onboarding.py",
+            root / "cogs" / "transcript.py",
+            root / "cogs" / "updates.py",
+            root / "utils" / "ticket_actions.py",
+            root / "views" / "dropdown.py",
+            root / "views" / "ticket_buttons.py",
+        )
+        for path in paths:
+            source = path.read_text(encoding="utf-8")
+            self.assertNotIn("pytz.timezone(config.TIMEZONE)", source)
+
+    def test_ticket_database_is_split_from_general_database_module(self):
+        root = Path(__file__).resolve().parents[1]
+        database = root.joinpath("utils", "database.py").read_text(encoding="utf-8")
+        ticket_database = root.joinpath("utils", "ticket_database.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("async def create_ticket_record(", database)
+        self.assertIn("async def create_ticket_record(", ticket_database)
+        self.assertIn("TICKET_DATABASE_EXPORTS", database)
+
     def test_background_ticket_audits_use_response_state(self):
         root = Path(__file__).resolve().parents[1]
         inactivity = root.joinpath("cogs", "inactivity.py").read_text(encoding="utf-8")
@@ -161,6 +184,8 @@ class ConfigurationTests(unittest.TestCase):
         self.assertNotIn("Unclaimed Ticket Escalation", escalations)
         self.assertNotIn("Customer Response Overdue", escalations)
         self.assertIn('f"six_hour_ticket_review:{response_cycle}"', escalations)
+        self.assertIn('f"high_priority:{response_cycle}"', escalations)
+        self.assertNotIn("has_staff_response", escalations)
 
     def test_update_embed_uses_server_label(self):
         source = (
@@ -348,6 +373,8 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(help_category_for("automodz setup"), "automod")
         self.assertEqual(help_category_for("stats"), "tickets")
         self.assertEqual(help_category_for("leaderboard"), "tickets")
+        self.assertEqual(help_category_for("waitingz"), "tickets")
+        self.assertEqual(help_category_for("transferz"), "tickets")
 
     def test_staff_duration_metrics_ignore_invalid_intervals(self):
         rows = [
@@ -815,8 +842,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         await create_ticket_record(
             100, guild_id, 200, "Test", datetime.now().isoformat()
         )
-        self.assertTrue(await claim_ticket(100, 300, datetime.now().isoformat()))
-        self.assertFalse(await claim_ticket(100, 301, datetime.now().isoformat()))
+        claimed = await toggle_ticket_claim(100, 300, datetime.now(pytz.utc).isoformat())
+        self.assertEqual(claimed["status"], "claimed")
         self.assertTrue(
             await close_ticket(100, datetime.now().isoformat(), 300, "Done")
         )
@@ -857,6 +884,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.guild_id, 222, "Support"
         )
         self.assertEqual(record["channel_id"], 122)
+        self.assertEqual(record["closed_by"], 300)
+        self.assertEqual(record["close_reason"], "Done")
 
     async def test_ticket_messages_switch_waiting_state_and_auto_claim(self):
         now = datetime.now(pytz.utc)
@@ -879,7 +908,10 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_waiting_state_and_transfer_are_persistent(self):
         now = datetime.now(pytz.utc).isoformat()
         await create_ticket_record(125, self.guild_id, 225, "Support", now)
-        self.assertTrue(await claim_ticket(125, 325, now))
+        self.assertEqual(
+            (await toggle_ticket_claim(125, 325, now))["status"],
+            "claimed",
+        )
         self.assertTrue(await set_ticket_waiting_on(125, "user", now))
         transfer = await transfer_ticket_claim(125, 325, 326, now)
         self.assertEqual(transfer["status"], "transferred")
@@ -1050,8 +1082,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         now = datetime.now().isoformat()
         await create_ticket_record(111, self.guild_id, 211, "Support", now)
         await create_ticket_record(112, self.guild_id + 1, 212, "Support", now)
-        self.assertTrue(await claim_ticket(111, 311, now))
-        self.assertTrue(await claim_ticket(112, 311, now))
+        self.assertEqual((await toggle_ticket_claim(111, 311, now))["status"], "claimed")
+        self.assertEqual((await toggle_ticket_claim(112, 311, now))["status"], "claimed")
         self.assertTrue(await close_ticket(111, now, 311, "Resolved"))
         metrics = await staff_metrics(self.guild_id, 311)
         self.assertEqual(metrics["assigned"], 1)
@@ -1118,9 +1150,12 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             guild_id, 200, "Available", datetime.now().isoformat()
         )
         await set_staff_availability(guild_id, 201, "Busy", datetime.now().isoformat())
-        self.assertEqual(await get_available_staff_count(guild_id), 1)
         records = await get_staff_availability(guild_id)
         self.assertEqual(len(records), 2)
+        self.assertEqual(
+            sum(record["status"] == "Available" for record in records),
+            1,
+        )
         await register_ticket_panel(guild_id, 300, 400, datetime.now().isoformat())
         panels = await get_ticket_panels(guild_id)
         self.assertEqual(panels, [{"channel_id": 300, "message_id": 400}])

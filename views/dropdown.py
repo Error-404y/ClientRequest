@@ -34,8 +34,6 @@ from utils.permissions import is_staff
 from views.base import ReliableModal, ReliableView
 from views.ticket_buttons import TicketButtons
 
-timezone = pytz.timezone(config.TIMEZONE)
-
 
 class CustomTicketModal(ReliableModal):
     def __init__(self, dropdown, application, questions):
@@ -303,8 +301,8 @@ class ApplicationDropdown(Select):
                                 await close_ticket(
                                     previous_channel.id,
                                     recent_record["closed_at"],
-                                    None,
-                                    "Automatic reopen rollback",
+                                    recent_record.get("closed_by"),
+                                    recent_record.get("close_reason"),
                                 )
                                 await previous_channel.set_permissions(
                                     user,
