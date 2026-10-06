@@ -69,7 +69,7 @@ class ApplicationDropdown(Select):
         if options_list is None:
             options_list = [
                 "Partnership",
-                "Player Reports",
+                "Reports",
                 "Billing/Issues",
                 "Moderator Application",
                 "Uploader Application",
@@ -360,7 +360,7 @@ class ApplicationDropdown(Select):
         elif application == "Partnership":
             prefix = "partnership"
 
-        elif application == "Player Reports":
+        elif application in {"Reports", "Player Reports"}:
             prefix = "report"
 
         elif application == "Billing/Issues" or application == "Issues":

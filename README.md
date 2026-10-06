@@ -52,7 +52,7 @@ The setup command creates a public `ticket-system` category containing the `tick
 
 The server owner, members with Discord Administrator permission, and delegated setup administrators can use setup commands. Only the server owner can add or remove delegated setup administrators.
 
-Use `/setup tickets` and enter comma-separated names such as `Partnership, Issues, Player Reports, Questions` to replace the ticket menu with custom categories.
+Use `/setup tickets` and enter comma-separated names such as `General Support, Reports, Requests, Questions` to replace the ticket menu with custom categories.
 
 ## Ticket Workflow
 
