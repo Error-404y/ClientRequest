@@ -7,14 +7,19 @@ from discord.ext import commands
 import config
 from utils.database import (
     get_ticket_controls,
+    get_ticket_owner,
     get_ticket_record,
     mark_ticket_deleted,
+    process_ticket_message,
     set_ticket_control_message,
     set_ticket_label,
+    set_ticket_waiting_on,
+    transfer_ticket_claim,
 )
 from utils.embeds import apply_ticket_label
 from utils.embeds import error as error_embed
-from utils.logger import log_exception, log_interaction, log_ticket
+from utils.embeds import ticket_claimed_dm
+from utils.logger import log_dm, log_exception, log_interaction, log_ticket
 from utils.permissions import is_staff
 from views.closed_buttons import ClosedTicketButtons
 from views.dropdown import TicketPanel
@@ -160,6 +165,275 @@ class TicketControlRecovery(commands.Cog):
                     )
                     continue
         self.recovered = True
+
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        if message.author.bot or message.guild is None:
+            return
+        if not isinstance(message.channel, discord.TextChannel):
+            return
+        ticket = await get_ticket_record(message.channel.id)
+        if ticket is None or ticket["status"] != "open":
+            return
+        staff_message = is_staff(message.author)
+        if message.author.id != ticket["user_id"] and not staff_message:
+            return
+        result = await process_ticket_message(
+            message.channel.id,
+            message.author.id,
+            staff_message,
+            discord.utils.utcnow().isoformat(),
+        )
+        if not result.get("auto_claimed"):
+            return
+        current = await get_ticket_record(message.channel.id)
+        if current and current["control_message_id"]:
+            try:
+                control = await message.channel.fetch_message(
+                    current["control_message_id"]
+                )
+                await control.edit(view=self.control_view(current))
+            except discord.HTTPException as error:
+                log_exception(
+                    "VIEW",
+                    error,
+                    guild=message.guild,
+                    channel=message.channel,
+                    user=message.author,
+                    context="First staff reply auto-claim control update failed",
+                )
+        owner = message.guild.get_member(ticket["user_id"])
+        if owner is None:
+            try:
+                owner = await message.guild.fetch_member(ticket["user_id"])
+            except discord.HTTPException:
+                owner = None
+        if owner:
+            try:
+                await owner.send(
+                    embed=ticket_claimed_dm(
+                        message.guild,
+                        message.channel,
+                        message.author,
+                        self.bot.user,
+                    )
+                )
+                log_dm(owner, "First Reply Auto-Claim Notice", success=True)
+            except discord.Forbidden:
+                log_dm(
+                    owner,
+                    "First Reply Auto-Claim Notice",
+                    success=False,
+                    error_detail="Direct Messages Disabled",
+                )
+            except discord.HTTPException as error:
+                log_exception(
+                    "DM",
+                    error,
+                    guild=message.guild,
+                    channel=message.channel,
+                    user=owner,
+                    context="First staff reply auto-claim notification failed",
+                )
+        embed = discord.Embed(
+            title="Ticket Automatically Claimed",
+            description=(
+                f"{message.author.mention} was assigned because they were the first "
+                "staff member to respond."
+            ),
+            color=discord.Color.green(),
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.set_footer(text=f"{config.BOT_NAME} | Automatic Assignment")
+        try:
+            await message.channel.send(embed=embed)
+        except discord.HTTPException as error:
+            log_exception(
+                "TICKET",
+                error,
+                guild=message.guild,
+                channel=message.channel,
+                user=message.author,
+                context="First staff reply auto-claim notice failed",
+            )
+
+    @app_commands.command(
+        name="waitingz",
+        description="Set whether a ticket is waiting for the user or staff",
+    )
+    @app_commands.describe(state="Who is expected to reply next")
+    @app_commands.choices(
+        state=[
+            app_commands.Choice(name="Waiting for User", value="user"),
+            app_commands.Choice(name="Waiting for Staff", value="staff"),
+        ]
+    )
+    async def waitingz(
+        self,
+        interaction: discord.Interaction,
+        state: app_commands.Choice[str],
+    ):
+        if not is_staff(interaction.user):
+            await interaction.response.send_message(
+                embed=error_embed("Only authorized staff can change ticket state."),
+                ephemeral=True,
+            )
+            return
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message(
+                embed=error_embed("This command can only be used in a ticket channel."),
+                ephemeral=True,
+            )
+            return
+        updated = await set_ticket_waiting_on(interaction.channel.id, state.value)
+        if not updated:
+            await interaction.response.send_message(
+                embed=error_embed("This channel is not an open registered ticket."),
+                ephemeral=True,
+            )
+            return
+        label = "Waiting for User" if state.value == "user" else "Waiting for Staff"
+        embed = discord.Embed(
+            title="Ticket Response State Updated",
+            description=f"This ticket is now **{label}**.",
+            color=discord.Color.blurple(),
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.add_field(name="Updated By", value=interaction.user.mention, inline=True)
+        embed.set_footer(text=f"{config.BOT_NAME} | Ticket Workflow")
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(
+        name="transferz",
+        description="Transfer a claimed ticket to another staff member",
+    )
+    @app_commands.describe(member="Staff member who should receive this ticket")
+    async def transferz(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+    ):
+        if not is_staff(interaction.user):
+            await interaction.response.send_message(
+                embed=error_embed("Only authorized staff can transfer tickets."),
+                ephemeral=True,
+            )
+            return
+        if not is_staff(member):
+            await interaction.response.send_message(
+                embed=error_embed("The selected member is not authorized staff."),
+                ephemeral=True,
+            )
+            return
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message(
+                embed=error_embed("This command can only be used in a ticket channel."),
+                ephemeral=True,
+            )
+            return
+        result = await transfer_ticket_claim(
+            interaction.channel.id,
+            interaction.user.id,
+            member.id,
+            discord.utils.utcnow().isoformat(),
+        )
+        if result["status"] == "unclaimed":
+            await interaction.response.send_message(
+                embed=error_embed(
+                    "This ticket is currently unclaimed. Claim it before transferring it."
+                ),
+                ephemeral=True,
+            )
+            return
+        if result["status"] == "same":
+            await interaction.response.send_message(
+                embed=error_embed("This ticket is already assigned to that staff member."),
+                ephemeral=True,
+            )
+            return
+        if result["status"] in {"not_found", "not_open"}:
+            await interaction.response.send_message(
+                embed=error_embed("This channel is not an open registered ticket."),
+                ephemeral=True,
+            )
+            return
+        ticket = await get_ticket_record(interaction.channel.id)
+        if ticket and ticket["control_message_id"]:
+            try:
+                control = await interaction.channel.fetch_message(
+                    ticket["control_message_id"]
+                )
+                await control.edit(view=self.control_view(ticket))
+            except discord.HTTPException as error:
+                log_exception(
+                    "VIEW",
+                    error,
+                    guild=interaction.guild,
+                    channel=interaction.channel,
+                    user=interaction.user,
+                    context="Transferred ticket control update failed",
+                )
+        previous_id = result["previous_claimed_by"]
+        previous = interaction.guild.get_member(previous_id)
+        embed = discord.Embed(
+            title="Ticket Assignment Transferred",
+            description=f"This ticket is now assigned to {member.mention}.",
+            color=discord.Color.green(),
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.add_field(
+            name="Previous Assignment",
+            value=previous.mention if previous else f"`{previous_id}`",
+            inline=True,
+        )
+        embed.add_field(name="New Assignment", value=member.mention, inline=True)
+        embed.add_field(name="Transferred By", value=interaction.user.mention, inline=True)
+        embed.set_footer(text=f"{config.BOT_NAME} | Ticket Assignment")
+        await interaction.response.send_message(embed=embed)
+        owner_id = await get_ticket_owner(interaction.channel.id)
+        if owner_id:
+            owner = interaction.guild.get_member(owner_id)
+            if owner is None:
+                try:
+                    owner = await interaction.guild.fetch_member(owner_id)
+                except discord.HTTPException:
+                    owner = None
+            if owner:
+                notice = discord.Embed(
+                    title="Ticket Assignment Updated",
+                    description=(
+                        f"Your ticket {interaction.channel.mention} has been transferred "
+                        f"to {member.mention}."
+                    ),
+                    color=discord.Color.blurple(),
+                    timestamp=discord.utils.utcnow(),
+                )
+                notice.set_footer(text=config.BOT_NAME)
+                try:
+                    await owner.send(embed=notice)
+                    log_dm(owner, "Ticket Transfer Notice", success=True)
+                except discord.Forbidden:
+                    log_dm(
+                        owner,
+                        "Ticket Transfer Notice",
+                        success=False,
+                        error_detail="Direct Messages Disabled",
+                    )
+                except discord.HTTPException as error:
+                    log_exception(
+                        "DM",
+                        error,
+                        guild=interaction.guild,
+                        channel=interaction.channel,
+                        user=owner,
+                        context="Ticket transfer notification failed",
+                    )
+        log_ticket(
+            "Ticket Assignment Transferred",
+            interaction.channel,
+            interaction.user,
+            details=f"Previous: {previous_id}, New: {member.id}",
+        )
 
     @app_commands.command(
         name="labelz", description="Assign a classification label to an open ticket"
