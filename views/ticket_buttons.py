@@ -183,6 +183,45 @@ class PrioritySelectionView(ReliableView):
         embed.set_footer(text=config.BOT_NAME)
         await self.original_channel.send(embed=embed)
 
+        owner_id = await get_ticket_owner(self.original_channel.id)
+        if owner_id:
+            owner = interaction.guild.get_member(owner_id)
+            if owner is None:
+                try:
+                    owner = await interaction.guild.fetch_member(owner_id)
+                except discord.HTTPException:
+                    owner = None
+            if owner:
+                notice = discord.Embed(
+                    title="Ticket Priority Updated",
+                    description=(
+                        f"The priority of your ticket {self.original_channel.mention} "
+                        f"was changed to **{priority}**."
+                    ),
+                    color=discord.Color.blurple(),
+                    timestamp=discord.utils.utcnow(),
+                )
+                notice.set_footer(text=config.BOT_NAME)
+                try:
+                    await owner.send(embed=notice)
+                    log_dm(owner, "Ticket Priority Notice", success=True)
+                except discord.Forbidden:
+                    log_dm(
+                        owner,
+                        "Ticket Priority Notice",
+                        success=False,
+                        error_detail="Direct Messages Disabled",
+                    )
+                except discord.HTTPException as error:
+                    log_exception(
+                        "DM",
+                        error,
+                        guild=interaction.guild,
+                        channel=self.original_channel,
+                        user=owner,
+                        context="Ticket priority notification failed",
+                    )
+
 
 class TicketButtons(ReliableView):
     def __init__(self, claimed_by=None):
@@ -333,13 +372,13 @@ class TicketButtons(ReliableView):
         if claimed:
             ticket_claim_report(channel, interaction.user, owner_id, interaction.client)
 
-        if claimed and owner_id:
+        if owner_id:
             try:
                 owner = interaction.guild.get_member(owner_id)
                 if owner is None:
                     owner = await interaction.guild.fetch_member(owner_id)
 
-                if owner:
+                if owner and claimed:
                     await owner.send(
                         embed=ticket_claimed_dm(
                             interaction.guild,
@@ -349,17 +388,30 @@ class TicketButtons(ReliableView):
                         )
                     )
                     log_dm(owner, "Ticket Claimed Notice", success=True)
+                elif owner:
+                    notice = discord.Embed(
+                        title="Ticket Assignment Updated",
+                        description=(
+                            f"Your ticket {channel.mention} is currently awaiting "
+                            "staff assignment."
+                        ),
+                        color=discord.Color.orange(),
+                        timestamp=discord.utils.utcnow(),
+                    )
+                    notice.set_footer(text=config.BOT_NAME)
+                    await owner.send(embed=notice)
+                    log_dm(owner, "Ticket Unclaimed Notice", success=True)
             except discord.Forbidden:
                 log_dm(
                     owner_id,
-                    "Ticket Claimed Notice",
+                    "Ticket Assignment Notice",
                     success=False,
                     error_detail="Direct Messages Disabled",
                 )
             except Exception as error:
                 log_dm(
                     owner_id,
-                    "Ticket Claimed Notice",
+                    "Ticket Assignment Notice",
                     success=False,
                     error_detail=str(error),
                 )
@@ -369,7 +421,7 @@ class TicketButtons(ReliableView):
                     guild=interaction.guild,
                     channel=channel,
                     user=owner_id,
-                    context="Failed to notify applicant that ticket was claimed",
+                    context="Failed to notify applicant about ticket assignment",
                 )
 
     @discord.ui.button(
