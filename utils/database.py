@@ -112,6 +112,20 @@ async def setup_database():
                 "ALTER TABLE tickets ADD COLUMN form_response TEXT DEFAULT NULL"
             )
 
+        if "waiting_on" not in columns:
+            await db.execute(
+                "ALTER TABLE tickets ADD COLUMN waiting_on TEXT NOT NULL DEFAULT 'staff'"
+            )
+
+        if "waiting_changed_at" not in columns:
+            await db.execute(
+                "ALTER TABLE tickets ADD COLUMN waiting_changed_at TEXT DEFAULT NULL"
+            )
+
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tickets_user_type_status ON tickets(guild_id, user_id, application, status)"
+        )
+
         repaired_ticket_count = 0
         if repair_uuids:
             cursor = await db.execute("SELECT id, uuid FROM tickets ORDER BY id")
@@ -784,7 +798,9 @@ async def get_ticket_by_uuid(
                 uuid,
                 control_message_id,
                 label,
-                form_response
+                form_response,
+                waiting_on,
+                waiting_changed_at
             FROM tickets
             WHERE
                 guild_id=?
@@ -835,6 +851,8 @@ async def get_ticket_by_uuid(
         "control_message_id": row[15],
         "label": row[16],
         "form_response": json.loads(row[17]) if row[17] else [],
+        "waiting_on": row[18] or "staff",
+        "waiting_changed_at": row[19],
     }
 
 
@@ -1202,9 +1220,11 @@ async def create_ticket_record(
                 status,
                 created_at,
                 uuid,
-                form_response
+                form_response,
+                waiting_on,
+                waiting_changed_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 channel_id,
@@ -1217,6 +1237,8 @@ async def create_ticket_record(
                 json.dumps(form_response, ensure_ascii=False)
                 if form_response
                 else None,
+                "staff",
+                created_at,
             ),
         )
 
@@ -1236,16 +1258,40 @@ async def create_ticket_record(
     return ticket_uuid
 
 
-async def get_open_ticket_for_user(guild_id, user_id):
+async def get_open_ticket_for_user(guild_id, user_id, application=None):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        if application is None:
+            cursor = await db.execute(
+                "SELECT channel_id, uuid, application FROM tickets WHERE guild_id=? AND user_id=? AND status='open' ORDER BY id DESC LIMIT 1",
+                (int(guild_id), int(user_id)),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT channel_id, uuid, application FROM tickets WHERE guild_id=? AND user_id=? AND application=? AND status='open' ORDER BY id DESC LIMIT 1",
+                (int(guild_id), int(user_id), str(application)),
+            )
+        row = await cursor.fetchone()
+    if row is None:
+        return None
+    return {"channel_id": row[0], "uuid": row[1], "application": row[2]}
+
+
+async def get_latest_closed_ticket_for_user_type(guild_id, user_id, application):
     async with aiosqlite.connect(config.DATABASE) as db:
         cursor = await db.execute(
-            "SELECT channel_id, uuid FROM tickets WHERE guild_id=? AND user_id=? AND status='open' ORDER BY id DESC LIMIT 1",
-            (int(guild_id), int(user_id)),
+            "SELECT channel_id, uuid, closed_at, claimed_by, control_message_id FROM tickets WHERE guild_id=? AND user_id=? AND application=? AND status='closed' ORDER BY closed_at DESC, id DESC LIMIT 1",
+            (int(guild_id), int(user_id), str(application)),
         )
         row = await cursor.fetchone()
     if row is None:
         return None
-    return {"channel_id": row[0], "uuid": row[1]}
+    return {
+        "channel_id": row[0],
+        "uuid": row[1],
+        "closed_at": row[2],
+        "claimed_by": row[3],
+        "control_message_id": row[4],
+    }
 
 
 async def close_ticket(
@@ -1292,7 +1338,8 @@ async def close_ticket(
     return closed
 
 
-async def reopen_ticket(channel_id):
+async def reopen_ticket(channel_id, reopened_at=None):
+    reopened_at = reopened_at or datetime.now(pytz.utc).isoformat()
 
     async with aiosqlite.connect(config.DATABASE) as db:
         cursor = await db.execute(
@@ -1304,10 +1351,12 @@ async def reopen_ticket(channel_id):
                 closed_by=NULL,
                 close_reason=NULL,
                 warned_inactive=0,
-                warned_at=NULL
+                warned_at=NULL,
+                waiting_on='staff',
+                waiting_changed_at=?
             WHERE channel_id=? AND status='closed'
         """,
-            ("open", channel_id),
+            ("open", reopened_at, channel_id),
         )
 
         await db.commit()
@@ -1457,6 +1506,117 @@ async def toggle_ticket_claim(channel_id, user_id, changed_at, cooldown_seconds=
             }
         await db.commit()
     return result
+
+
+async def transfer_ticket_claim(channel_id, transferred_by, target_id, changed_at):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cursor = await db.execute(
+            "SELECT status, claimed_by FROM tickets WHERE channel_id=?",
+            (int(channel_id),),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            await db.rollback()
+            return {"status": "not_found"}
+        status, previous_claimed_by = row
+        if status != "open":
+            await db.rollback()
+            return {"status": "not_open", "claimed_by": previous_claimed_by}
+        if previous_claimed_by is None:
+            await db.rollback()
+            return {"status": "unclaimed"}
+        if int(previous_claimed_by) == int(target_id):
+            await db.rollback()
+            return {
+                "status": "same",
+                "claimed_by": int(target_id),
+                "previous_claimed_by": int(previous_claimed_by),
+            }
+        await db.execute(
+            "UPDATE tickets SET claimed_by=?, claimed_at=?, claim_changed_at=? WHERE channel_id=? AND status='open'",
+            (int(target_id), changed_at, changed_at, int(channel_id)),
+        )
+        await db.commit()
+    return {
+        "status": "transferred",
+        "claimed_by": int(target_id),
+        "previous_claimed_by": int(previous_claimed_by),
+        "transferred_by": int(transferred_by),
+    }
+
+
+async def set_ticket_waiting_on(channel_id, waiting_on, changed_at=None):
+    value = str(waiting_on).lower()
+    if value not in {"user", "staff"}:
+        raise ValueError("waiting_on must be user or staff")
+    changed_at = changed_at or datetime.now(pytz.utc).isoformat()
+    async with aiosqlite.connect(config.DATABASE) as db:
+        cursor = await db.execute(
+            "UPDATE tickets SET waiting_on=?, waiting_changed_at=?, warned_inactive=0, warned_at=NULL WHERE channel_id=? AND status='open'",
+            (value, changed_at, int(channel_id)),
+        )
+        await db.commit()
+    return cursor.rowcount == 1
+
+
+async def process_ticket_message(channel_id, author_id, staff_message, changed_at):
+    async with aiosqlite.connect(config.DATABASE) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cursor = await db.execute(
+            "SELECT status, user_id, claimed_by, waiting_on FROM tickets WHERE channel_id=?",
+            (int(channel_id),),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            await db.rollback()
+            return {"status": "not_found"}
+        status, user_id, claimed_by, waiting_on = row
+        if status != "open":
+            await db.rollback()
+            return {"status": "not_open"}
+        if int(author_id) == int(user_id):
+            await db.execute(
+                "UPDATE tickets SET waiting_on='staff', waiting_changed_at=?, warned_inactive=0, warned_at=NULL WHERE channel_id=? AND status='open'",
+                (changed_at, int(channel_id)),
+            )
+            await db.commit()
+            return {
+                "status": "updated",
+                "waiting_on": "staff",
+                "owner_id": int(user_id),
+                "claimed_by": claimed_by,
+                "auto_claimed": False,
+            }
+        if not staff_message:
+            await db.rollback()
+            return {
+                "status": "ignored",
+                "waiting_on": waiting_on,
+                "owner_id": int(user_id),
+                "claimed_by": claimed_by,
+                "auto_claimed": False,
+            }
+        auto_claimed = claimed_by is None
+        if auto_claimed:
+            await db.execute(
+                "UPDATE tickets SET waiting_on='user', waiting_changed_at=?, warned_inactive=0, warned_at=NULL, claimed_by=?, claimed_at=?, claim_changed_at=? WHERE channel_id=? AND status='open'",
+                (changed_at, int(author_id), changed_at, changed_at, int(channel_id)),
+            )
+            claimed_by = int(author_id)
+        else:
+            await db.execute(
+                "UPDATE tickets SET waiting_on='user', waiting_changed_at=?, warned_inactive=0, warned_at=NULL WHERE channel_id=? AND status='open'",
+                (changed_at, int(channel_id)),
+            )
+        await db.commit()
+    return {
+        "status": "updated",
+        "waiting_on": "user",
+        "owner_id": int(user_id),
+        "claimed_by": claimed_by,
+        "auto_claimed": auto_claimed,
+    }
 
 
 async def set_ticket_control_message(channel_id, message_id):
@@ -1618,7 +1778,9 @@ async def get_ticket_record(channel_id):
                 uuid,
                 control_message_id,
                 label,
-                form_response
+                form_response,
+                waiting_on,
+                waiting_changed_at
             FROM tickets
             WHERE channel_id=?
         """,
@@ -1649,6 +1811,8 @@ async def get_ticket_record(channel_id):
         "control_message_id": row[15],
         "label": row[16],
         "form_response": json.loads(row[17]) if row[17] else [],
+        "waiting_on": row[18] or "staff",
+        "waiting_changed_at": row[19],
     }
 
 

@@ -152,17 +152,40 @@ class Escalations(commands.Cog):
     async def audit_escalations(self):
         async with aiosqlite.connect(config.DATABASE) as db:
             cursor = await db.execute(
-                "SELECT channel_id, guild_id, user_id, created_at, priority FROM tickets WHERE status='open'"
+                "SELECT channel_id, guild_id, user_id, created_at, priority, waiting_on, waiting_changed_at FROM tickets WHERE status='open'"
             )
             tickets = await cursor.fetchall()
 
-        for channel_id, guild_id, user_id, created_at, priority in tickets:
+        for (
+            channel_id,
+            guild_id,
+            user_id,
+            created_at,
+            priority,
+            waiting_on,
+            waiting_changed_at,
+        ) in tickets:
             guild = self.bot.get_guild(guild_id)
             channel = guild.get_channel(channel_id) if guild else None
             if guild is None or channel is None:
                 continue
             try:
-                ticket_age_minutes = minutes_since(created_at, guild.id)
+                if str(priority).lower() == "high":
+                    await self.send_escalation(
+                        guild,
+                        channel,
+                        "high_priority",
+                        "High-Priority Ticket",
+                        "This ticket has been classified as high priority and requires prompt review.",
+                        "Critical",
+                    )
+
+                if waiting_on != "staff":
+                    continue
+
+                response_reference = waiting_changed_at or created_at
+                ticket_age_minutes = minutes_since(response_reference, guild.id)
+                response_cycle = str(response_reference).replace(":", "-")
 
                 if (
                     ticket_age_minutes >= config.TICKET_REVIEW_ESCALATION_HOURS * 60
@@ -171,50 +194,28 @@ class Escalations(commands.Cog):
                     await self.send_escalation(
                         guild,
                         channel,
-                        "six_hour_ticket_review",
+                        f"six_hour_ticket_review:{response_cycle}",
                         "Ticket Review Required",
                         f"This ticket has remained open for {config.TICKET_REVIEW_ESCALATION_HOURS} hours and requires staff review. This is the only scheduled staff escalation before the 24-hour no-response check.",
                         "High",
                     )
 
-                no_response_event = "no_response_24h"
-                response_checked_event = "response_present_24h"
+                no_response_event = f"no_response_24h:{response_cycle}"
                 if (
                     ticket_age_minutes >= config.NO_RESPONSE_ESCALATION_HOURS * 60
                     and not await escalation_event_exists(
                         guild.id, channel.id, no_response_event
                     )
-                    and not await escalation_event_exists(
-                        guild.id, channel.id, response_checked_event
-                    )
                 ):
-                    if await self.has_staff_response(channel):
-                        await register_escalation_event(
-                            guild.id,
-                            channel.id,
-                            response_checked_event,
-                            datetime.now(guild_timezone(guild.id)).isoformat(),
-                        )
-                    else:
-                        await self.send_escalation(
-                            guild,
-                            channel,
-                            no_response_event,
-                            "24-Hour Response Required",
-                            f"No staff member has responded within {config.NO_RESPONSE_ESCALATION_HOURS} hours of this ticket being opened. The ticket owner and configured staff roles must review this ticket.",
-                            "Critical",
-                            user_id=user_id,
-                            always_mention_staff=True,
-                        )
-
-                if str(priority).lower() == "high":
                     await self.send_escalation(
                         guild,
                         channel,
-                        "high_priority",
-                        "High-Priority Ticket",
-                        "This ticket has been classified as high priority and requires prompt staff review.",
+                        no_response_event,
+                        "24-Hour Response Required",
+                        f"This ticket has been waiting for staff for {config.NO_RESPONSE_ESCALATION_HOURS} hours. The configured staff roles must review and respond.",
                         "Critical",
+                        user_id=user_id,
+                        always_mention_staff=True,
                     )
 
             except Exception as error:

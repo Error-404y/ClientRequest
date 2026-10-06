@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import discord
 import pytz
@@ -8,16 +8,19 @@ from discord.ui import Select
 import config
 from utils.database import (
     auto_assign_ticket,
+    close_ticket,
     create_ticket_record,
+    get_latest_closed_ticket_for_user_type,
     get_next_ticket_number,
     get_open_ticket_for_user,
     get_staff_availability,
     get_ticket_form,
     mark_ticket_deleted,
+    reopen_ticket,
     set_ticket_control_message,
 )
 from utils.embeds import error as error_embed
-from utils.embeds import ticket_claimed_dm, ticket_created
+from utils.embeds import ticket_claimed_dm, ticket_created, ticket_reopened
 from utils.logger import (
     log_dm,
     log_exception,
@@ -125,6 +128,7 @@ class ApplicationDropdown(Select):
         guild = interaction.guild
 
         guild_id = guild.id
+        timezone = pytz.timezone(config.get_timezone(guild_id))
 
         try:
             guild_config = config.get_guild_config(guild_id)
@@ -142,7 +146,9 @@ class ApplicationDropdown(Select):
             details=(f"Selected Application: {application}"),
         )
 
-        existing_record = await get_open_ticket_for_user(guild_id, user.id)
+        existing_record = await get_open_ticket_for_user(
+            guild_id, user.id, application
+        )
         if existing_record:
             existing_channel = guild.get_channel(existing_record["channel_id"])
             if existing_channel is None:
@@ -173,26 +179,175 @@ class ApplicationDropdown(Select):
                 )
                 await interaction.followup.send(
                     embed=error_embed(
-                        f"You already have an open ticket: {existing_channel.mention}"
+                        f"You already have an open {application} ticket: {existing_channel.mention}"
                     ),
                     ephemeral=True,
                 )
                 return
             await mark_ticket_deleted(existing_record["channel_id"])
 
-        for channel in guild.text_channels:
-            if channel.category_id != ticket_category_id:
-                continue
-
-            if channel.topic and channel.topic.startswith(f"ticket_owner:{user.id}"):
-                log_ticket("Creation Aborted (Duplicate Ticket)", channel, user)
-
-                await interaction.followup.send(
-                    embed=error_embed("You already have an open application ticket."),
-                    ephemeral=True,
-                )
-
-                return
+        recent_record = await get_latest_closed_ticket_for_user_type(
+            guild_id, user.id, application
+        )
+        if recent_record and recent_record["closed_at"]:
+            try:
+                closed_at = datetime.fromisoformat(recent_record["closed_at"])
+                if closed_at.tzinfo is None:
+                    closed_at = timezone.localize(closed_at)
+                reopen_age = datetime.now(timezone) - closed_at.astimezone(timezone)
+            except (TypeError, ValueError):
+                reopen_age = timedelta(hours=config.TICKET_REOPEN_HOURS + 1)
+            if reopen_age <= timedelta(hours=config.TICKET_REOPEN_HOURS):
+                previous_channel = guild.get_channel(recent_record["channel_id"])
+                if previous_channel is None:
+                    try:
+                        previous_channel = await guild.fetch_channel(
+                            recent_record["channel_id"]
+                        )
+                    except discord.HTTPException:
+                        previous_channel = None
+                if isinstance(previous_channel, discord.TextChannel):
+                    reopened = await reopen_ticket(
+                        previous_channel.id,
+                        datetime.now(timezone).isoformat(),
+                    )
+                    if reopened:
+                        control_message = None
+                        try:
+                            await previous_channel.set_permissions(
+                                user,
+                                view_channel=True,
+                                send_messages=True,
+                                read_message_history=True,
+                            )
+                            category = guild.get_channel(ticket_category_id)
+                            if category:
+                                await previous_channel.edit(category=category)
+                            view = TicketButtons(
+                                claimed_by=recent_record.get("claimed_by")
+                            )
+                            form_url = None
+                            if application == "Moderator Application":
+                                form_url = config.MODERATOR_FORM
+                            elif application == "Uploader Application":
+                                form_url = config.UPLOADER_FORM
+                            if form_url:
+                                view.add_item(
+                                    discord.ui.Button(
+                                        label="Application Form",
+                                        style=discord.ButtonStyle.link,
+                                        url=form_url,
+                                    )
+                                )
+                            control_message = await previous_channel.send(
+                                content=user.mention,
+                                embed=ticket_reopened(applicant=user),
+                                view=view,
+                            )
+                            await set_ticket_control_message(
+                                previous_channel.id, control_message.id
+                            )
+                            archived_control_id = recent_record.get(
+                                "control_message_id"
+                            )
+                            if (
+                                archived_control_id
+                                and archived_control_id != control_message.id
+                            ):
+                                try:
+                                    archived_control = await previous_channel.fetch_message(
+                                        archived_control_id
+                                    )
+                                    await archived_control.delete()
+                                except discord.HTTPException as cleanup_error:
+                                    log_exception(
+                                        "TICKET",
+                                        cleanup_error,
+                                        guild=guild,
+                                        channel=previous_channel,
+                                        user=user,
+                                        context="Failed to remove archived ticket controls after reopen",
+                                    )
+                            log_ticket(
+                                "Recent Ticket Reopened",
+                                previous_channel,
+                                user,
+                                details=f"Application: {application}",
+                            )
+                            await interaction.followup.send(
+                                embed=discord.Embed(
+                                    title="Ticket Reopened",
+                                    description=(
+                                        f"Your recent {application} ticket was reopened: "
+                                        f"{previous_channel.mention}"
+                                    ),
+                                    color=discord.Color.green(),
+                                ),
+                                ephemeral=True,
+                            )
+                            return
+                        except Exception as reopen_error:
+                            if control_message is not None:
+                                try:
+                                    await control_message.delete()
+                                except discord.HTTPException as cleanup_error:
+                                    log_exception(
+                                        "TICKET",
+                                        cleanup_error,
+                                        guild=guild,
+                                        channel=previous_channel,
+                                        user=user,
+                                        context="Failed to remove incomplete reopened ticket controls",
+                                    )
+                            try:
+                                await close_ticket(
+                                    previous_channel.id,
+                                    recent_record["closed_at"],
+                                    None,
+                                    "Automatic reopen rollback",
+                                )
+                                await previous_channel.set_permissions(
+                                    user,
+                                    view_channel=False,
+                                    send_messages=False,
+                                )
+                                archive = guild.get_channel(
+                                    config.get_archive_category_id(guild_id)
+                                )
+                                if archive:
+                                    await previous_channel.edit(category=archive)
+                                archived_control_id = recent_record.get(
+                                    "control_message_id"
+                                )
+                                if archived_control_id:
+                                    await set_ticket_control_message(
+                                        previous_channel.id,
+                                        archived_control_id,
+                                    )
+                            except Exception as rollback_error:
+                                log_exception(
+                                    "TICKET",
+                                    rollback_error,
+                                    guild=guild,
+                                    channel=previous_channel,
+                                    user=user,
+                                    context="Automatic recent ticket reopen rollback failed",
+                                )
+                            reference = log_exception(
+                                "TICKET",
+                                reopen_error,
+                                guild=guild,
+                                channel=previous_channel,
+                                user=user,
+                                context="Automatic recent ticket reopen failed",
+                            )
+                            await interaction.followup.send(
+                                embed=error_embed(
+                                    f"Your recent ticket could not be reopened. Error reference: `{reference}`"
+                                ),
+                                ephemeral=True,
+                            )
+                            return
 
         form = None
 
