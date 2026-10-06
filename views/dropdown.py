@@ -259,8 +259,15 @@ class ApplicationDropdown(Select):
                                         archived_control_id
                                     )
                                     await archived_control.delete()
-                                except discord.HTTPException:
-                                    pass
+                                except discord.HTTPException as cleanup_error:
+                                    log_exception(
+                                        "TICKET",
+                                        cleanup_error,
+                                        guild=guild,
+                                        channel=previous_channel,
+                                        user=user,
+                                        context="Failed to remove archived ticket controls after reopen",
+                                    )
                             log_ticket(
                                 "Recent Ticket Reopened",
                                 previous_channel,
@@ -283,8 +290,15 @@ class ApplicationDropdown(Select):
                             if control_message is not None:
                                 try:
                                     await control_message.delete()
-                                except discord.HTTPException:
-                                    pass
+                                except discord.HTTPException as cleanup_error:
+                                    log_exception(
+                                        "TICKET",
+                                        cleanup_error,
+                                        guild=guild,
+                                        channel=previous_channel,
+                                        user=user,
+                                        context="Failed to remove incomplete reopened ticket controls",
+                                    )
                             try:
                                 await close_ticket(
                                     previous_channel.id,
