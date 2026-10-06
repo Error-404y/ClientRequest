@@ -8,6 +8,7 @@ from discord.ui import Select
 import config
 from utils.database import (
     auto_assign_ticket,
+    close_ticket,
     create_ticket_record,
     get_next_ticket_number,
     get_latest_closed_ticket_for_user_type,
@@ -127,6 +128,7 @@ class ApplicationDropdown(Select):
         guild = interaction.guild
 
         guild_id = guild.id
+        timezone = pytz.timezone(config.get_timezone(guild_id))
 
         try:
             guild_config = config.get_guild_config(guild_id)
@@ -250,6 +252,32 @@ class ApplicationDropdown(Select):
                             )
                             return
                         except Exception as reopen_error:
+                            try:
+                                await close_ticket(
+                                    previous_channel.id,
+                                    recent_record["closed_at"],
+                                    None,
+                                    "Automatic reopen rollback",
+                                )
+                                await previous_channel.set_permissions(
+                                    user,
+                                    view_channel=False,
+                                    send_messages=False,
+                                )
+                                archive = guild.get_channel(
+                                    config.get_archive_category_id(guild_id)
+                                )
+                                if archive:
+                                    await previous_channel.edit(category=archive)
+                            except Exception as rollback_error:
+                                log_exception(
+                                    "TICKET",
+                                    rollback_error,
+                                    guild=guild,
+                                    channel=previous_channel,
+                                    user=user,
+                                    context="Automatic recent ticket reopen rollback failed",
+                                )
                             reference = log_exception(
                                 "TICKET",
                                 reopen_error,
