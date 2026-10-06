@@ -117,6 +117,11 @@ async def setup_database():
                 "ALTER TABLE tickets ADD COLUMN waiting_on TEXT NOT NULL DEFAULT 'staff'"
             )
 
+        if "waiting_changed_at" not in columns:
+            await db.execute(
+                "ALTER TABLE tickets ADD COLUMN waiting_changed_at TEXT DEFAULT NULL"
+            )
+
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_tickets_user_type_status ON tickets(guild_id, user_id, application, status)"
         )
@@ -794,7 +799,8 @@ async def get_ticket_by_uuid(
                 control_message_id,
                 label,
                 form_response,
-                waiting_on
+                waiting_on,
+                waiting_changed_at
             FROM tickets
             WHERE
                 guild_id=?
@@ -846,6 +852,7 @@ async def get_ticket_by_uuid(
         "label": row[16],
         "form_response": json.loads(row[17]) if row[17] else [],
         "waiting_on": row[18] or "staff",
+        "waiting_changed_at": row[19],
     }
 
 
@@ -1213,9 +1220,11 @@ async def create_ticket_record(
                 status,
                 created_at,
                 uuid,
-                form_response
+                form_response,
+                waiting_on,
+                waiting_changed_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 channel_id,
@@ -1228,6 +1237,8 @@ async def create_ticket_record(
                 json.dumps(form_response, ensure_ascii=False)
                 if form_response
                 else None,
+                "staff",
+                created_at,
             ),
         )
 
@@ -1326,7 +1337,8 @@ async def close_ticket(
     return closed
 
 
-async def reopen_ticket(channel_id):
+async def reopen_ticket(channel_id, reopened_at=None):
+    reopened_at = reopened_at or datetime.now(pytz.utc).isoformat()
 
     async with aiosqlite.connect(config.DATABASE) as db:
         cursor = await db.execute(
@@ -1339,10 +1351,11 @@ async def reopen_ticket(channel_id):
                 close_reason=NULL,
                 warned_inactive=0,
                 warned_at=NULL,
-                waiting_on='staff'
+                waiting_on='staff',
+                waiting_changed_at=?
             WHERE channel_id=? AND status='closed'
         """,
-            ("open", channel_id),
+            ("open", reopened_at, channel_id),
         )
 
         await db.commit()
@@ -1532,14 +1545,15 @@ async def transfer_ticket_claim(channel_id, transferred_by, target_id, changed_a
     }
 
 
-async def set_ticket_waiting_on(channel_id, waiting_on):
+async def set_ticket_waiting_on(channel_id, waiting_on, changed_at=None):
     value = str(waiting_on).lower()
     if value not in {"user", "staff"}:
         raise ValueError("waiting_on must be user or staff")
+    changed_at = changed_at or datetime.now(pytz.utc).isoformat()
     async with aiosqlite.connect(config.DATABASE) as db:
         cursor = await db.execute(
-            "UPDATE tickets SET waiting_on=?, warned_inactive=0, warned_at=NULL WHERE channel_id=? AND status='open'",
-            (value, int(channel_id)),
+            "UPDATE tickets SET waiting_on=?, waiting_changed_at=?, warned_inactive=0, warned_at=NULL WHERE channel_id=? AND status='open'",
+            (value, changed_at, int(channel_id)),
         )
         await db.commit()
     return cursor.rowcount == 1
@@ -1562,8 +1576,8 @@ async def process_ticket_message(channel_id, author_id, staff_message, changed_a
             return {"status": "not_open"}
         if int(author_id) == int(user_id):
             await db.execute(
-                "UPDATE tickets SET waiting_on='staff', warned_inactive=0, warned_at=NULL WHERE channel_id=? AND status='open'",
-                (int(channel_id),),
+                "UPDATE tickets SET waiting_on='staff', waiting_changed_at=?, warned_inactive=0, warned_at=NULL WHERE channel_id=? AND status='open'",
+                (changed_at, int(channel_id)),
             )
             await db.commit()
             return {
@@ -1585,14 +1599,14 @@ async def process_ticket_message(channel_id, author_id, staff_message, changed_a
         auto_claimed = claimed_by is None
         if auto_claimed:
             await db.execute(
-                "UPDATE tickets SET waiting_on='user', warned_inactive=0, warned_at=NULL, claimed_by=?, claimed_at=?, claim_changed_at=? WHERE channel_id=? AND status='open'",
-                (int(author_id), changed_at, changed_at, int(channel_id)),
+                "UPDATE tickets SET waiting_on='user', waiting_changed_at=?, warned_inactive=0, warned_at=NULL, claimed_by=?, claimed_at=?, claim_changed_at=? WHERE channel_id=? AND status='open'",
+                (changed_at, int(author_id), changed_at, changed_at, int(channel_id)),
             )
             claimed_by = int(author_id)
         else:
             await db.execute(
-                "UPDATE tickets SET waiting_on='user', warned_inactive=0, warned_at=NULL WHERE channel_id=? AND status='open'",
-                (int(channel_id),),
+                "UPDATE tickets SET waiting_on='user', waiting_changed_at=?, warned_inactive=0, warned_at=NULL WHERE channel_id=? AND status='open'",
+                (changed_at, int(channel_id)),
             )
         await db.commit()
     return {
