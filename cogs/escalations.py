@@ -185,6 +185,7 @@ class Escalations(commands.Cog):
 
                 response_reference = waiting_changed_at or created_at
                 ticket_age_minutes = minutes_since(response_reference, guild.id)
+                response_cycle = str(response_reference).replace(":", "-")
 
                 if (
                     ticket_age_minutes >= config.TICKET_REVIEW_ESCALATION_HOURS * 60
@@ -193,13 +194,13 @@ class Escalations(commands.Cog):
                     await self.send_escalation(
                         guild,
                         channel,
-                        "six_hour_ticket_review",
+                        f"six_hour_ticket_review:{response_cycle}",
                         "Ticket Review Required",
                         f"This ticket has remained open for {config.TICKET_REVIEW_ESCALATION_HOURS} hours and requires staff review. This is the only scheduled staff escalation before the 24-hour no-response check.",
                         "High",
                     )
 
-                no_response_event = "no_response_24h"
+                no_response_event = f"no_response_24h:{response_cycle}"
                 if (
                     ticket_age_minutes >= config.NO_RESPONSE_ESCALATION_HOURS * 60
                     and not await escalation_event_exists(
