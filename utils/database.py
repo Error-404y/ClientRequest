@@ -1777,7 +1777,9 @@ async def get_ticket_record(channel_id):
                 uuid,
                 control_message_id,
                 label,
-                form_response
+                form_response,
+                waiting_on,
+                waiting_changed_at
             FROM tickets
             WHERE channel_id=?
         """,
@@ -1808,6 +1810,8 @@ async def get_ticket_record(channel_id):
         "control_message_id": row[15],
         "label": row[16],
         "form_response": json.loads(row[17]) if row[17] else [],
+        "waiting_on": row[18] or "staff",
+        "waiting_changed_at": row[19],
     }
 
 
