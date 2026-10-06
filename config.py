@@ -32,7 +32,7 @@ BOT_OWNER_IDS = (
 DEFAULT_TICKET_OPTIONS = [
     "General Support",
     "Partnership",
-    "Player Reports",
+    "Reports",
     "Questions",
     "Issues",
 ]
