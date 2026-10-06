@@ -205,7 +205,10 @@ class ApplicationDropdown(Select):
                     except discord.HTTPException:
                         previous_channel = None
                 if isinstance(previous_channel, discord.TextChannel):
-                    reopened = await reopen_ticket(previous_channel.id)
+                    reopened = await reopen_ticket(
+                        previous_channel.id,
+                        datetime.now(timezone).isoformat(),
+                    )
                     if reopened:
                         try:
                             await previous_channel.set_permissions(
