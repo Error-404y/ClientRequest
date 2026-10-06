@@ -29,25 +29,25 @@ def ticket_panel(
         description=(
             f"Welcome to the **{server_name}** support portal. "
             "Please choose the appropriate option from the dropdown menu below to open a private ticket. "
-            "Our staff team is available for inquiries, partnerships, player reports, and support requests."
+            "Our staff team is available for questions, reports, requests, issues, and general support."
         ),
         color=PRIMARY,
     )
     embed.add_field(
         name="Process",
         value=(
-            "1. Select the desired ticket type from the dropdown menu below.\n"
+            "1. Select the appropriate ticket type from the dropdown menu below.\n"
             "2. A private channel will be created for you automatically.\n"
-            "3. Describe your inquiry directly in the channel."
+            "3. Describe your request or issue directly in the channel."
         ),
         inline=False,
     )
     embed.add_field(
         name="Guidelines",
         value=(
-            "• Please be honest and provide as much detail as possible.\n"
-            "• For Player Reports, ensure you attach clear evidence (screenshots, videos, or logs).\n"
-            "• Opening multiple redundant tickets is prohibited."
+            "• Please provide clear and accurate information.\n"
+            "• Include relevant details or supporting evidence when needed, such as screenshots, links, messages, files, or logs.\n"
+            "• Please avoid opening multiple tickets for the same matter."
         ),
         inline=False,
     )
@@ -67,8 +67,8 @@ def ticket_created(user, application, form, ticket_uuid=None, custom_answers=Non
 
     if application == "Partnership":
         desc = "Hello! Your partnership ticket has been created. Please describe your partnership proposal, including your community link, member count, and what you expect from this partnership."
-    elif application == "Player Reports":
-        desc = "Hello! Your player report ticket has been created. Please provide the offender's username/ID, a detailed description of the incident, and any evidence (screenshots, videos, or clips)."
+    elif application in {"Reports", "Player Reports"}:
+        desc = "Hello! Your report ticket has been created. Please describe the matter clearly and include any relevant names, references, context, or supporting evidence."
     elif application == "Billing/Issues":
         desc = "Hello! Your support ticket has been created. Please describe the technical issue or billing query you are experiencing in detail."
     elif form:
