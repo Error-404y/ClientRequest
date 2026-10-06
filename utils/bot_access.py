@@ -7,7 +7,8 @@ from discord.ext import commands
 import config
 from utils.embeds import error as error_embed
 
-BOT_ACCESS_OWNER_ID = 1536561752659984514
+BOT_ACCESS_OWNER_IDS = frozenset(config.BOT_OWNER_IDS)
+BOT_ACCESS_OWNER_ID = config.BOT_OWNER_IDS[0]
 
 
 class BotAccessDenied(commands.CheckFailure):
@@ -35,6 +36,8 @@ def ban_embed():
 
 
 async def is_bot_banned(user_id):
+    if user_id in BOT_ACCESS_OWNER_IDS:
+        return False
     async with aiosqlite.connect(config.DATABASE) as db:
         async with db.execute(
             "SELECT 1 FROM bot_bans WHERE user_id=?", (user_id,)
@@ -43,10 +46,10 @@ async def is_bot_banned(user_id):
 
 
 async def ban_bot_user(user_id, banned_by):
-    if banned_by != BOT_ACCESS_OWNER_ID:
-        raise PermissionError("Only the bot access owner can manage bot bans.")
-    if user_id == BOT_ACCESS_OWNER_ID:
-        raise ValueError("The bot access owner cannot be banned.")
+    if banned_by not in BOT_ACCESS_OWNER_IDS:
+        raise PermissionError("Only a bot owner can manage bot bans.")
+    if user_id in BOT_ACCESS_OWNER_IDS:
+        raise ValueError("Bot owners cannot be banned.")
     async with aiosqlite.connect(config.DATABASE) as db:
         cursor = await db.execute(
             "INSERT OR IGNORE INTO bot_bans(user_id, banned_by, created_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
@@ -69,8 +72,8 @@ async def check_bot_access(interaction):
 
 
 async def unban_bot_user(user_id, unbanned_by):
-    if unbanned_by != BOT_ACCESS_OWNER_ID:
-        raise PermissionError("Only the bot access owner can manage bot bans.")
+    if unbanned_by not in BOT_ACCESS_OWNER_IDS:
+        raise PermissionError("Only a bot owner can manage bot bans.")
     async with aiosqlite.connect(config.DATABASE) as db:
         cursor = await db.execute("DELETE FROM bot_bans WHERE user_id=?", (user_id,))
         await db.commit()
