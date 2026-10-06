@@ -8,13 +8,17 @@ from discord.ext import commands, tasks
 import config
 from utils.database import escalation_event_exists, register_escalation_event
 from utils.logger import log_exception, log_ticket
+from utils.permissions import is_staff
 
-timezone = pytz.timezone(config.TIMEZONE)
+
+def guild_timezone(guild_id):
+    return pytz.timezone(config.get_timezone(guild_id))
 
 
-def minutes_since(value, now=None):
+def minutes_since(value, guild_id, now=None):
     if not value:
         return 0.0
+    timezone = guild_timezone(guild_id)
     parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None:
         parsed = timezone.localize(parsed)
@@ -69,6 +73,7 @@ class Escalations(commands.Cog):
         user_id=None,
         always_mention_staff=False,
     ):
+        timezone = guild_timezone(guild.id)
         created_at = datetime.now(timezone).isoformat()
         registered = await register_escalation_event(
             guild.id, channel.id, event_key, created_at
@@ -138,9 +143,9 @@ class Escalations(commands.Cog):
         )
         return True
 
-    async def has_human_response(self, channel):
+    async def has_staff_response(self, channel):
         async for message in channel.history(limit=250):
-            if not message.author.bot:
+            if not message.author.bot and is_staff(message.author):
                 return True
         return False
 
@@ -158,7 +163,7 @@ class Escalations(commands.Cog):
             if guild is None or channel is None:
                 continue
             try:
-                ticket_age_minutes = minutes_since(created_at)
+                ticket_age_minutes = minutes_since(created_at, guild.id)
 
                 if (
                     ticket_age_minutes >= config.TICKET_REVIEW_ESCALATION_HOURS * 60
@@ -184,12 +189,12 @@ class Escalations(commands.Cog):
                         guild.id, channel.id, response_checked_event
                     )
                 ):
-                    if await self.has_human_response(channel):
+                    if await self.has_staff_response(channel):
                         await register_escalation_event(
                             guild.id,
                             channel.id,
                             response_checked_event,
-                            datetime.now(timezone).isoformat(),
+                            datetime.now(guild_timezone(guild.id)).isoformat(),
                         )
                     else:
                         await self.send_escalation(
