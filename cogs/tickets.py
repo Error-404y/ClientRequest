@@ -285,7 +285,11 @@ class TicketControlRecovery(commands.Cog):
                 ephemeral=True,
             )
             return
-        updated = await set_ticket_waiting_on(interaction.channel.id, state.value)
+        updated = await set_ticket_waiting_on(
+            interaction.channel.id,
+            state.value,
+            discord.utils.utcnow().isoformat(),
+        )
         if not updated:
             await interaction.response.send_message(
                 embed=error_embed("This channel is not an open registered ticket."),
