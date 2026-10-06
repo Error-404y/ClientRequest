@@ -1279,7 +1279,7 @@ async def get_open_ticket_for_user(guild_id, user_id, application=None):
 async def get_latest_closed_ticket_for_user_type(guild_id, user_id, application):
     async with aiosqlite.connect(config.DATABASE) as db:
         cursor = await db.execute(
-            "SELECT channel_id, uuid, closed_at, claimed_by FROM tickets WHERE guild_id=? AND user_id=? AND application=? AND status='closed' ORDER BY closed_at DESC, id DESC LIMIT 1",
+            "SELECT channel_id, uuid, closed_at, claimed_by, control_message_id FROM tickets WHERE guild_id=? AND user_id=? AND application=? AND status='closed' ORDER BY closed_at DESC, id DESC LIMIT 1",
             (int(guild_id), int(user_id), str(application)),
         )
         row = await cursor.fetchone()
@@ -1290,6 +1290,7 @@ async def get_latest_closed_ticket_for_user_type(guild_id, user_id, application)
         "uuid": row[1],
         "closed_at": row[2],
         "claimed_by": row[3],
+        "control_message_id": row[4],
     }
 
 
