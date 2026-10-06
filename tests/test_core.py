@@ -160,7 +160,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn('waiting_on != "staff"', escalations)
         self.assertNotIn("Unclaimed Ticket Escalation", escalations)
         self.assertNotIn("Customer Response Overdue", escalations)
-        self.assertIn('"six_hour_ticket_review"', escalations)
+        self.assertIn('f"six_hour_ticket_review:{response_cycle}"', escalations)
 
     def test_update_embed_uses_server_label(self):
         source = (
