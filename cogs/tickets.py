@@ -16,9 +16,8 @@ from utils.database import (
     set_ticket_waiting_on,
     transfer_ticket_claim,
 )
-from utils.embeds import apply_ticket_label
+from utils.embeds import apply_ticket_label, ticket_claimed_dm
 from utils.embeds import error as error_embed
-from utils.embeds import ticket_claimed_dm
 from utils.logger import log_dm, log_exception, log_interaction, log_ticket
 from utils.permissions import is_staff
 from views.closed_buttons import ClosedTicketButtons
