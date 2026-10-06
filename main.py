@@ -41,6 +41,54 @@ bot = commands.AutoShardedBot(
     tree_cls=AccessCommandTree,
 )
 
+statuses = [
+    "Ticket Operations | ! maja !",
+    "Helping the community",
+    "Managing tickets",
+    "Keeping things organized",
+    "Pretending everything is under control",
+    "Waiting for someone to open a ticket",
+    "Reading way too many logs",
+    "Doing important bot things",
+    "Watching the chaos unfold",
+    "Keeping mods caffeinated",
+    "Fixing problems nobody reported",
+    "Definitely not judging your tickets",
+    "Counting open tickets...",
+    "Trying not to crash",
+    "Protecting the server",
+    "Looking busy",
+    "Processing absolutely serious business",
+    "Making Discord slightly less chaotic",
+    "Waiting for the next emergency",
+]
+
+
+async def rotate_status():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        dynamic_statuses = [
+            f"{len(bot.guilds):,} connected servers",
+            f"{sum(guild.member_count or 0 for guild in bot.guilds):,} community members",
+        ]
+        for status in statuses + dynamic_statuses:
+            if bot.is_closed():
+                return
+            try:
+                await bot.change_presence(
+                    activity=discord.Activity(
+                        type=discord.ActivityType.watching,
+                        name=status,
+                    )
+                )
+            except Exception as error:
+                log_exception(
+                    "DISCORD",
+                    error,
+                    context="Failed to update rotating bot status",
+                )
+            await asyncio.sleep(60)
+
 
 @bot.check
 async def prefix_bot_access(ctx):
@@ -272,20 +320,12 @@ async def setup_hook():
             "Global slash commands could not be synchronized after three attempts"
         ) from sync_error
 
+    bot.status_task = asyncio.create_task(rotate_status())
+
 
 @bot.event
 async def on_ready():
     emit("SUCCESS", "SYSTEM", "Discord gateway connection established")
-
-    try:
-        await bot.change_presence(
-            activity=discord.Activity(
-                type=discord.ActivityType.watching,
-                name="Ticket Operations | ! maja !",
-            )
-        )
-    except Exception as error:
-        log_exception("DISCORD", error, context="Failed to set bot activity status")
 
     if getattr(bot, "operations_console_ready", False):
         return

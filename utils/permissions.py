@@ -10,7 +10,13 @@ def _role_ids(member):
     return {role.id for role in getattr(member, "roles", [])}
 
 
+def is_bot_owner(member):
+    return member is not None and getattr(member, "id", None) in config.BOT_OWNER_IDS
+
+
 def is_owner(member):
+    if is_bot_owner(member):
+        return True
     if member is None:
         return False
     guild_id = _guild_id(member)
@@ -47,6 +53,8 @@ def is_staff(member):
 
 
 def can_setup(member):
+    if is_bot_owner(member):
+        return True
     if member is None:
         return False
     guild = getattr(member, "guild", None)
@@ -61,6 +69,8 @@ def can_setup(member):
 
 
 def can_manage_setup_admins(member):
+    if is_bot_owner(member):
+        return True
     if member is None:
         return False
     guild = getattr(member, "guild", None)
@@ -107,7 +117,7 @@ def can_moderate_target(member, target):
     target_id = getattr(target, "id", target if isinstance(target, int) else None)
     if not target_id or target_id == member.id or target_id == guild.owner_id:
         return False
-    if member.id == guild.owner_id:
+    if member.id == guild.owner_id or is_bot_owner(member):
         return True
     target_member = (
         target

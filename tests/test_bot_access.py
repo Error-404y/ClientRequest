@@ -152,3 +152,17 @@ class BotAccessTests(unittest.IsolatedAsyncioTestCase):
         )
         await BotAccess.bbmajaubb.callback(BotAccess(), interaction, str(target))
         self.assertTrue(await is_bot_banned(target))
+
+    async def test_second_bot_owner_can_manage_access(self):
+        target = 1536561752659984500
+        second_owner = 1269233770834165860
+        self.assertTrue(await ban_bot_user(target, second_owner))
+        self.assertTrue(await is_bot_banned(target))
+        self.assertTrue(await unban_bot_user(target, second_owner))
+        self.assertFalse(await is_bot_banned(target))
+
+    async def test_bot_owners_can_never_be_banned(self):
+        for owner_id in config.BOT_OWNER_IDS:
+            with self.assertRaises(ValueError):
+                await ban_bot_user(owner_id, BOT_ACCESS_OWNER_ID)
+            self.assertFalse(await is_bot_banned(owner_id))

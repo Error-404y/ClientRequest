@@ -7,19 +7,27 @@ from discord.ext import commands, tasks
 
 import config
 from utils.logger import log_exception, log_inactivity
+from utils.permissions import is_staff
 from utils.ticket_actions import close_ticket_channel
 
-timezone = pytz.timezone(config.TIMEZONE)
+
+def guild_timezone(guild_id):
+    return pytz.timezone(config.get_timezone(guild_id))
 
 
-def hours_since(value, now=None):
+def hours_since(value, guild_id, now=None):
     if not value:
         return 0.0
+    timezone = guild_timezone(guild_id)
     parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None:
         parsed = timezone.localize(parsed)
     current = now or datetime.now(timezone)
     return max(0.0, (current - parsed.astimezone(timezone)).total_seconds() / 3600.0)
+
+
+def is_ticket_participant(message, user_id):
+    return message.author.id == user_id or is_staff(message.author)
 
 
 class Inactivity(commands.Cog):
@@ -53,7 +61,11 @@ class Inactivity(commands.Cog):
                 async with aiosqlite.connect(config.DATABASE) as db:
                     await db.execute(
                         "UPDATE tickets SET status='deleted', closed_at=? WHERE channel_id=? AND guild_id=?",
-                        (datetime.now(timezone).isoformat(), channel_id, guild_id),
+                        (
+                            datetime.now(guild_timezone(guild_id)).isoformat(),
+                            channel_id,
+                            guild_id,
+                        ),
                     )
                     await db.commit()
                 log_inactivity(
@@ -64,11 +76,12 @@ class Inactivity(commands.Cog):
 
             if warned:
                 try:
-                    warning_age = hours_since(warned_at)
+                    warning_age = hours_since(warned_at, guild_id)
                 except (TypeError, ValueError):
                     warning_age = 0.0
                 if warning_age >= config.INACTIVITY_CLOSE_HOURS:
                     try:
+                        timezone = guild_timezone(guild_id)
                         warning_time = datetime.fromisoformat(warned_at)
                         if warning_time.tzinfo is None:
                             warning_time = timezone.localize(warning_time)
@@ -76,7 +89,9 @@ class Inactivity(commands.Cog):
                         async for message in channel.history(
                             limit=None, after=warning_time, oldest_first=True
                         ):
-                            if not message.author.bot:
+                            if not message.author.bot and is_ticket_participant(
+                                message, user_id
+                            ):
                                 responded = True
                                 break
                         if responded:
@@ -107,8 +122,12 @@ class Inactivity(commands.Cog):
             last_activity = None
             try:
                 async for message in channel.history(limit=250):
-                    if not message.author.bot:
-                        last_activity = message.created_at.astimezone(timezone)
+                    if not message.author.bot and is_ticket_participant(
+                        message, user_id
+                    ):
+                        last_activity = message.created_at.astimezone(
+                            guild_timezone(guild_id)
+                        )
                         break
             except discord.HTTPException as error:
                 log_exception(
@@ -122,17 +141,18 @@ class Inactivity(commands.Cog):
 
             if last_activity is None:
                 try:
-                    inactive_hours = hours_since(created_at)
+                    inactive_hours = hours_since(created_at, guild_id)
                 except (TypeError, ValueError):
                     inactive_hours = 0.0
             else:
                 inactive_hours = (
-                    datetime.now(timezone) - last_activity
+                    datetime.now(guild_timezone(guild_id)) - last_activity
                 ).total_seconds() / 3600.0
 
             if (
                 last_activity is None
-                and hours_since(created_at) >= config.NO_RESPONSE_ESCALATION_HOURS
+                and hours_since(created_at, guild_id)
+                >= config.NO_RESPONSE_ESCALATION_HOURS
             ):
                 continue
 
@@ -177,7 +197,7 @@ class Inactivity(commands.Cog):
                 )
                 continue
 
-            warned_at_value = datetime.now(timezone).isoformat()
+            warned_at_value = datetime.now(guild_timezone(guild_id)).isoformat()
             async with aiosqlite.connect(config.DATABASE) as db:
                 await db.execute(
                     "UPDATE tickets SET warned_inactive=1, warned_at=? WHERE channel_id=? AND guild_id=? AND status='open'",
@@ -211,11 +231,11 @@ class Inactivity(commands.Cog):
             return
         async with aiosqlite.connect(config.DATABASE) as db:
             cursor = await db.execute(
-                "SELECT warned_inactive FROM tickets WHERE channel_id=? AND guild_id=? AND status='open'",
+                "SELECT warned_inactive, user_id FROM tickets WHERE channel_id=? AND guild_id=? AND status='open'",
                 (message.channel.id, message.guild.id),
             )
             row = await cursor.fetchone()
-            if row and row[0]:
+            if row and row[0] and is_ticket_participant(message, row[1]):
                 await db.execute(
                     "UPDATE tickets SET warned_inactive=0, warned_at=NULL WHERE channel_id=? AND guild_id=?",
                     (message.channel.id, message.guild.id),
