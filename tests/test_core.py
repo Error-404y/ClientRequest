@@ -48,6 +48,7 @@ from utils.database import (
     get_ticket_controls,
     get_ticket_owner,
     get_ticket_panels,
+    get_ticket_record,
     process_afk_message,
     process_ticket_message,
     register_escalation_event,
