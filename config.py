@@ -24,6 +24,11 @@ ERROR_REPORT_USER_ID = (
     if os.getenv("ERROR_REPORT_USER_ID", "0").isdigit()
     else 0
 )
+BOT_ACCESS_OWNER_ID = (
+    int(os.getenv("BOT_ACCESS_OWNER_ID", "0"))
+    if os.getenv("BOT_ACCESS_OWNER_ID", "0").isdigit()
+    else 0
+)
 
 DEFAULT_TICKET_OPTIONS = [
     "General Support",
@@ -122,6 +127,12 @@ def get_trial_mod_role(guild_id):
 
 def get_ticket_options(guild_id):
     return get_guild_config(guild_id)["TICKET_OPTIONS"]
+
+
+def get_timezone(guild_id=None):
+    if guild_id in GUILDS:
+        return GUILDS[guild_id].get("TIMEZONE") or TIMEZONE
+    return TIMEZONE
 
 
 BOT_NAME = "! maja !"
