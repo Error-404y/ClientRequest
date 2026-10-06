@@ -142,12 +142,6 @@ class Escalations(commands.Cog):
         )
         return True
 
-    async def has_staff_response(self, channel):
-        async for message in channel.history(limit=250):
-            if not message.author.bot and is_staff(message.author):
-                return True
-        return False
-
     @tasks.loop(minutes=5)
     async def audit_escalations(self):
         async with aiosqlite.connect(config.DATABASE) as db:
@@ -170,11 +164,14 @@ class Escalations(commands.Cog):
             if guild is None or channel is None:
                 continue
             try:
+                response_reference = waiting_changed_at or created_at
+                response_cycle = str(response_reference).replace(":", "-")
+
                 if str(priority).lower() == "high":
                     await self.send_escalation(
                         guild,
                         channel,
-                        "high_priority",
+                        f"high_priority:{response_cycle}",
                         "High-Priority Ticket",
                         "This ticket has been classified as high priority and requires prompt review.",
                         "Critical",
@@ -183,9 +180,7 @@ class Escalations(commands.Cog):
                 if waiting_on != "staff":
                     continue
 
-                response_reference = waiting_changed_at or created_at
                 ticket_age_minutes = minutes_since(response_reference, guild.id)
-                response_cycle = str(response_reference).replace(":", "-")
 
                 if (
                     ticket_age_minutes >= config.TICKET_REVIEW_ESCALATION_HOURS * 60

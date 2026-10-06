@@ -19,8 +19,6 @@ from utils.embeds import estimate_response_time, ticket_panel
 from utils.logger import log_exception, log_interaction
 from utils.permissions import is_staff
 
-timezone = pytz.timezone(config.TIMEZONE)
-
 STATUS_COLORS = {
     "Available": 0x2ECC71,
     "Busy": 0xF0B232,
@@ -97,7 +95,7 @@ class Availability(commands.Cog):
                         guild.id,
                         channel.id,
                         message.id,
-                        message.created_at.astimezone(timezone).isoformat(),
+                        message.created_at.astimezone(pytz.timezone(config.get_timezone(guild.id))).isoformat(),
                     )
         except discord.HTTPException as error:
             log_exception(
@@ -195,7 +193,7 @@ class Availability(commands.Cog):
             interaction.guild.id,
             interaction.user.id,
             status.value,
-            datetime.now(timezone).isoformat(),
+            datetime.now(pytz.timezone(config.get_timezone(interaction.guild.id))).isoformat(),
         )
         refreshed, available_staff, response_time = await self.refresh_ticket_panels(
             interaction.guild

@@ -19,8 +19,6 @@ from utils.permissions import is_staff
 from utils.ticket_actions import close_ticket_channel
 from views.base import ReliableModal, ReliableView
 
-timezone = pytz.timezone(config.TIMEZONE)
-
 
 class CloseTicketModal(ReliableModal, title="Close Ticket"):
     reason = discord.ui.TextInput(
@@ -252,7 +250,7 @@ class TicketButtons(ReliableView):
 
         await interaction.response.defer()
 
-        changed_at = datetime.now(timezone).isoformat()
+        changed_at = datetime.now(pytz.timezone(config.get_timezone(interaction.guild.id))).isoformat()
         result = await toggle_ticket_claim(
             interaction.channel.id, interaction.user.id, changed_at
         )

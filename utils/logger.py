@@ -17,7 +17,7 @@ import pytz
 
 import config
 
-timezone = pytz.timezone(config.TIMEZONE)
+timezone = pytz.utc
 MAX_LOG_BYTES = 5 * 1024 * 1024
 LOG_BACKUPS = 5
 SENSITIVE_PATTERNS = (
@@ -352,10 +352,6 @@ def log_performance(operation, started_at, threshold_ms=500, guild=None):
     return duration
 
 
-def get_time():
-    return datetime.now(timezone).strftime("%d.%m.%Y %H:%M:%S")
-
-
 def format_user(user):
     if user is None:
         return "Unknown User"
@@ -384,10 +380,6 @@ def log(message, guild=None):
     )
     level, category, text = match.groups() if match else ("INFO", "SYSTEM", text)
     emit(level, category, text, guild=guild)
-
-
-def log_debug(category, message, guild=None):
-    emit("DEBUG", category, message, guild=guild)
 
 
 def log_dm(recipient, subject, success=True, error_detail=None):
@@ -478,26 +470,6 @@ def log_perm(channel, target, permissions_summary):
     emit("INFO", "PERMISSION", permissions_summary, channel=channel, user=target)
 
 
-async def send_report_to_owner(bot, embed, file=None, is_error=False):
-    if not bot or not is_error or not config.ERROR_REPORT_USER_ID:
-        return
-    try:
-        owner = bot.get_user(config.ERROR_REPORT_USER_ID) or await bot.fetch_user(
-            config.ERROR_REPORT_USER_ID
-        )
-        if file:
-            await owner.send(embed=embed, file=file)
-        else:
-            await owner.send(embed=embed)
-    except Exception as error:
-        log_exception(
-            "DM",
-            error,
-            user=config.ERROR_REPORT_USER_ID,
-            context="Owner report delivery failed",
-        )
-
-
 def ticket_report(user, application, channel, bot=None):
     log_ticket("Created", channel, user, f"application={application}")
 
@@ -523,5 +495,3 @@ def ticket_delete_report(channel_name, moderator, owner_id, bot):
     log_ticket("Deleted", channel_name, moderator, f"applicant={owner_id or 'Unknown'}")
 
 
-def error_report(error):
-    return log_exception("ERROR", error)

@@ -78,7 +78,8 @@ class GovernanceLogicTests(unittest.TestCase):
     def test_all_moderation_execution_paths_reference_approval_queue(self):
         root = Path(__file__).resolve().parents[1]
         expected = {
-            "cogs/ban.py": ("WARN", "WARNING_REMOVE", "INFRACTION_REMOVE"),
+            "cogs/moderation_warnings.py": ("WARN", "WARNING_REMOVE"),
+            "cogs/moderation_history.py": ("INFRACTION_REMOVE",),
             "cogs/moderation.py": ("TIMEOUT",),
             "views/ban_buttons.py": ("BAN",),
             "views/kick_buttons.py": ("KICK",),

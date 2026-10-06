@@ -11,8 +11,6 @@ from utils.embeds import success as success_embed
 from utils.logger import log_exception, log_interaction, log_ticket
 from utils.permissions import is_staff
 
-timezone = pytz.timezone(config.TIMEZONE)
-
 STATUS_STYLES = {
     "Rolling Out": {
         "color": 0x5865F2,
@@ -49,7 +47,7 @@ class Updates(commands.Cog):
             title=headline,
             description=f"{style['message']}\n\n{details}",
             color=style["color"],
-            timestamp=datetime.now(timezone),
+            timestamp=datetime.now(pytz.timezone(config.get_timezone(guild.id))),
         )
         icon_url = self.bot.user.display_avatar.url if self.bot.user else None
         embed.set_author(

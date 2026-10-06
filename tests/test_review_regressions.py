@@ -157,6 +157,46 @@ class ReviewRegressionTests(unittest.IsolatedAsyncioTestCase):
         channel.send.assert_awaited_once()
         save.assert_awaited_once_with(123, 789)
 
+    async def test_recovery_initializes_legacy_waiting_state_from_last_user_message(self):
+        created_at = discord.utils.utcnow()
+        message = SimpleNamespace(
+            author=SimpleNamespace(id=222, bot=False),
+            created_at=created_at,
+        )
+
+        async def history(**kwargs):
+            yield message
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.id = 123
+        channel.guild = SimpleNamespace(id=1)
+        channel.history = history
+        channel.fetch_message = AsyncMock(return_value=SimpleNamespace(id=456))
+        cog = TicketControlRecovery(SimpleNamespace(get_channel=lambda _: channel))
+        record = dict(
+            id=1,
+            channel_id=123,
+            guild_id=1,
+            control_message_id=456,
+            status="open",
+            claimed_by=None,
+            application="Issues",
+            label=None,
+            user_id=222,
+            waiting_on="staff",
+            waiting_changed_at=None,
+        )
+        with (
+            patch(
+                "cogs.tickets.get_ticket_controls",
+                AsyncMock(side_effect=[[record], []]),
+            ),
+            patch("cogs.tickets.set_ticket_waiting_on", AsyncMock()) as waiting,
+            patch("cogs.tickets.asyncio.sleep", AsyncMock()),
+        ):
+            await cog.on_ready()
+        waiting.assert_awaited_once_with(123, "staff", created_at.isoformat())
+
     async def test_recovery_does_not_duplicate_controls_on_permission_error(self):
         channel = MagicMock(spec=discord.TextChannel)
         channel.fetch_message = AsyncMock(

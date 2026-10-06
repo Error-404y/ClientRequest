@@ -15,8 +15,6 @@ from utils.embeds import error as error_embed
 from utils.logger import log_exception, log_performance, redact
 from utils.permissions import can_setup
 
-timezone = pytz.timezone(config.TIMEZONE)
-
 
 def format_uptime(seconds):
     value = int(max(0, seconds))
@@ -68,7 +66,7 @@ class Diagnostics(commands.Cog):
                         (guild_id,),
                     )
                 open_tickets = (await ticket_cursor.fetchone())[0]
-                cutoff = (datetime.now(timezone) - timedelta(hours=24)).isoformat()
+                cutoff = (datetime.now(pytz.utc) - timedelta(hours=24)).isoformat()
                 if guild_id is None:
                     error_cursor = await database.execute(
                         "SELECT COALESCE(SUM(occurrence_count), 0) FROM error_events WHERE last_seen>=?",
@@ -164,7 +162,7 @@ class Diagnostics(commands.Cog):
         return dict(zip(keys, row, strict=True))
 
     async def slow_operations(self, guild_id=None):
-        cutoff = (datetime.now(timezone) - timedelta(hours=24)).isoformat()
+        cutoff = (datetime.now(pytz.utc) - timedelta(hours=24)).isoformat()
         async with aiosqlite.connect(config.DATABASE) as database:
             if guild_id is None:
                 count_cursor = await database.execute(
@@ -392,7 +390,7 @@ class Diagnostics(commands.Cog):
             title=f"{config.BOT_NAME} Operations Status",
             description="All essential systems are being monitored in real time.",
             color=0x2ECC71 if healthy else 0xF0B232,
-            timestamp=datetime.now(timezone),
+            timestamp=datetime.now(pytz.utc),
         )
         embed.add_field(name="System", value=f"**{report['status']}**", inline=True)
         embed.add_field(
@@ -452,7 +450,7 @@ class Diagnostics(commands.Cog):
             title=f"{config.BOT_NAME} Diagnostic Center",
             description=f"Result: **{report['status']}**\nDetected issues: **{len(report['issues'])}**",
             color=0x2ECC71 if not report["issues"] else 0xF0B232,
-            timestamp=datetime.now(timezone),
+            timestamp=datetime.now(pytz.utc),
         )
         issue_text = (
             "\n".join(
@@ -527,7 +525,7 @@ class Diagnostics(commands.Cog):
             title=f"Error {record['reference']}",
             description=f"**{record['category']} / {record['error_type']}**",
             color=0xED4245,
-            timestamp=datetime.now(timezone),
+            timestamp=datetime.now(pytz.utc),
         )
         embed.add_field(
             name="Message",
@@ -562,7 +560,7 @@ class Diagnostics(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         started = time.perf_counter()
         report = await self.snapshot(interaction.guild.id)
-        report["generated_at"] = datetime.now(timezone).isoformat()
+        report["generated_at"] = datetime.now(pytz.utc).isoformat()
         report["runtime"] = {
             "python": platform.python_version(),
             "discord_py": discord.__version__,
@@ -575,7 +573,7 @@ class Diagnostics(commands.Cog):
             "utf-8"
         )
         filename = (
-            f"maja-diagnostics-{datetime.now(timezone).strftime('%Y%m%d-%H%M%S')}.json"
+            f"maja-diagnostics-{datetime.now(pytz.utc).strftime('%Y%m%d-%H%M%S')}.json"
         )
         file = discord.File(io.BytesIO(payload), filename=filename)
         duration = log_performance(
@@ -585,7 +583,7 @@ class Diagnostics(commands.Cog):
             title=f"{config.BOT_NAME} Diagnostic Package",
             description="A sanitized technical report is attached for owner review.",
             color=0x5865F2,
-            timestamp=datetime.now(timezone),
+            timestamp=datetime.now(pytz.utc),
         )
         embed.add_field(name="Status", value=report["status"], inline=True)
         embed.add_field(name="Issues", value=str(len(report["issues"])), inline=True)

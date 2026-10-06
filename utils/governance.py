@@ -80,8 +80,9 @@ def calculate_risk(records, now=None):
         counts[action] = counts.get(action, 0) + 1
         timestamp = str(record.get("timestamp") or "")
         try:
+            guild_id = record.get("guild_id")
             occurred = datetime.strptime(timestamp, "%d/%m/%Y - %H:%M").replace(
-                tzinfo=ZoneInfo(config.TIMEZONE)
+                tzinfo=ZoneInfo(config.get_timezone(guild_id))
             )
             occurred = occurred.astimezone(timezone.utc)
             age = max(0, (now_value - occurred).days)

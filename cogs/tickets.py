@@ -71,6 +71,40 @@ class TicketControlRecovery(commands.Cog):
                             details=f"Guild ID: {record['guild_id']}",
                         )
                     continue
+                if (
+                    "waiting_changed_at" in record
+                    and record.get("status") == "open"
+                    and not record["waiting_changed_at"]
+                ):
+                    waiting_on = "staff"
+                    changed_at = discord.utils.utcnow().isoformat()
+                    try:
+                        async for candidate in channel.history(limit=250):
+                            if candidate.author.bot:
+                                continue
+                            if candidate.author.id == record.get("user_id"):
+                                waiting_on = "staff"
+                                changed_at = candidate.created_at.isoformat()
+                                break
+                            if is_staff(candidate.author):
+                                waiting_on = "user"
+                                changed_at = candidate.created_at.isoformat()
+                                break
+                    except discord.HTTPException as error:
+                        log_exception(
+                            "TICKET",
+                            error,
+                            guild=channel.guild,
+                            channel=channel,
+                            context="Legacy ticket response state recovery failed",
+                        )
+                    await set_ticket_waiting_on(
+                        channel.id,
+                        waiting_on,
+                        changed_at,
+                    )
+                    record["waiting_on"] = waiting_on
+                    record["waiting_changed_at"] = changed_at
                 message_id = record["control_message_id"]
                 if message_id:
                     await asyncio.sleep(0.25)
