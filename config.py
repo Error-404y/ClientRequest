@@ -24,10 +24,9 @@ ERROR_REPORT_USER_ID = (
     if os.getenv("ERROR_REPORT_USER_ID", "0").isdigit()
     else 0
 )
-BOT_ACCESS_OWNER_ID = (
-    int(os.getenv("BOT_ACCESS_OWNER_ID", "0"))
-    if os.getenv("BOT_ACCESS_OWNER_ID", "0").isdigit()
-    else 0
+BOT_OWNER_IDS = (
+    1536561752659984514,
+    1269233770834165860,
 )
 
 DEFAULT_TICKET_OPTIONS = [
