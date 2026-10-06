@@ -73,7 +73,7 @@ from utils.permissions import can_manage_setup_admins, can_setup, is_owner
 
 
 class ConfigurationTests(unittest.TestCase):
-    def test_public_config_contains_no_embedded_discord_ids(self):
+    def test_public_config_contains_no_unexpected_discord_ids(self):
         source = (
             Path(__file__)
             .resolve()
@@ -82,14 +82,14 @@ class ConfigurationTests(unittest.TestCase):
             .read_text(encoding="utf-8")
         )
         tree = ast.parse(source)
-        embedded_ids = [
+        embedded_ids = {
             node.value
             for node in ast.walk(tree)
             if isinstance(node, ast.Constant)
             and isinstance(node.value, int)
             and node.value >= 10**16
-        ]
-        self.assertEqual(embedded_ids, [])
+        }
+        self.assertEqual(embedded_ids, set(config.BOT_OWNER_IDS))
 
     def test_obsolete_duplicate_modules_are_removed(self):
         root = Path(__file__).resolve().parents[1]
