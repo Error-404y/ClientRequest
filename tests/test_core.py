@@ -40,6 +40,7 @@ from utils.database import (
     get_available_staff_count,
     get_guild_settings,
     get_infraction_by_uuid,
+    get_latest_closed_ticket_for_user_type,
     get_next_ticket_number,
     get_open_ticket_for_user,
     get_staff_availability,
@@ -48,6 +49,7 @@ from utils.database import (
     get_ticket_owner,
     get_ticket_panels,
     process_afk_message,
+    process_ticket_message,
     register_escalation_event,
     register_ticket_panel,
     remove_infraction_by_uuid,
@@ -59,8 +61,10 @@ from utils.database import (
     set_staff_availability,
     set_ticket_label,
     set_ticket_priority,
+    set_ticket_waiting_on,
     setup_database,
     toggle_ticket_claim,
+    transfer_ticket_claim,
 )
 from utils.embeds import (
     apply_ticket_label,
@@ -144,22 +148,18 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(config.TICKET_REVIEW_ESCALATION_HOURS, 6)
         self.assertEqual(config.NO_RESPONSE_ESCALATION_HOURS, 24)
 
-    def test_background_ticket_audits_use_bounded_history(self):
+    def test_background_ticket_audits_use_response_state(self):
         root = Path(__file__).resolve().parents[1]
-        for filename in ("inactivity.py", "escalations.py"):
-            source = root.joinpath("cogs", filename).read_text(encoding="utf-8")
-            self.assertNotIn("channel.history(limit=None)", source)
-            self.assertIn("channel.history(limit=250)", source)
-        source = (
-            Path(__file__)
-            .resolve()
-            .parents[1]
-            .joinpath("cogs", "escalations.py")
-            .read_text(encoding="utf-8")
+        inactivity = root.joinpath("cogs", "inactivity.py").read_text(encoding="utf-8")
+        escalations = root.joinpath("cogs", "escalations.py").read_text(
+            encoding="utf-8"
         )
-        self.assertNotIn("Unclaimed Ticket Escalation", source)
-        self.assertNotIn("Customer Response Overdue", source)
-        self.assertIn('"six_hour_ticket_review"', source)
+        self.assertNotIn("channel.history(limit=None)", inactivity)
+        self.assertIn('waiting_on != "user"', inactivity)
+        self.assertIn('waiting_on != "staff"', escalations)
+        self.assertNotIn("Unclaimed Ticket Escalation", escalations)
+        self.assertNotIn("Customer Response Overdue", escalations)
+        self.assertIn('"six_hour_ticket_review"', escalations)
 
     def test_update_embed_uses_server_label(self):
         source = (
@@ -833,6 +833,58 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await get_open_ticket_for_user(self.guild_id, 210))
         self.assertIsNone(await get_open_ticket_for_user(self.guild_id + 1, 209))
         self.assertTrue(await set_ticket_priority(109, "High"))
+
+    async def test_same_ticket_type_is_blocked_but_different_type_is_allowed(self):
+        now = datetime.now(pytz.utc).isoformat()
+        await create_ticket_record(120, self.guild_id, 220, "Support", now)
+        await create_ticket_record(121, self.guild_id, 220, "Questions", now)
+        support = await get_open_ticket_for_user(self.guild_id, 220, "Support")
+        questions = await get_open_ticket_for_user(self.guild_id, 220, "Questions")
+        self.assertEqual(support["channel_id"], 120)
+        self.assertEqual(questions["channel_id"], 121)
+        self.assertIsNone(
+            await get_open_ticket_for_user(self.guild_id, 220, "Partnership")
+        )
+
+    async def test_recent_closed_ticket_lookup_is_type_scoped(self):
+        now = datetime.now(pytz.utc).isoformat()
+        await create_ticket_record(122, self.guild_id, 222, "Support", now)
+        await create_ticket_record(123, self.guild_id, 222, "Questions", now)
+        self.assertTrue(await close_ticket(122, now, 300, "Done"))
+        self.assertTrue(await close_ticket(123, now, 300, "Done"))
+        record = await get_latest_closed_ticket_for_user_type(
+            self.guild_id, 222, "Support"
+        )
+        self.assertEqual(record["channel_id"], 122)
+
+    async def test_ticket_messages_switch_waiting_state_and_auto_claim(self):
+        now = datetime.now(pytz.utc)
+        await create_ticket_record(124, self.guild_id, 224, "Support", now.isoformat())
+        staff = await process_ticket_message(
+            124, 324, True, (now + timedelta(minutes=1)).isoformat()
+        )
+        self.assertTrue(staff["auto_claimed"])
+        self.assertEqual(staff["waiting_on"], "user")
+        ticket = await get_ticket_record(124)
+        self.assertEqual(ticket["claimed_by"], 324)
+        self.assertEqual(ticket["waiting_on"], "user")
+        user = await process_ticket_message(
+            124, 224, False, (now + timedelta(minutes=2)).isoformat()
+        )
+        self.assertEqual(user["waiting_on"], "staff")
+        ticket = await get_ticket_record(124)
+        self.assertEqual(ticket["waiting_on"], "staff")
+
+    async def test_waiting_state_and_transfer_are_persistent(self):
+        now = datetime.now(pytz.utc).isoformat()
+        await create_ticket_record(125, self.guild_id, 225, "Support", now)
+        self.assertTrue(await claim_ticket(125, 325, now))
+        self.assertTrue(await set_ticket_waiting_on(125, "user", now))
+        transfer = await transfer_ticket_claim(125, 325, 326, now)
+        self.assertEqual(transfer["status"], "transferred")
+        ticket = await get_ticket_record(125)
+        self.assertEqual(ticket["claimed_by"], 326)
+        self.assertEqual(ticket["waiting_on"], "user")
 
     async def test_ticket_claim_toggle_has_persistent_cooldown(self):
         await create_ticket_record(
