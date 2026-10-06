@@ -3,7 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from utils.bot_access import (
-    BOT_ACCESS_OWNER_ID,
+    BOT_ACCESS_OWNER_IDS,
     ban_bot_user,
     ban_embed,
     parse_user_id,
@@ -52,16 +52,16 @@ class BotAccess(commands.Cog):
     @app_commands.guild_only()
     @app_commands.describe(user_id="Numeric Discord user ID only")
     async def bbmaja(self, interaction: discord.Interaction, user_id: str):
-        if interaction.user.id != BOT_ACCESS_OWNER_ID:
+        if interaction.user.id not in BOT_ACCESS_OWNER_IDS:
             await interaction.response.send_message(
-                embed=error_embed("Only the bot access owner can use this command."),
+                embed=error_embed("Only a bot owner can use this command."),
                 ephemeral=True,
             )
             return
         try:
             target_id = parse_user_id(user_id)
-            if target_id == BOT_ACCESS_OWNER_ID:
-                raise ValueError("The bot access owner cannot be banned.")
+            if target_id in BOT_ACCESS_OWNER_IDS:
+                raise ValueError("Bot owners cannot be banned.")
         except ValueError as error:
             await interaction.response.send_message(
                 embed=error_embed(str(error)), ephemeral=True
@@ -94,9 +94,9 @@ class BotAccess(commands.Cog):
     @app_commands.guild_only()
     @app_commands.describe(user_id="Numeric Discord user ID only")
     async def bbmajaubb(self, interaction: discord.Interaction, user_id: str):
-        if interaction.user.id != BOT_ACCESS_OWNER_ID:
+        if interaction.user.id not in BOT_ACCESS_OWNER_IDS:
             await interaction.response.send_message(
-                embed=error_embed("Only the bot access owner can use this command."),
+                embed=error_embed("Only a bot owner can use this command."),
                 ephemeral=True,
             )
             return
