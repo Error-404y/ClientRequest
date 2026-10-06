@@ -35,12 +35,11 @@ def staff_role_ids(guild_id):
 
 
 def online_staff(guild):
-    roles = staff_role_ids(guild.id)
     return [
         member
         for member in guild.members
         if not member.bot
-        and any(role.id in roles for role in member.roles)
+        and is_staff(member)
         and member.status not in {discord.Status.offline, discord.Status.invisible}
     ]
 
@@ -202,7 +201,7 @@ class Escalations(commands.Cog):
                             channel,
                             no_response_event,
                             "24-Hour Response Required",
-                            f"No participant has responded within {config.NO_RESPONSE_ESCALATION_HOURS} hours of this ticket being opened. The ticket owner and configured staff roles must review this ticket.",
+                            f"No staff member has responded within {config.NO_RESPONSE_ESCALATION_HOURS} hours of this ticket being opened. The ticket owner and configured staff roles must review this ticket.",
                             "Critical",
                             user_id=user_id,
                             always_mention_staff=True,
