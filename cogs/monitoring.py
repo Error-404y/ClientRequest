@@ -60,7 +60,9 @@ class Monitoring(commands.Cog):
         gateway_latency_ms = max(0.0, self.bot.latency * 1000)
         guild_count = len(self.bot.guilds)
         member_count = sum(guild.member_count or 0 for guild in self.bot.guilds)
-        commands_1h = metric_count("command.total", 3600)
+        commands_1h = metric_count("command.slash", 3600) + metric_count(
+            "command.prefix", 3600
+        )
         interactions_1h = metric_count("interaction.total", 3600)
         command_failures_1h = metric_count("command.failed", 3600)
         dm_failures_24h = metric_count("dm.failed", 86400)
