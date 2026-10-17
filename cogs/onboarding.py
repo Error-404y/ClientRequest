@@ -363,7 +363,7 @@ HELP_WORKFLOWS = {
         ),
         (
             "Inspect Bot Health",
-            "Use `/healthz` for the current operational summary, `/debugz` for a complete diagnostic and `/debugerror` with an error reference when one operation needs investigation.",
+            "Use `/healthz` for the current operational summary, `/debuglive` for live runtime metrics, `/debugz` for a complete diagnostic and `/debugerror` with an error reference when one operation needs investigation.",
         ),
     ),
 }

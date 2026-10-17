@@ -13,6 +13,7 @@ from discord.ext import commands, tasks
 import config
 from utils.embeds import error as error_embed
 from utils.logger import log_exception, log_performance, redact
+from utils.monitoring import monitoring_history
 from utils.permissions import can_setup
 
 
@@ -196,6 +197,7 @@ class Diagnostics(commands.Cog):
             ("Ticket escalation audit", "Escalations", "audit_escalations"),
             ("Governance lifecycle maintenance", "Governance", "maintain_workflows"),
             ("Diagnostic watchdog", "Diagnostics", "watch_workers"),
+            ("Runtime telemetry", "Monitoring", "monitor_runtime"),
         )
         results = []
         for label, cog_name, attribute in definitions:
@@ -322,6 +324,15 @@ class Diagnostics(commands.Cog):
         discord_latency = self.bot.latency * 1000
         if discord_latency >= 750:
             issues.append(f"Discord latency is high: {discord_latency:.1f} ms")
+        monitoring = self.bot.get_cog("Monitoring")
+        live = await monitoring.collect_snapshot(guild_id) if monitoring else None
+        if live:
+            issues.extend(
+                f"Runtime: {item}" for item in live["issues"] if f"Runtime: {item}" not in issues
+            )
+            warnings.extend(
+                f"Runtime: {item}" for item in live["warnings"] if f"Runtime: {item}" not in warnings
+            )
         return {
             "status": "Healthy" if not issues else "Attention Required",
             "issues": issues,
@@ -333,6 +344,7 @@ class Diagnostics(commands.Cog):
             "recent_errors": errors,
             "discord_latency_ms": discord_latency,
             "uptime": format_uptime(time.monotonic() - self.bot.started_at_monotonic),
+            "live": live,
         }
 
     @tasks.loop(minutes=1)
@@ -427,6 +439,26 @@ class Diagnostics(commands.Cog):
             value=str(len(report["warnings"])),
             inline=True,
         )
+        if report["live"]:
+            live = report["live"]
+            embed.add_field(
+                name="Runtime",
+                value=(
+                    f"CPU {live['process_cpu_percent']:.1f}% | "
+                    f"RAM {live['process_memory_mb']:.1f} MB\n"
+                    f"Loop lag {live['event_loop_lag_ms']:.1f} ms"
+                ),
+                inline=False,
+            )
+            embed.add_field(
+                name="Traffic / 1h",
+                value=(
+                    f"Commands {live['commands_1h']} | "
+                    f"Interactions {live['interactions_1h']} | "
+                    f"Failures {live['command_failures_1h']}"
+                ),
+                inline=False,
+            )
         latest = (
             report["recent_errors"][0]["reference"]
             if report["recent_errors"]
@@ -501,6 +533,40 @@ class Diagnostics(commands.Cog):
             value=f"Slow events: {slow['count']}\nSlowest: {slow['slowest']}\nMaximum: {slow['maximum_ms']:.1f} ms",
             inline=False,
         )
+        if report["live"]:
+            live = report["live"]
+            history = await monitoring_history(24)
+            embed.add_field(
+                name="Live Runtime",
+                value=(
+                    f"Gateway: {live['gateway_latency_ms']:.0f} ms\n"
+                    f"Database: {live['db_latency_ms']:.1f} ms\n"
+                    f"Event loop: {live['event_loop_lag_ms']:.1f} ms\n"
+                    f"CPU: {live['process_cpu_percent']:.1f}%\n"
+                    f"RAM: {live['process_memory_mb']:.1f} MB"
+                ),
+                inline=True,
+            )
+            embed.add_field(
+                name="Traffic",
+                value=(
+                    f"Commands / 1h: {live['commands_1h']}\n"
+                    f"Interactions / 1h: {live['interactions_1h']}\n"
+                    f"Failures / 1h: {live['command_failures_1h']}\n"
+                    f"DM failures / 24h: {live['dm_failures_24h']}"
+                ),
+                inline=True,
+            )
+            embed.add_field(
+                name="24h Runtime Trend",
+                value=(
+                    f"Gateway avg/max: {history['gateway_avg_ms']:.0f}/{history['gateway_max_ms']:.0f} ms\n"
+                    f"DB avg/max: {history['db_avg_ms']:.1f}/{history['db_max_ms']:.1f} ms\n"
+                    f"CPU avg/max: {history['cpu_avg_percent']:.1f}/{history['cpu_max_percent']:.1f}%\n"
+                    f"RAM avg/max: {history['memory_avg_mb']:.1f}/{history['memory_max_mb']:.1f} MB"
+                ),
+                inline=False,
+            )
         embed.set_footer(text=f"{config.BOT_NAME} | Use /debugerror for one reference")
         await interaction.followup.send(embed=embed, ephemeral=True)
 

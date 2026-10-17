@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timedelta, timezone
 
 import discord
@@ -43,7 +44,7 @@ from utils.governance import (
     execute_approved_action,
     parse_ticket_questions,
 )
-from utils.logger import log_exception, log_interaction, log_mod
+from utils.logger import log_exception, log_interaction, log_mod, log_performance
 from utils.permissions import can_setup, is_staff
 from views.base import ReliableModal
 
@@ -145,6 +146,7 @@ class Governance(commands.Cog):
 
     @tasks.loop(minutes=5)
     async def maintain_workflows(self):
+        started = time.perf_counter()
         now = datetime.now(timezone.utc)
         await expire_approval_requests(now.isoformat())
         await fail_stale_approval_executions(
@@ -152,6 +154,11 @@ class Governance(commands.Cog):
         )
         await fail_stale_appeal_reviews(
             (now - timedelta(minutes=15)).isoformat(), now.isoformat()
+        )
+        log_performance(
+            "worker.governance_maintenance",
+            started,
+            threshold_ms=1000,
         )
 
     @maintain_workflows.before_loop

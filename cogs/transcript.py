@@ -3,6 +3,7 @@ import html
 import os
 import re
 import shutil
+import time
 import weakref
 import zipfile
 from datetime import datetime
@@ -13,7 +14,7 @@ import pytz
 from discord.ext import commands
 
 import config
-from utils.logger import log_exception, log_transcript
+from utils.logger import log_exception, log_performance, log_transcript
 
 MAX_TRANSCRIPT_ASSET_BYTES = 8_000_000
 TRANSCRIPT_LOCKS = weakref.WeakValueDictionary()
@@ -104,12 +105,20 @@ def parse_markdown(text):
 
 
 async def create_transcript(channel, lightweight=False):
+    started = time.perf_counter()
     lock = TRANSCRIPT_LOCKS.get(channel.id)
     if lock is None:
         lock = asyncio.Lock()
         TRANSCRIPT_LOCKS[channel.id] = lock
     async with lock:
-        return await _create_transcript(channel, lightweight)
+        result = await _create_transcript(channel, lightweight)
+    log_performance(
+        "transcript.create",
+        started,
+        threshold_ms=3000,
+        guild=channel.guild,
+    )
+    return result
 
 
 async def _create_transcript(channel, lightweight=False):

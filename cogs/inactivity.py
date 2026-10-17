@@ -1,3 +1,4 @@
+import time
 from datetime import datetime
 
 import aiosqlite
@@ -6,7 +7,7 @@ import pytz
 from discord.ext import commands, tasks
 
 import config
-from utils.logger import log_exception, log_inactivity
+from utils.logger import log_exception, log_inactivity, log_performance
 from utils.ticket_actions import close_ticket_channel
 
 
@@ -36,6 +37,7 @@ class Inactivity(commands.Cog):
 
     @tasks.loop(minutes=30)
     async def check_inactivity(self):
+        started = time.perf_counter()
         log_inactivity("Running 30-minute inactivity audit on open tickets")
         async with aiosqlite.connect(config.DATABASE) as db:
             cursor = await db.execute(
@@ -165,6 +167,11 @@ class Inactivity(commands.Cog):
                 applicant,
                 details=f"Inactive hours: {inactive_hours:.1f}",
             )
+        log_performance(
+            "worker.inactivity_audit",
+            started,
+            threshold_ms=1500,
+        )
 
     @check_inactivity.before_loop
     async def before_check_inactivity(self):

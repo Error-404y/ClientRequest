@@ -22,6 +22,7 @@ from utils.logger import (
     log_interaction,
     setup_logs,
 )
+from utils.metrics import record_event
 
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
@@ -117,6 +118,10 @@ def acquire_instance_lock():
 
 @bot.tree.error
 async def on_app_command_error(interaction, error):
+    record_event(
+        "command.failed",
+        guild_id=getattr(getattr(interaction, "guild", None), "id", None),
+    )
     original = getattr(error, "original", error)
     reference = log_exception(
         "APPLICATION",
@@ -145,12 +150,35 @@ async def on_app_command_error(interaction, error):
         )
 
 
+@bot.listen("on_message")
+async def observe_message(message):
+    guild_id = getattr(getattr(message, "guild", None), "id", None)
+    record_event("message.total", guild_id=guild_id)
+    record_event(
+        "message.bot" if getattr(message.author, "bot", False) else "message.human",
+        guild_id=guild_id,
+    )
+
+
+@bot.event
+async def on_command(ctx):
+    guild_id = getattr(getattr(ctx, "guild", None), "id", None)
+    record_event("command.prefix", guild_id=guild_id)
+    command_name = getattr(getattr(ctx, "command", None), "qualified_name", "unknown")
+    safe_name = str(command_name).casefold().replace(" ", "_")
+    record_event(f"command.name.{safe_name}", guild_id=guild_id)
+
+
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, BotAccessDenied):
         return
     if isinstance(error, commands.CommandNotFound):
         return
+    record_event(
+        "command.failed",
+        guild_id=getattr(getattr(ctx, "guild", None), "id", None),
+    )
     original = getattr(error, "original", error)
     reference = log_exception(
         "COMMAND",
@@ -239,6 +267,7 @@ extensions = [
     "cogs.findz",
     "cogs.updates",
     "cogs.diagnostics",
+    "cogs.monitoring",
     "cogs.availability",
     "cogs.escalations",
     "cogs.moderation",
@@ -301,6 +330,44 @@ async def setup_hook():
                 for command in bot.tree.walk_commands()
                 if not isinstance(command, discord.app_commands.Group)
             )
+            local_top_level_names = {
+                command.name for command in bot.tree.get_commands()
+            }
+            try:
+                remote_commands = await bot.tree.fetch_commands()
+                remote_top_level_names = {command.name for command in remote_commands}
+                bot.remote_command_count = len(remote_commands)
+                bot.command_registry_missing = sorted(
+                    local_top_level_names - remote_top_level_names
+                )
+                bot.command_registry_extra = sorted(
+                    remote_top_level_names - local_top_level_names
+                )
+                if bot.command_registry_missing or bot.command_registry_extra:
+                    emit(
+                        "WARNING",
+                        "APPLICATION",
+                        (
+                            "Command registry mismatch | "
+                            f"missing={bot.command_registry_missing or 'none'} | "
+                            f"extra={bot.command_registry_extra or 'none'}"
+                        ),
+                    )
+                else:
+                    emit(
+                        "SUCCESS",
+                        "APPLICATION",
+                        f"Remote command registry verified | top_level={len(remote_top_level_names)}",
+                    )
+            except Exception as registry_error:
+                bot.remote_command_count = None
+                bot.command_registry_missing = []
+                bot.command_registry_extra = []
+                log_exception(
+                    "APPLICATION",
+                    registry_error,
+                    context="Remote command registry verification failed",
+                )
             emit(
                 "SUCCESS",
                 "STARTUP",
@@ -324,7 +391,20 @@ async def setup_hook():
 
 
 @bot.event
+async def on_disconnect():
+    record_event("gateway.disconnect")
+    emit("WARNING", "GATEWAY", "Discord gateway connection interrupted")
+
+
+@bot.event
+async def on_resumed():
+    record_event("gateway.resumed")
+    emit("SUCCESS", "GATEWAY", "Discord gateway session resumed")
+
+
+@bot.event
 async def on_ready():
+    record_event("gateway.ready")
     emit("SUCCESS", "SYSTEM", "Discord gateway connection established")
 
     if getattr(bot, "operations_console_ready", False):
@@ -332,9 +412,11 @@ async def on_ready():
     bot.operations_console_ready = True
 
     diagnostics = bot.get_cog("Diagnostics")
+    monitoring = bot.get_cog("Monitoring")
     workers = diagnostics.workers() if diagnostics else []
     running_workers = sum(1 for worker in workers if worker["status"] == "Running")
     database = await diagnostics.database_health(deep=False) if diagnostics else None
+    live = await monitoring.collect_snapshot() if monitoring else None
     gateway_latency = round(bot.latency * 1000)
     connected_shards = len(getattr(bot, "shards", {})) or 1
     configured_servers = sum(
@@ -369,6 +451,22 @@ async def on_ready():
             "SLASH COMMANDS", f"{getattr(bot, 'slash_command_count', 0):,} synchronized"
         )
     )
+    remote_count = getattr(bot, "remote_command_count", None)
+    registry_state = (
+        "VERIFIED"
+        if remote_count is not None
+        and not getattr(bot, "command_registry_missing", [])
+        and not getattr(bot, "command_registry_extra", [])
+        else "CHECK REQUIRED"
+        if remote_count is not None
+        else "UNAVAILABLE"
+    )
+    print(
+        console_row(
+            "COMMAND REGISTRY",
+            f"{registry_state} | remote={remote_count if remote_count is not None else 'n/a'}",
+        )
+    )
     print(console_row("LOADED MODULES", f"{len(bot.extensions)}/{len(extensions)}"))
     print(
         console_row("BACKGROUND WORKERS", f"{running_workers}/{len(workers)} RUNNING")
@@ -392,6 +490,34 @@ async def on_ready():
         )
     )
     print(console_row("GATEWAY LATENCY", f"{gateway_latency} ms"))
+    if live:
+        print(console_row("EVENT LOOP LAG", f"{live['event_loop_lag_ms']:.1f} ms"))
+        print(console_row("DATABASE LATENCY", f"{live['db_latency_ms']:.1f} ms"))
+        print(
+            console_row(
+                "PROCESS",
+                f"CPU {live['process_cpu_percent']:.1f}% | RAM {live['process_memory_mb']:.1f} MB",
+            )
+        )
+        print(
+            console_row(
+                "TRAFFIC / 1H",
+                f"{live['commands_1h']} commands | {live['interactions_1h']} interactions",
+            )
+        )
+        print(
+            console_row(
+                "ERROR GROUPS / 24H",
+                f"{live['unique_errors_24h']} unique | latest {(live['latest_error'] or {}).get('reference', 'None')}",
+            )
+        )
+        print(
+            console_row(
+                "TICKETS / 24H",
+                f"{live['tickets_created_24h']} created | {live['tickets_closed_24h']} closed",
+            )
+        )
+        print(console_row("RUNTIME HEALTH", live["status"].upper()))
     print(f"╚{'═' * console_width}╝")
     print()
 
@@ -406,6 +532,17 @@ async def on_ready():
 async def on_interaction(
     interaction: discord.Interaction,
 ):
+    guild_id = getattr(getattr(interaction, "guild", None), "id", None)
+    record_event("interaction.total", guild_id=guild_id)
+    interaction_name = getattr(interaction.type, "name", "unknown")
+    record_event(f"interaction.type.{interaction_name}", guild_id=guild_id)
+    if interaction.type == discord.InteractionType.application_command:
+        record_event("command.slash", guild_id=guild_id)
+        command_name = getattr(
+            getattr(interaction, "command", None), "qualified_name", "unknown"
+        )
+        safe_name = str(command_name).casefold().replace(" ", "_")
+        record_event(f"command.name.{safe_name}", guild_id=guild_id)
     if interaction.type in {
         discord.InteractionType.component,
         discord.InteractionType.modal_submit,
