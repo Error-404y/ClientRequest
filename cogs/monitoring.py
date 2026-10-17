@@ -65,7 +65,7 @@ class Monitoring(commands.Cog):
         command_failures_1h = metric_count("command.failed", 3600)
         dm_failures_24h = metric_count("dm.failed", 86400)
         dm_success_24h = metric_count("dm.success", 86400)
-        reconnects = max(0, int(metric_count("gateway.ready")) - 1)
+        reconnects = int(metric_count("gateway.resumed"))
         workers = self.workers()
         running_workers = sum(
             1 for worker in workers if worker["status"] == "Running"
