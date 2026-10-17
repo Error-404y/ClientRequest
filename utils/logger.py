@@ -189,12 +189,15 @@ def _store_error(
     try:
         with closing(sqlite3.connect(config.DATABASE, timeout=2)) as database, database:
             row = database.execute(
-                "SELECT reference FROM error_events WHERE fingerprint=?", (fingerprint,)
+                "SELECT reference, occurrence_count FROM error_events WHERE fingerprint=?",
+                (fingerprint,),
             ).fetchone()
             if row:
+                occurrence_count = int(row[1]) + 1
                 database.execute(
-                    "UPDATE error_events SET occurrence_count=occurrence_count+1, last_seen=?, message=?, traceback=?, context=?, guild_id=COALESCE(?, guild_id), channel_id=COALESCE(?, channel_id), user_id=COALESCE(?, user_id) WHERE fingerprint=?",
+                    "UPDATE error_events SET occurrence_count=?, last_seen=?, message=?, traceback=?, context=?, guild_id=COALESCE(?, guild_id), channel_id=COALESCE(?, channel_id), user_id=COALESCE(?, user_id) WHERE fingerprint=?",
                     (
+                        occurrence_count,
                         timestamp,
                         redact(error),
                         redact(trace),
@@ -205,7 +208,7 @@ def _store_error(
                         fingerprint,
                     ),
                 )
-                return row[0]
+                return row[0], occurrence_count, False
             database.execute(
                 "INSERT INTO error_events(reference, fingerprint, category, error_type, message, traceback, context, guild_id, channel_id, user_id, occurrence_count, first_seen, last_seen) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
                 (
@@ -227,8 +230,8 @@ def _store_error(
         _fallback(
             f"Failed to store error event: {type(storage_error).__name__}: {storage_error}"
         )
-        return reference
-    return reference
+        return reference, 1, True
+    return reference, 1, True
 
 
 def emit(level, category, message, guild=None, channel=None, user=None, reference=None):
@@ -282,7 +285,7 @@ def log_exception(category, error, guild=None, channel=None, user=None, context=
     trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
     guild_id = _guild(guild, accept_integer=True) or _guild(channel) or _guild(user)
     fingerprint = create_error_fingerprint(category, error, context, guild_id)
-    reference = _store_error(
+    reference, occurrence_count, is_new = _store_error(
         create_error_reference(),
         fingerprint,
         category,
@@ -295,36 +298,46 @@ def log_exception(category, error, guild=None, channel=None, user=None, context=
     )
     record_event("error.total", guild_id=guild_id)
     record_event(f"error.category.{category.lower()}", guild_id=guild_id)
-    summary = f"{context + ' | ' if context else ''}{type(error).__name__}: {error}"
-    emit(
-        "ERROR",
-        category,
-        summary,
-        guild=guild,
-        channel=channel,
-        user=user,
-        reference=reference,
-    )
-    try:
-        filename = (
-            "test-tracebacks.log" if category.upper() == "TEST" else "tracebacks.log"
+    milestones = {1, 2, 5, 10, 25, 50, 100, 250, 500, 1000}
+    should_emit = is_new or occurrence_count in milestones
+    if should_emit:
+        summary = f"{context + ' | ' if context else ''}{type(error).__name__}: {error}"
+        if occurrence_count > 1:
+            summary += f" | repeated {occurrence_count}x"
+        emit(
+            "ERROR",
+            category,
+            summary,
+            guild=guild,
+            channel=channel,
+            user=user,
+            reference=reference,
         )
-        handler = _file_handler(filename, logging.Formatter("%(message)s"))
-        record = logging.LogRecord(
-            "maja.traceback",
-            logging.ERROR,
-            "",
-            0,
-            f"{datetime.now(timezone).isoformat()} | {reference}\n{redact(trace)}",
-            (),
-            None,
-        )
-        handler.handle(record)
-        handler.close()
-    except OSError as storage_error:
-        _fallback(
-            f"Failed to write traceback log: {type(storage_error).__name__}: {storage_error}"
-        )
+        try:
+            filename = (
+                "test-tracebacks.log"
+                if category.upper() == "TEST"
+                else "tracebacks.log"
+            )
+            handler = _file_handler(filename, logging.Formatter("%(message)s"))
+            record = logging.LogRecord(
+                "maja.traceback",
+                logging.ERROR,
+                "",
+                0,
+                (
+                    f"{datetime.now(timezone).isoformat()} | {reference} | "
+                    f"occurrence={occurrence_count}\n{redact(trace)}"
+                ),
+                (),
+                None,
+            )
+            handler.handle(record)
+            handler.close()
+        except OSError as storage_error:
+            _fallback(
+                f"Failed to write traceback log: {type(storage_error).__name__}: {storage_error}"
+            )
     return reference
 
 
