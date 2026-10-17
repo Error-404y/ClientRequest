@@ -319,6 +319,44 @@ async def setup_hook():
                 for command in bot.tree.walk_commands()
                 if not isinstance(command, discord.app_commands.Group)
             )
+            local_top_level_names = {
+                command.name for command in bot.tree.get_commands()
+            }
+            try:
+                remote_commands = await bot.tree.fetch_commands()
+                remote_top_level_names = {command.name for command in remote_commands}
+                bot.remote_command_count = len(remote_commands)
+                bot.command_registry_missing = sorted(
+                    local_top_level_names - remote_top_level_names
+                )
+                bot.command_registry_extra = sorted(
+                    remote_top_level_names - local_top_level_names
+                )
+                if bot.command_registry_missing or bot.command_registry_extra:
+                    emit(
+                        "WARNING",
+                        "APPLICATION",
+                        (
+                            "Command registry mismatch | "
+                            f"missing={bot.command_registry_missing or 'none'} | "
+                            f"extra={bot.command_registry_extra or 'none'}"
+                        ),
+                    )
+                else:
+                    emit(
+                        "SUCCESS",
+                        "APPLICATION",
+                        f"Remote command registry verified | top_level={len(remote_top_level_names)}",
+                    )
+            except Exception as registry_error:
+                bot.remote_command_count = None
+                bot.command_registry_missing = []
+                bot.command_registry_extra = []
+                log_exception(
+                    "APPLICATION",
+                    registry_error,
+                    context="Remote command registry verification failed",
+                )
             emit(
                 "SUCCESS",
                 "STARTUP",
@@ -400,6 +438,22 @@ async def on_ready():
     print(
         console_row(
             "SLASH COMMANDS", f"{getattr(bot, 'slash_command_count', 0):,} synchronized"
+        )
+    )
+    remote_count = getattr(bot, "remote_command_count", None)
+    registry_state = (
+        "VERIFIED"
+        if remote_count is not None
+        and not getattr(bot, "command_registry_missing", [])
+        and not getattr(bot, "command_registry_extra", [])
+        else "CHECK REQUIRED"
+        if remote_count is not None
+        else "UNAVAILABLE"
+    )
+    print(
+        console_row(
+            "COMMAND REGISTRY",
+            f"{registry_state} | remote={remote_count if remote_count is not None else 'n/a'}",
         )
     )
     print(console_row("LOADED MODULES", f"{len(bot.extensions)}/{len(extensions)}"))
