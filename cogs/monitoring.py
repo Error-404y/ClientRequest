@@ -15,7 +15,7 @@ from utils.monitoring import (
     monitoring_history,
     persist_monitoring_sample,
 )
-from utils.permissions import can_setup
+from utils.permissions import is_bot_owner
 
 
 def format_duration(seconds):
@@ -54,19 +54,24 @@ class Monitoring(commands.Cog):
         diagnostics = self.bot.get_cog("Diagnostics")
         return diagnostics.workers() if diagnostics else []
 
-    async def collect_snapshot(self):
+    async def collect_snapshot(self, guild_id=None):
         system = process_stats()
-        database = await collect_database_metrics()
+        database = await collect_database_metrics(guild_id)
         gateway_latency_ms = max(0.0, self.bot.latency * 1000)
-        guild_count = len(self.bot.guilds)
-        member_count = sum(guild.member_count or 0 for guild in self.bot.guilds)
-        commands_1h = metric_count("command.slash", 3600) + metric_count(
-            "command.prefix", 3600
+        if guild_id is None:
+            guild_count = len(self.bot.guilds)
+            member_count = sum(guild.member_count or 0 for guild in self.bot.guilds)
+        else:
+            guild = self.bot.get_guild(int(guild_id))
+            guild_count = 1 if guild else 0
+            member_count = guild.member_count or 0 if guild else 0
+        commands_1h = metric_count("command.slash", 3600, guild_id) + metric_count(
+            "command.prefix", 3600, guild_id
         )
-        interactions_1h = metric_count("interaction.total", 3600)
-        command_failures_1h = metric_count("command.failed", 3600)
-        dm_failures_24h = metric_count("dm.failed", 86400)
-        dm_success_24h = metric_count("dm.success", 86400)
+        interactions_1h = metric_count("interaction.total", 3600, guild_id)
+        command_failures_1h = metric_count("command.failed", 3600, guild_id)
+        dm_failures_24h = metric_count("dm.failed", 86400, guild_id)
+        dm_success_24h = metric_count("dm.success", 86400, guild_id)
         reconnects = int(metric_count("gateway.resumed"))
         workers = self.workers()
         running_workers = sum(
@@ -201,11 +206,7 @@ class Monitoring(commands.Cog):
         log_exception("MONITORING", error, context="Runtime monitoring worker stopped")
 
     async def require_owner(self, interaction):
-        if (
-            interaction.guild is not None
-            and interaction.guild.id in config.GUILDS
-            and can_setup(interaction.user)
-        ):
+        if is_bot_owner(interaction.user):
             return True
         await interaction.response.send_message(
             embed=error_embed("You do not have permission to view live diagnostics."),
