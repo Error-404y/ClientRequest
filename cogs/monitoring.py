@@ -9,7 +9,13 @@ from discord.ext import commands, tasks
 import config
 from utils.embeds import error as error_embed
 from utils.logger import emit, log_exception
-from utils.metrics import metric_count, metric_top, process_stats, record_event, set_gauge
+from utils.metrics import (
+    metric_count,
+    metric_top,
+    process_stats,
+    record_event,
+    set_gauge,
+)
 from utils.monitoring import (
     collect_database_metrics,
     monitoring_history,
