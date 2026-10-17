@@ -134,6 +134,10 @@ class Monitoring(commands.Cog):
             "guild_count": guild_count,
             "member_count": member_count,
             "open_tickets": database["open_tickets"],
+            "waiting_user": database["waiting_user"],
+            "waiting_staff": database["waiting_staff"],
+            "claimed_tickets": database["claimed_tickets"],
+            "unclaimed_tickets": database["unclaimed_tickets"],
             "tickets_created_24h": database["tickets_created_24h"],
             "tickets_closed_24h": database["tickets_closed_24h"],
             "errors_1h": database["errors_1h"],
@@ -143,6 +147,9 @@ class Monitoring(commands.Cog):
             "latest_error": database["latest_error"],
             "slow_operations_24h": database["slow_operations_24h"],
             "slowest_ms_24h": database["slowest_ms_24h"],
+            "infractions_24h": database["infractions_24h"],
+            "infraction_types_24h": database["infraction_types_24h"],
+            "recent_errors": database["recent_errors"],
             "commands_1h": int(commands_1h),
             "interactions_1h": int(interactions_1h),
             "messages_1h": int(messages_1h),
@@ -317,8 +324,10 @@ class Monitoring(commands.Cog):
         embed.add_field(
             name="Tickets / 24h",
             value=(
-                f"Open: {snapshot['open_tickets']}\n"
-                f"Created: {snapshot['tickets_created_24h']}\n"
+                f"Open: {snapshot['open_tickets']} "
+                f"({snapshot['claimed_tickets']} claimed / {snapshot['unclaimed_tickets']} unclaimed)\n"
+                f"Waiting staff/user: {snapshot['waiting_staff']}/{snapshot['waiting_user']}\n"
+                f"Created: {snapshot['tickets_created_24h']} | "
                 f"Closed: {snapshot['tickets_closed_24h']}"
             ),
             inline=True,
@@ -331,6 +340,33 @@ class Monitoring(commands.Cog):
                 f"Latest: {(snapshot['latest_error'] or {}).get('reference', 'None')}"
             ),
             inline=True,
+        )
+        moderation_text = (
+            "\n".join(
+                f"{item['action']}: {item['count']}"
+                for item in snapshot["infraction_types_24h"]
+            )
+            or "No moderation infractions recorded."
+        )
+        embed.add_field(
+            name="Moderation / 24h",
+            value=(
+                f"Total infractions: {snapshot['infractions_24h']}\n"
+                f"{moderation_text}"
+            )[:1024],
+            inline=True,
+        )
+        recent_error_text = (
+            "\n".join(
+                f"{item['reference']} | {item['category']}/{item['error_type']} | {item['occurrence_count']}x"
+                for item in snapshot["recent_errors"]
+            )
+            or "No recorded errors."
+        )
+        embed.add_field(
+            name="Recent Error Groups",
+            value=recent_error_text[:1024],
+            inline=False,
         )
         embed.add_field(
             name="Delivery / 24h",
