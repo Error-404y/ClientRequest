@@ -16,6 +16,7 @@ from pathlib import Path
 import pytz
 
 import config
+from utils.metrics import record_event
 
 timezone = pytz.utc
 MAX_LOG_BYTES = 5 * 1024 * 1024
@@ -263,6 +264,8 @@ def emit(level, category, message, guild=None, channel=None, user=None, referenc
         extra=extra,
     )
     logger.handle(record)
+    record_event(f"log.level.{normalized.lower()}", guild_id=extra["guild_id"])
+    record_event(f"log.category.{category.lower()}", guild_id=extra["guild_id"])
     if normalized in {"ERROR", "CRITICAL"}:
         filename = "test.log" if category.upper() == "TEST" else "errors.log"
         try:
@@ -290,6 +293,8 @@ def log_exception(category, error, guild=None, channel=None, user=None, context=
         _identity(channel),
         _identity(user),
     )
+    record_event("error.total", guild_id=guild_id)
+    record_event(f"error.category.{category.lower()}", guild_id=guild_id)
     summary = f"{context + ' | ' if context else ''}{type(error).__name__}: {error}"
     emit(
         "ERROR",
@@ -383,6 +388,8 @@ def log(message, guild=None):
 
 
 def log_dm(recipient, subject, success=True, error_detail=None):
+    guild_id = _guild(recipient)
+    record_event("dm.success" if success else "dm.failed", guild_id=guild_id)
     emit(
         "SUCCESS" if success else "WARNING",
         "DM",
@@ -405,6 +412,7 @@ def log_mod(action, moderator, target, reason=None, extra=None):
 
 
 def log_command(user, command_name, channel=None, details=None):
+    record_event("command.total", guild_id=_guild(channel) or _guild(user))
     emit(
         "INFO",
         "COMMAND",
@@ -415,6 +423,10 @@ def log_command(user, command_name, channel=None, details=None):
 
 
 def log_ticket(action, channel, user=None, details=None):
+    normalized_action = re.sub(r"[^a-z0-9]+", "_", action.lower()).strip("_")
+    record_event("ticket.event", guild_id=_guild(channel) or _guild(user))
+    if normalized_action:
+        record_event(f"ticket.{normalized_action}", guild_id=_guild(channel) or _guild(user))
     level = "ERROR" if "fail" in action.lower() else "INFO"
     emit(
         level,
@@ -426,6 +438,7 @@ def log_ticket(action, channel, user=None, details=None):
 
 
 def log_interaction(user, custom_id, channel=None, details=None):
+    record_event("interaction.total", guild_id=_guild(channel) or _guild(user))
     emit(
         "INFO",
         "INTERACTION",
