@@ -334,6 +334,18 @@ async def setup_hook():
 
 
 @bot.event
+async def on_disconnect():
+    record_event("gateway.disconnect")
+    emit("WARNING", "GATEWAY", "Discord gateway connection interrupted")
+
+
+@bot.event
+async def on_resumed():
+    record_event("gateway.resumed")
+    emit("SUCCESS", "GATEWAY", "Discord gateway session resumed")
+
+
+@bot.event
 async def on_ready():
     record_event("gateway.ready")
     emit("SUCCESS", "SYSTEM", "Discord gateway connection established")
