@@ -147,7 +147,7 @@ class BanConfirmView(ReliableView):
                 return
             try:
                 await interaction.guild.ban(
-                    ban_target, reason=ban_reason, delete_message_days=14
+                    ban_target, reason=ban_reason, delete_message_days=7
                 )
                 action_completed = True
             except Exception:
