@@ -55,6 +55,21 @@ class MetricsRegistry:
                 and (guild_id is None or event_guild_id == guild_id)
             )
 
+    def top(self, prefix, seconds=3600, guild_id=None, limit=5):
+        now = time.time()
+        normalized_prefix = str(prefix)
+        with self._lock:
+            self._prune(now)
+            cutoff = now - seconds
+            values = defaultdict(float)
+            for timestamp, name, value, event_guild_id in self._events:
+                if timestamp < cutoff or not name.startswith(normalized_prefix):
+                    continue
+                if guild_id is not None and event_guild_id != guild_id:
+                    continue
+                values[name] += value
+        return sorted(values.items(), key=lambda item: (-item[1], item[0]))[:limit]
+
     def snapshot(self, seconds=3600, guild_id=None):
         now = time.time()
         with self._lock:
@@ -134,6 +149,10 @@ def metric_count(name, seconds=None, guild_id=None):
 
 def metric_snapshot(seconds=3600, guild_id=None):
     return metrics.snapshot(seconds, guild_id)
+
+
+def metric_top(prefix, seconds=3600, guild_id=None, limit=5):
+    return metrics.top(prefix, seconds, guild_id, limit)
 
 
 def process_stats():
