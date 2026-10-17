@@ -6,52 +6,56 @@ import pytz
 import config
 
 
-async def collect_database_metrics():
+async def collect_database_metrics(guild_id=None):
     now = datetime.now(pytz.utc)
     cutoff_1h = (now - timedelta(hours=1)).isoformat()
     cutoff_24h = (now - timedelta(hours=24)).isoformat()
+    scope = "" if guild_id is None else " AND guild_id=?"
+    scope_params = () if guild_id is None else (int(guild_id),)
     async with aiosqlite.connect(config.DATABASE) as database:
         started = datetime.now(pytz.utc)
         await database.execute("SELECT 1")
         db_latency_ms = (datetime.now(pytz.utc) - started).total_seconds() * 1000
 
         open_cursor = await database.execute(
-            "SELECT COUNT(*) FROM tickets WHERE status='open'"
+            f"SELECT COUNT(*) FROM tickets WHERE status='open'{scope}",
+            scope_params,
         )
         open_tickets = (await open_cursor.fetchone())[0]
 
         created_cursor = await database.execute(
-            "SELECT COUNT(*) FROM tickets WHERE datetime(created_at)>=datetime(?)",
-            (cutoff_24h,),
+            f"SELECT COUNT(*) FROM tickets WHERE datetime(created_at)>=datetime(?){scope}",
+            (cutoff_24h, *scope_params),
         )
         tickets_created_24h = (await created_cursor.fetchone())[0]
 
         closed_cursor = await database.execute(
-            "SELECT COUNT(*) FROM tickets WHERE closed_at IS NOT NULL AND datetime(closed_at)>=datetime(?)",
-            (cutoff_24h,),
+            f"SELECT COUNT(*) FROM tickets WHERE closed_at IS NOT NULL AND datetime(closed_at)>=datetime(?){scope}",
+            (cutoff_24h, *scope_params),
         )
         tickets_closed_24h = (await closed_cursor.fetchone())[0]
 
         errors_1h_cursor = await database.execute(
-            "SELECT COALESCE(SUM(occurrence_count), 0), COUNT(*) FROM error_events WHERE last_seen>=?",
-            (cutoff_1h,),
+            f"SELECT COALESCE(SUM(occurrence_count), 0), COUNT(*) FROM error_events WHERE last_seen>=?{scope}",
+            (cutoff_1h, *scope_params),
         )
         errors_1h, unique_errors_1h = await errors_1h_cursor.fetchone()
 
         errors_24h_cursor = await database.execute(
-            "SELECT COALESCE(SUM(occurrence_count), 0), COUNT(*) FROM error_events WHERE last_seen>=?",
-            (cutoff_24h,),
+            f"SELECT COALESCE(SUM(occurrence_count), 0), COUNT(*) FROM error_events WHERE last_seen>=?{scope}",
+            (cutoff_24h, *scope_params),
         )
         errors_24h, unique_errors_24h = await errors_24h_cursor.fetchone()
 
         latest_error_cursor = await database.execute(
-            "SELECT reference, category, error_type, occurrence_count, last_seen FROM error_events ORDER BY last_seen DESC LIMIT 1"
+            f"SELECT reference, category, error_type, occurrence_count, last_seen FROM error_events WHERE 1=1{scope} ORDER BY last_seen DESC LIMIT 1",
+            scope_params,
         )
         latest_error = await latest_error_cursor.fetchone()
 
         slow_cursor = await database.execute(
-            "SELECT COUNT(*), COALESCE(MAX(duration_ms), 0) FROM performance_events WHERE created_at>=?",
-            (cutoff_24h,),
+            f"SELECT COUNT(*), COALESCE(MAX(duration_ms), 0) FROM performance_events WHERE created_at>=?{scope}",
+            (cutoff_24h, *scope_params),
         )
         slow_operations_24h, slowest_ms_24h = await slow_cursor.fetchone()
 
