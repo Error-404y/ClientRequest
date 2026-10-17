@@ -412,7 +412,7 @@ def log_mod(action, moderator, target, reason=None, extra=None):
 
 
 def log_command(user, command_name, channel=None, details=None):
-    record_event("command.total", guild_id=_guild(channel) or _guild(user))
+    record_event("command.logged", guild_id=_guild(channel) or _guild(user))
     emit(
         "INFO",
         "COMMAND",
@@ -438,7 +438,7 @@ def log_ticket(action, channel, user=None, details=None):
 
 
 def log_interaction(user, custom_id, channel=None, details=None):
-    record_event("interaction.total", guild_id=_guild(channel) or _guild(user))
+    record_event("interaction.logged", guild_id=_guild(channel) or _guild(user))
     emit(
         "INFO",
         "INTERACTION",
