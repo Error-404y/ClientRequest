@@ -150,12 +150,23 @@ async def on_app_command_error(interaction, error):
         )
 
 
+@bot.listen("on_message")
+async def observe_message(message):
+    guild_id = getattr(getattr(message, "guild", None), "id", None)
+    record_event("message.total", guild_id=guild_id)
+    record_event(
+        "message.bot" if getattr(message.author, "bot", False) else "message.human",
+        guild_id=guild_id,
+    )
+
+
 @bot.event
 async def on_command(ctx):
-    record_event(
-        "command.prefix",
-        guild_id=getattr(getattr(ctx, "guild", None), "id", None),
-    )
+    guild_id = getattr(getattr(ctx, "guild", None), "id", None)
+    record_event("command.prefix", guild_id=guild_id)
+    command_name = getattr(getattr(ctx, "command", None), "qualified_name", "unknown")
+    safe_name = str(command_name).casefold().replace(" ", "_")
+    record_event(f"command.name.{safe_name}", guild_id=guild_id)
 
 
 @bot.event
@@ -523,8 +534,15 @@ async def on_interaction(
 ):
     guild_id = getattr(getattr(interaction, "guild", None), "id", None)
     record_event("interaction.total", guild_id=guild_id)
+    interaction_name = getattr(interaction.type, "name", "unknown")
+    record_event(f"interaction.type.{interaction_name}", guild_id=guild_id)
     if interaction.type == discord.InteractionType.application_command:
         record_event("command.slash", guild_id=guild_id)
+        command_name = getattr(
+            getattr(interaction, "command", None), "qualified_name", "unknown"
+        )
+        safe_name = str(command_name).casefold().replace(" ", "_")
+        record_event(f"command.name.{safe_name}", guild_id=guild_id)
     if interaction.type in {
         discord.InteractionType.component,
         discord.InteractionType.modal_submit,
