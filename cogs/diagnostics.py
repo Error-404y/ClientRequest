@@ -325,7 +325,7 @@ class Diagnostics(commands.Cog):
         if discord_latency >= 750:
             issues.append(f"Discord latency is high: {discord_latency:.1f} ms")
         monitoring = self.bot.get_cog("Monitoring")
-        live = await monitoring.collect_snapshot() if monitoring else None
+        live = await monitoring.collect_snapshot(guild_id) if monitoring else None
         if live:
             issues.extend(
                 f"Runtime: {item}" for item in live["issues"] if f"Runtime: {item}" not in issues
