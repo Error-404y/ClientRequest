@@ -362,6 +362,9 @@ async def setup_database():
             "CREATE TABLE IF NOT EXISTS performance_events (id INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL, duration_ms REAL NOT NULL, threshold_ms REAL NOT NULL, guild_id INTEGER, created_at TEXT NOT NULL)"
         )
         await db.execute(
+            "CREATE TABLE IF NOT EXISTS monitoring_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, gateway_latency_ms REAL NOT NULL, db_latency_ms REAL NOT NULL, event_loop_lag_ms REAL NOT NULL, process_cpu_percent REAL NOT NULL, process_memory_mb REAL NOT NULL, guild_count INTEGER NOT NULL, member_count INTEGER NOT NULL, open_tickets INTEGER NOT NULL, errors_1h INTEGER NOT NULL, errors_24h INTEGER NOT NULL, slow_operations_24h INTEGER NOT NULL, commands_1h INTEGER NOT NULL, interactions_1h INTEGER NOT NULL, command_failures_1h INTEGER NOT NULL, dm_failures_24h INTEGER NOT NULL)"
+        )
+        await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_staff_availability_status ON staff_availability(guild_id, status)"
         )
         await db.execute(
@@ -369,6 +372,9 @@ async def setup_database():
         )
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_performance_events_created_at ON performance_events(created_at DESC)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_monitoring_samples_created_at ON monitoring_samples(created_at DESC)"
         )
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_approval_requests_guild_status ON approval_requests(guild_id, status, created_at DESC)"
