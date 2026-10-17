@@ -23,6 +23,22 @@ async def collect_database_metrics(guild_id=None):
         )
         open_tickets = (await open_cursor.fetchone())[0]
 
+        waiting_cursor = await database.execute(
+            f"SELECT waiting_on, COUNT(*) FROM tickets WHERE status='open'{scope} GROUP BY waiting_on",
+            scope_params,
+        )
+        waiting_counts = {
+            str(row[0] or "unknown"): row[1] for row in await waiting_cursor.fetchall()
+        }
+
+        claim_cursor = await database.execute(
+            f"SELECT SUM(CASE WHEN claimed_by IS NULL THEN 1 ELSE 0 END), SUM(CASE WHEN claimed_by IS NOT NULL THEN 1 ELSE 0 END) FROM tickets WHERE status='open'{scope}",
+            scope_params,
+        )
+        unclaimed_tickets, claimed_tickets = await claim_cursor.fetchone()
+        unclaimed_tickets = int(unclaimed_tickets or 0)
+        claimed_tickets = int(claimed_tickets or 0)
+
         created_cursor = await database.execute(
             f"SELECT COUNT(*) FROM tickets WHERE datetime(created_at)>=datetime(?){scope}",
             (cutoff_24h, *scope_params),
@@ -59,9 +75,43 @@ async def collect_database_metrics(guild_id=None):
         )
         slow_operations_24h, slowest_ms_24h = await slow_cursor.fetchone()
 
+        infraction_cursor = await database.execute(
+            f"SELECT COUNT(*) FROM infractions WHERE datetime(timestamp)>=datetime(?){scope}",
+            (cutoff_24h, *scope_params),
+        )
+        infractions_24h = (await infraction_cursor.fetchone())[0]
+
+        infraction_types_cursor = await database.execute(
+            f"SELECT action_type, COUNT(*) FROM infractions WHERE datetime(timestamp)>=datetime(?){scope} GROUP BY action_type ORDER BY COUNT(*) DESC, action_type LIMIT 5",
+            (cutoff_24h, *scope_params),
+        )
+        infraction_types_24h = [
+            {"action": row[0], "count": row[1]}
+            for row in await infraction_types_cursor.fetchall()
+        ]
+
+        recent_error_cursor = await database.execute(
+            f"SELECT reference, category, error_type, occurrence_count, last_seen FROM error_events WHERE 1=1{scope} ORDER BY last_seen DESC LIMIT 5",
+            scope_params,
+        )
+        recent_errors = [
+            {
+                "reference": row[0],
+                "category": row[1],
+                "error_type": row[2],
+                "occurrence_count": row[3],
+                "last_seen": row[4],
+            }
+            for row in await recent_error_cursor.fetchall()
+        ]
+
     return {
         "db_latency_ms": db_latency_ms,
         "open_tickets": open_tickets,
+        "waiting_user": int(waiting_counts.get("user", 0)),
+        "waiting_staff": int(waiting_counts.get("staff", 0)),
+        "claimed_tickets": claimed_tickets,
+        "unclaimed_tickets": unclaimed_tickets,
         "tickets_created_24h": tickets_created_24h,
         "tickets_closed_24h": tickets_closed_24h,
         "errors_1h": errors_1h,
@@ -79,6 +129,9 @@ async def collect_database_metrics(guild_id=None):
         else None,
         "slow_operations_24h": slow_operations_24h,
         "slowest_ms_24h": slowest_ms_24h,
+        "infractions_24h": infractions_24h,
+        "infraction_types_24h": infraction_types_24h,
+        "recent_errors": recent_errors,
     }
 
 
