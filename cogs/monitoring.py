@@ -102,6 +102,12 @@ class Monitoring(commands.Cog):
             warnings.append(f"{database['errors_1h']} errors recorded in the last hour")
 
         status = "Critical" if issues else "Degraded" if warnings else "Healthy"
+        registry_missing = list(getattr(self.bot, "command_registry_missing", []))
+        registry_extra = list(getattr(self.bot, "command_registry_extra", []))
+        remote_command_count = getattr(self.bot, "remote_command_count", None)
+        if registry_missing or registry_extra:
+            warnings.append("Discord command registry does not match the local command tree")
+            status = "Degraded" if not issues else "Critical"
         snapshot = {
             "status": status,
             "issues": issues,
@@ -135,6 +141,9 @@ class Monitoring(commands.Cog):
             "reconnects": reconnects,
             "workers_running": running_workers,
             "workers_total": len(workers),
+            "remote_command_count": remote_command_count,
+            "command_registry_missing": registry_missing,
+            "command_registry_extra": registry_extra,
         }
         self.latest_snapshot = snapshot
         for name, value in (
@@ -318,6 +327,23 @@ class Monitoring(commands.Cog):
             name="Workers",
             value=f"{snapshot['workers_running']}/{snapshot['workers_total']} running",
             inline=True,
+        )
+        registry_value = (
+            f"Verified ({snapshot['remote_command_count']} remote)"
+            if snapshot["remote_command_count"] is not None
+            and not snapshot["command_registry_missing"]
+            and not snapshot["command_registry_extra"]
+            else (
+                f"Missing: {', '.join(snapshot['command_registry_missing']) or 'None'}\n"
+                f"Extra: {', '.join(snapshot['command_registry_extra']) or 'None'}"
+            )
+            if snapshot["remote_command_count"] is not None
+            else "Remote verification unavailable"
+        )
+        embed.add_field(
+            name="Command Registry",
+            value=registry_value[:1024],
+            inline=False,
         )
         embed.add_field(
             name="24h Trends",
