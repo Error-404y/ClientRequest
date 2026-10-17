@@ -36,7 +36,10 @@ The setup command creates a public `ticket-system` category containing the `tick
 - `/transferz` transfers a claimed ticket to another authorized staff member.
 - `/updatez` publishes a structured support/service update through the ticket panel.
 - `/healthz` shows the current operational health summary.
-- `/debugz`, `/debugerror`, and `/debugexport` provide owner/setup diagnostics.
+- `/debuglive` shows live gateway, database, event-loop, CPU, memory, traffic, ticket, delivery, worker, and error metrics.
+- `/debugz`, `/debugerror`, and `/debugexport` provide deeper owner/setup diagnostics.
+- Runtime telemetry is sampled every minute, persisted every 5 minutes, retained for 7 days, and summarized to the console every 15 minutes without flooding normal logs.
+- Health-state changes are logged immediately, while repeated application errors remain grouped by their existing error fingerprints.
 - `/automodz setup` configures native Discord keyword, safety-preset, and mention-spam protection.
 - `/automodz status` displays all AutoMod rules managed by the bot.
 - `/approvalz configure` lets the server owner set per-action senior approval rules, reviewers, approval counts, expiry and bypass behavior.
