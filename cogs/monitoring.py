@@ -9,7 +9,7 @@ from discord.ext import commands, tasks
 import config
 from utils.embeds import error as error_embed
 from utils.logger import emit, log_exception
-from utils.metrics import metric_count, process_stats, record_event, set_gauge
+from utils.metrics import metric_count, metric_top, process_stats, record_event, set_gauge
 from utils.monitoring import (
     collect_database_metrics,
     monitoring_history,
@@ -69,7 +69,17 @@ class Monitoring(commands.Cog):
             "command.prefix", 3600, guild_id
         )
         interactions_1h = metric_count("interaction.total", 3600, guild_id)
+        messages_1h = metric_count("message.total", 3600, guild_id)
         command_failures_1h = metric_count("command.failed", 3600, guild_id)
+        top_commands = [
+            {
+                "name": name.removeprefix("command.name.").replace("_", " "),
+                "count": int(value),
+            }
+            for name, value in metric_top(
+                "command.name.", 3600, guild_id, limit=5
+            )
+        ]
         dm_failures_24h = metric_count("dm.failed", 86400, guild_id)
         dm_success_24h = metric_count("dm.success", 86400, guild_id)
         reconnects = int(metric_count("gateway.resumed"))
@@ -135,7 +145,9 @@ class Monitoring(commands.Cog):
             "slowest_ms_24h": database["slowest_ms_24h"],
             "commands_1h": int(commands_1h),
             "interactions_1h": int(interactions_1h),
+            "messages_1h": int(messages_1h),
             "command_failures_1h": int(command_failures_1h),
+            "top_commands": top_commands,
             "dm_failures_24h": int(dm_failures_24h),
             "dm_success_24h": int(dm_success_24h),
             "reconnects": reconnects,
@@ -285,8 +297,21 @@ class Monitoring(commands.Cog):
             value=(
                 f"Commands: {snapshot['commands_1h']}\n"
                 f"Interactions: {snapshot['interactions_1h']}\n"
+                f"Messages: {snapshot['messages_1h']}\n"
                 f"Command failures: {snapshot['command_failures_1h']}"
             ),
+            inline=True,
+        )
+        top_command_text = (
+            "\n".join(
+                f"{item['name']}: {item['count']}"
+                for item in snapshot["top_commands"]
+            )
+            or "No commands recorded in this runtime window."
+        )
+        embed.add_field(
+            name="Top Commands / 1h",
+            value=top_command_text[:1024],
             inline=True,
         )
         embed.add_field(
