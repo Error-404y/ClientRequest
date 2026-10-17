@@ -21,13 +21,13 @@ async def collect_database_metrics():
         open_tickets = (await open_cursor.fetchone())[0]
 
         created_cursor = await database.execute(
-            "SELECT COUNT(*) FROM tickets WHERE created_at>=?",
+            "SELECT COUNT(*) FROM tickets WHERE datetime(created_at)>=datetime(?)",
             (cutoff_24h,),
         )
         tickets_created_24h = (await created_cursor.fetchone())[0]
 
         closed_cursor = await database.execute(
-            "SELECT COUNT(*) FROM tickets WHERE closed_at>=?",
+            "SELECT COUNT(*) FROM tickets WHERE closed_at IS NOT NULL AND datetime(closed_at)>=datetime(?)",
             (cutoff_24h,),
         )
         tickets_closed_24h = (await closed_cursor.fetchone())[0]
