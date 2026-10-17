@@ -151,6 +151,14 @@ async def on_app_command_error(interaction, error):
 
 
 @bot.event
+async def on_command(ctx):
+    record_event(
+        "command.prefix",
+        guild_id=getattr(getattr(ctx, "guild", None), "id", None),
+    )
+
+
+@bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, BotAccessDenied):
         return
@@ -459,6 +467,10 @@ async def on_ready():
 async def on_interaction(
     interaction: discord.Interaction,
 ):
+    guild_id = getattr(getattr(interaction, "guild", None), "id", None)
+    record_event("interaction.total", guild_id=guild_id)
+    if interaction.type == discord.InteractionType.application_command:
+        record_event("command.slash", guild_id=guild_id)
     if interaction.type in {
         discord.InteractionType.component,
         discord.InteractionType.modal_submit,
