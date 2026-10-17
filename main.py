@@ -22,6 +22,7 @@ from utils.logger import (
     log_interaction,
     setup_logs,
 )
+from utils.metrics import record_event
 
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
@@ -117,6 +118,10 @@ def acquire_instance_lock():
 
 @bot.tree.error
 async def on_app_command_error(interaction, error):
+    record_event(
+        "command.failed",
+        guild_id=getattr(getattr(interaction, "guild", None), "id", None),
+    )
     original = getattr(error, "original", error)
     reference = log_exception(
         "APPLICATION",
@@ -151,6 +156,10 @@ async def on_command_error(ctx, error):
         return
     if isinstance(error, commands.CommandNotFound):
         return
+    record_event(
+        "command.failed",
+        guild_id=getattr(getattr(ctx, "guild", None), "id", None),
+    )
     original = getattr(error, "original", error)
     reference = log_exception(
         "COMMAND",
@@ -239,6 +248,7 @@ extensions = [
     "cogs.findz",
     "cogs.updates",
     "cogs.diagnostics",
+    "cogs.monitoring",
     "cogs.availability",
     "cogs.escalations",
     "cogs.moderation",
@@ -325,6 +335,7 @@ async def setup_hook():
 
 @bot.event
 async def on_ready():
+    record_event("gateway.ready")
     emit("SUCCESS", "SYSTEM", "Discord gateway connection established")
 
     if getattr(bot, "operations_console_ready", False):
@@ -332,9 +343,11 @@ async def on_ready():
     bot.operations_console_ready = True
 
     diagnostics = bot.get_cog("Diagnostics")
+    monitoring = bot.get_cog("Monitoring")
     workers = diagnostics.workers() if diagnostics else []
     running_workers = sum(1 for worker in workers if worker["status"] == "Running")
     database = await diagnostics.database_health(deep=False) if diagnostics else None
+    live = await monitoring.collect_snapshot() if monitoring else None
     gateway_latency = round(bot.latency * 1000)
     connected_shards = len(getattr(bot, "shards", {})) or 1
     configured_servers = sum(
@@ -392,6 +405,34 @@ async def on_ready():
         )
     )
     print(console_row("GATEWAY LATENCY", f"{gateway_latency} ms"))
+    if live:
+        print(console_row("EVENT LOOP LAG", f"{live['event_loop_lag_ms']:.1f} ms"))
+        print(console_row("DATABASE LATENCY", f"{live['db_latency_ms']:.1f} ms"))
+        print(
+            console_row(
+                "PROCESS",
+                f"CPU {live['process_cpu_percent']:.1f}% | RAM {live['process_memory_mb']:.1f} MB",
+            )
+        )
+        print(
+            console_row(
+                "TRAFFIC / 1H",
+                f"{live['commands_1h']} commands | {live['interactions_1h']} interactions",
+            )
+        )
+        print(
+            console_row(
+                "ERROR GROUPS / 24H",
+                f"{live['unique_errors_24h']} unique | latest {(live['latest_error'] or {}).get('reference', 'None')}",
+            )
+        )
+        print(
+            console_row(
+                "TICKETS / 24H",
+                f"{live['tickets_created_24h']} created | {live['tickets_closed_24h']} closed",
+            )
+        )
+        print(console_row("RUNTIME HEALTH", live["status"].upper()))
     print(f"╚{'═' * console_width}╝")
     print()
 
