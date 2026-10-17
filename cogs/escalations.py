@@ -1,3 +1,4 @@
+import time
 from datetime import datetime
 
 import aiosqlite
@@ -7,7 +8,7 @@ from discord.ext import commands, tasks
 
 import config
 from utils.database import escalation_event_exists, register_escalation_event
-from utils.logger import log_exception, log_ticket
+from utils.logger import log_exception, log_performance, log_ticket
 from utils.permissions import is_staff
 
 
@@ -144,6 +145,7 @@ class Escalations(commands.Cog):
 
     @tasks.loop(minutes=5)
     async def audit_escalations(self):
+        started = time.perf_counter()
         async with aiosqlite.connect(config.DATABASE) as db:
             cursor = await db.execute(
                 "SELECT channel_id, guild_id, user_id, created_at, priority, waiting_on, waiting_changed_at FROM tickets WHERE status='open'"
@@ -221,6 +223,11 @@ class Escalations(commands.Cog):
                     channel=channel,
                     context="Ticket escalation audit failed",
                 )
+        log_performance(
+            "worker.escalation_audit",
+            started,
+            threshold_ms=1500,
+        )
 
     @audit_escalations.before_loop
     async def before_audit_escalations(self):
